@@ -1,0 +1,64 @@
+{
+  "version": "2.0",
+  "name": "Robot Arm Waypoints",
+  "metadata": {
+    "created_by": "Robot Arm Simulator",
+    "timestamp": "2026-03-05T22:45:00"
+  },
+  "waypoints": [
+    {"x": 4.0,"y": 3.0,"z": 2.5,"approach_angle": 0,"elbow": null},
+    {"x": 2.0,"y": 8.0,"z": 6.0,"approach_angle": 180,"elbow": null},
+    {"x": -8.0,"y": 3.0,"z": 5.0,"approach_angle": 90,"elbow": null},
+    {"x": 5.5,"y": -2.0,"z": 4.0,"approach_angle": 45,"elbow": null},
+    {"x": 7.0,"y": 1.5,"z": 3.0,"approach_angle": 60,"elbow": null},
+    {"x": -6.0,"y": -4.0,"z": 5.5,"approach_angle": 120,"elbow": null},
+    {"x": 3.0,"y": -7.0,"z": 4.5,"approach_angle": 210,"elbow": null},
+    {"x": 1.5,"y": 5.5,"z": 6.5,"approach_angle": 30,"elbow": null},
+    {"x": -2.5,"y": 6.0,"z": 4.2,"approach_angle": 75,"elbow": null},
+    {"x": -5.5,"y": 2.5,"z": 3.8,"approach_angle": 110,"elbow": null},
+
+    {"x": 6.0,"y": -5.0,"z": 5.0,"approach_angle": 250,"elbow": null},
+    {"x": 8.0,"y": -1.0,"z": 4.0,"approach_angle": 300,"elbow": null},
+    {"x": -7.5,"y": -2.0,"z": 6.2,"approach_angle": 135,"elbow": null},
+    {"x": -3.5,"y": 7.0,"z": 4.8,"approach_angle": 95,"elbow": null},
+    {"x": 2.5,"y": -6.5,"z": 5.7,"approach_angle": 225,"elbow": null},
+    {"x": 4.5,"y": 4.0,"z": 3.5,"approach_angle": 10,"elbow": null},
+    {"x": -4.0,"y": 4.5,"z": 6.0,"approach_angle": 140,"elbow": null},
+    {"x": 6.5,"y": 2.5,"z": 5.8,"approach_angle": 35,"elbow": null},
+    {"x": -6.2,"y": -3.8,"z": 3.7,"approach_angle": 190,"elbow": null},
+    {"x": 0.0,"y": 7.5,"z": 5.0,"approach_angle": 70,"elbow": null},
+
+    {"x": 7.2,"y": 3.3,"z": 4.6,"approach_angle": 25,"elbow": null},
+    {"x": -7.0,"y": 5.0,"z": 5.3,"approach_angle": 115,"elbow": null},
+    {"x": 3.8,"y": -4.2,"z": 6.1,"approach_angle": 260,"elbow": null},
+    {"x": -1.0,"y": -7.0,"z": 4.9,"approach_angle": 200,"elbow": null},
+    {"x": 5.0,"y": 6.0,"z": 5.2,"approach_angle": 15,"elbow": null},
+    {"x": -5.8,"y": 1.8,"z": 4.1,"approach_angle": 150,"elbow": null},
+    {"x": 6.8,"y": -3.0,"z": 3.6,"approach_angle": 275,"elbow": null},
+    {"x": -2.2,"y": 4.7,"z": 5.9,"approach_angle": 80,"elbow": null},
+    {"x": 2.0,"y": -5.5,"z": 6.3,"approach_angle": 240,"elbow": null},
+    {"x": 4.8,"y": 0.5,"z": 4.4,"approach_angle": 5,"elbow": null},
+
+    {"x": -3.7,"y": -4.8,"z": 5.6,"approach_angle": 210,"elbow": null},
+    {"x": 7.5,"y": 4.5,"z": 3.9,"approach_angle": 20,"elbow": null},
+    {"x": -6.5,"y": 6.2,"z": 4.7,"approach_angle": 100,"elbow": null},
+    {"x": 1.2,"y": -3.3,"z": 6.4,"approach_angle": 260,"elbow": null},
+    {"x": 3.5,"y": 2.2,"z": 5.5,"approach_angle": 40,"elbow": null},
+    {"x": -4.5,"y": 3.3,"z": 4.3,"approach_angle": 130,"elbow": null},
+    {"x": 5.9,"y": -6.0,"z": 5.1,"approach_angle": 280,"elbow": null},
+    {"x": -7.8,"y": -1.5,"z": 3.8,"approach_angle": 170,"elbow": null},
+    {"x": 0.5,"y": 6.8,"z": 4.9,"approach_angle": 65,"elbow": null},
+    {"x": 6.2,"y": -2.7,"z": 6.0,"approach_angle": 300,"elbow": null}
+  ],
+  "arm_config": {
+    "link_lengths": [8.0, 8.0, 2.0],
+    "joint_plane_offsets": [0.0, 0.0, 0.0],
+    "base_vertical_offset": 0.0,
+    "starting_angles": [
+      89.1273493572672,
+      0.468394350401554,
+      92.93189314782772,
+      72.39418743319045
+    ]
+  }
+}

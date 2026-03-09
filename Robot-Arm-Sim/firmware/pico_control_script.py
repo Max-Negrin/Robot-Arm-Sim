@@ -1,0 +1,517 @@
+"""
+Pico 2W MicroPython stepper/servo motor control script.
+
+Supports three driver types per joint — mix and match as needed:
+
+  "28byj"   — 28BYJ-48 with ULN2003 board (4 pins: IN1 IN2 IN3 IN4)
+              Uses 8-step half-stepping sequence.
+              Default steps_per_rev = 4096 (includes internal 64:1 gear).
+
+  "stepdir" — NEMA 17 (or any step/dir motor) with A4988 / DRV8825 / TMC2209
+              (2 pins: STEP DIR)
+              Default steps_per_rev = 200 (1.8° motor).
+
+  "servo"   — Standard RC servo via PWM (1 pin: SIG).
+              50 Hz PWM.  Angle maps linearly to pulse width (min_pulse_us–max_pulse_us).
+              Default: 1000 µs = 0°, 2000 µs = 180°.
+              Power servo from VBUS (5 V) — GPIO pin is signal only.
+              Share GND between Pico and servo supply!
+
+Protocol (USB serial, 115200 baud):
+    Host → Pico:  J0:45.00,J1:32.50,J2:10.00,J3:0.00\n
+    Pico → Host:  OK\n   (or ERR:<message>\n on error)
+
+──────────────────────────────────────────────────────────────────────────────
+CONFIGURATION — edit JOINTS to match your wiring
+──────────────────────────────────────────────────────────────────────────────
+"""
+
+import sys
+import time
+import math
+import random
+import select
+from machine import Pin, PWM
+
+# WiFi is disabled inside main() AFTER LED setup.
+# Pin("LED") on Pico 2W routes through the CYW43 chip, so the chip must
+# stay alive until after the LED Pin object is created.
+
+# ---------------------------------------------------------------------------
+# Half-step sequence for 28BYJ-48 (IN1 IN2 IN3 IN4)
+# ---------------------------------------------------------------------------
+_HALFSTEP = [
+    [1, 0, 0, 0],
+    [1, 1, 0, 0],
+    [0, 1, 0, 0],
+    [0, 1, 1, 0],
+    [0, 0, 1, 0],
+    [0, 0, 1, 1],
+    [0, 0, 0, 1],
+    [1, 0, 0, 1],
+]
+
+# ---------------------------------------------------------------------------
+# JOINTS — edit pins, driver type, and motor parameters here
+# The simulator GUI writes this block automatically when you click
+# "Deploy Firmware".  You can also edit it manually.
+# ---------------------------------------------------------------------------
+# <<BEGIN_JOINTS_CONFIG>>
+JOINTS = [
+    # ── Joint 0: Base ── 28BYJ-48 on GP2/3/4/5
+    {
+        "idx": 0,
+        "name": "Base",
+        "driver": "28byj",          # "28byj" or "stepdir"
+        "pins": [2, 3, 4, 5],       # [IN1, IN2, IN3, IN4]
+        "steps_per_rev": 4096,      # 28BYJ-48 half-step incl. internal gear
+        "gear_ratio": 1.0,          # additional external reduction (1.0 = none)
+        "max_sps": 400,             # max steps/sec — 1 step/loop at ~400 Hz
+        "accel": 500,               # steps/sec² — smooth ramp
+        "zero_offset_deg": 0.0,     # angle added to compensate mech. zero
+        "backlash_steps": 0,        # extra steps on direction reversal (start at 0, tune up)
+        "gravity_offset_deg": 0.0,  # added to target to counteract gravitational sag
+    },
+
+    # ── Joint 1: Shoulder ── 28BYJ-48 on GP6/7/8/9
+    {
+        "idx": 1,
+        "name": "Shoulder",
+        "driver": "28byj",
+        "pins": [6, 7, 8, 9],
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 900,
+        "accel": 600,
+        "zero_offset_deg": 0.0,
+    },
+
+    # ── Joint 2: Elbow ── 28BYJ-48 on GP10/11/12/13
+    {
+        "idx": 2,
+        "name": "Elbow",
+        "driver": "28byj",
+        "pins": [10, 11, 12, 13],
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 900,
+        "accel": 600,
+        "zero_offset_deg": 0.0,
+    },
+
+    # ── Joint 3: Wrist ── 28BYJ-48 on GP14/15/16/17
+    {
+        "idx": 3,
+        "name": "Wrist",
+        "driver": "28byj",
+        "pins": [14, 15, 16, 17],
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 900,
+        "accel": 600,
+        "zero_offset_deg": 0.0,
+    },
+
+    # ── Example: NEMA 17 on GP18/19 (uncomment when you switch hardware)
+    # {
+    #     "idx": 4,
+    #     "name": "Gripper",
+    #     "driver": "stepdir",
+    #     "pins": [18, 19],           # [STEP, DIR]
+    #     "steps_per_rev": 200,       # 1.8° motor = 200 full steps/rev
+    #     "gear_ratio": 1.0,
+    #     "micro": 16,                # microstepping factor on the driver
+    #     "max_sps": 2000,
+    #     "accel": 4000,
+    #     "zero_offset_deg": 0.0,
+    # },
+
+    # ── Example: RC servo on GP20 (uncomment to use as the last link)
+    # Power servo from VBUS (5 V), share GND with Pico.
+    # Angle mapping: simulator 0° → servo midpoint (centre pulse).
+    #   sim  0°  → (min_pulse + max_pulse) / 2 = 1500 µs  (centre)
+    #   sim +90° → max_pulse = 2000 µs
+    #   sim -90° → min_pulse = 1000 µs
+    # {
+    #     "idx": 4,
+    #     "name": "Gripper",
+    #     "driver": "servo",
+    #     "pins": [20],               # [SIG] — signal pin only
+    #     "min_pulse_us": 1000,       # pulse at -angle_range/2   (500 µs = extended SG90)
+    #     "max_pulse_us": 2000,       # pulse at +angle_range/2  (2500 µs = extended SG90)
+    #     "angle_range_deg": 180,     # total travel (sim range ±90°)
+    #     "zero_offset_deg": 0.0,     # shift if servo physical neutral ≠ simulator 0°
+    # },
+]
+# <<END_JOINTS_CONFIG>>
+
+# ---------------------------------------------------------------------------
+# Control loop interval — how often axes are updated (microseconds)
+# ---------------------------------------------------------------------------
+# Time between steps in microseconds.  Controls both max step rate and the
+# minimum coil-hold time for the 28BYJ-48.  800 µs = 1250 steps/sec max.
+# Lower = faster but less torque.  Raise if motors miss steps under load.
+STEP_US = 800
+
+
+# ---------------------------------------------------------------------------
+# Stepper axis base class
+# ---------------------------------------------------------------------------
+
+class _StepperBase:
+    """Shared velocity-profiling logic for both driver types."""
+
+    def __init__(self, cfg: dict):
+        self.idx            = cfg["idx"]
+        self.steps_per_rev  = cfg["steps_per_rev"]
+        self.gear_ratio     = cfg.get("gear_ratio", 1.0)
+        self.max_sps        = cfg["max_sps"]
+        self.accel          = cfg["accel"]
+        self.zero_offset    = cfg.get("zero_offset_deg", 0.0)
+        self.backlash_steps = int(cfg.get("backlash_steps", 0))
+        self.gravity_offset = cfg.get("gravity_offset_deg", 0.0)
+
+        # Output steps per one full output revolution
+        self._steps_out = self.steps_per_rev * self.gear_ratio
+
+        # Motion state
+        self.current_pos: float = 0.0   # steps (logical position — not counting backlash)
+        self.target_pos:  float = 0.0
+        self.velocity:    float = 0.0   # steps/sec (signed)
+        self._accumulator: float = 0.0  # fractional step accumulator
+        self._last_dir: int = 0         # last physical step direction (+1 fwd, -1 bwd)
+        self._backlash_debt: int = 0    # physical steps still owed before logical pos resumes
+
+    def angle_to_steps(self, angle_deg: float) -> float:
+        return (angle_deg - self.zero_offset) / 360.0 * self._steps_out
+
+    def set_target_angle(self, angle_deg: float) -> None:
+        # gravity_offset pre-compensates for gravitational sag:
+        # positive = motor aims slightly further to counteract slip in negative direction.
+        self.target_pos = self.angle_to_steps(angle_deg + self.gravity_offset)
+
+    def update(self, dt: float) -> None:
+        """Advance trapezoidal velocity profile and emit at most 1 step per call.
+
+        Backlash compensation: when direction reverses, the first backlash_steps
+        physical steps are taken without advancing the logical position.  This
+        accounts for the gear mesh dead-zone where the output shaft does not move
+        while the motor reverses through the backlash gap.
+
+        Gravity offset: set_target_angle() adds gravity_offset_deg to the target,
+        so the motor always aims slightly past the commanded angle to counteract
+        the load that gravity applies once the coils are de-energised.
+        """
+        error = self.target_pos - self.current_pos
+        if abs(error) < 0.5:
+            self.velocity = 0.0
+            self._accumulator = 0.0
+            return
+
+        direction = 1 if error > 0 else -1
+        brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
+
+        if direction * self.velocity < 0:
+            self.velocity = self.velocity + direction * self.accel * dt
+        elif abs(error) <= brake_steps:
+            new_v = self.velocity - direction * self.accel * dt
+            self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
+        else:
+            new_v = self.velocity + direction * self.accel * dt
+            self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+
+        # Accumulate fractional steps; take at most 1 physical step per call
+        self._accumulator += self.velocity * dt
+        if self._accumulator >= 1.0:
+            self._accumulator -= 1.0
+            # Detect direction reversal → load backlash debt
+            if self._last_dir == -1:
+                self._backlash_debt = self.backlash_steps
+            # Consume backlash first (physical step, no logical advance)
+            if self._backlash_debt > 0:
+                self._backlash_debt -= 1
+            else:
+                self.current_pos += 1.0
+            self._step(1, forward=True)
+            self._last_dir = 1
+        elif self._accumulator <= -1.0:
+            self._accumulator += 1.0
+            if self._last_dir == 1:
+                self._backlash_debt = self.backlash_steps
+            if self._backlash_debt > 0:
+                self._backlash_debt -= 1
+            else:
+                self.current_pos -= 1.0
+            self._step(1, forward=False)
+            self._last_dir = -1
+
+    def _step(self, count: int, forward: bool) -> None:
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# 28BYJ-48 axis (IN1 IN2 IN3 IN4 half-step sequence)
+# ---------------------------------------------------------------------------
+
+class StepperAxis28BYJ(_StepperBase):
+    """28BYJ-48 with ULN2003 driver — 4-pin half-step sequencing."""
+
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        pins = cfg["pins"]   # [IN1, IN2, IN3, IN4]
+        if len(pins) != 4:
+            raise ValueError(f"28byj driver needs 4 pins, got {pins}")
+        self._pins = [Pin(p, Pin.OUT, value=0) for p in pins]
+        self._seq_idx = 0    # current position in _HALFSTEP table
+
+    def _step(self, count: int, forward: bool) -> None:
+        step_dir = 1 if forward else -1
+        for _ in range(count):
+            self._seq_idx = (self._seq_idx + step_dir) % 8
+            pattern = _HALFSTEP[self._seq_idx]
+            for pin, val in zip(self._pins, pattern):
+                pin.value(val)
+            # No sleep here — coil hold time is enforced by the main loop's
+            # fixed STEP_US period, giving perfectly consistent step timing.
+
+    def deenergise(self) -> None:
+        """Cut coil current when idle to reduce heat."""
+        for pin in self._pins:
+            pin.value(0)
+
+
+# ---------------------------------------------------------------------------
+# NEMA 17 (step/dir) axis
+# ---------------------------------------------------------------------------
+
+class StepperAxisStepDir(_StepperBase):
+    """NEMA 17 (or any step/dir motor) via A4988 / DRV8825 / TMC2209."""
+
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        pins = cfg["pins"]   # [STEP, DIR]
+        if len(pins) < 2:
+            raise ValueError(f"stepdir driver needs 2 pins, got {pins}")
+        self._step_pin = Pin(pins[0], Pin.OUT, value=0)
+        self._dir_pin  = Pin(pins[1], Pin.OUT, value=0)
+        self.micro = cfg.get("micro", 1)
+        # Re-compute steps_out with microstepping factor
+        self._steps_out = self.steps_per_rev * self.gear_ratio * self.micro
+
+    def _step(self, count: int, forward: bool) -> None:
+        self._dir_pin.value(1 if forward else 0)
+        for _ in range(count):
+            self._step_pin.value(1)
+            time.sleep_us(2)
+            self._step_pin.value(0)
+            time.sleep_us(2)
+
+
+# ---------------------------------------------------------------------------
+# RC servo axis (PWM — single signal pin)
+# ---------------------------------------------------------------------------
+
+class ServoAxis:
+    """Standard RC servo controlled via 50 Hz PWM.
+
+    Angle maps linearly between min_pulse_us (0°) and max_pulse_us (angle_range_deg°).
+    The servo moves to the target position immediately on set_target_angle() —
+    no velocity profile needed; the servo's internal controller handles motion.
+
+    Wiring: SIG → GPIO pin.  VCC → VBUS (5 V) or separate supply.
+            ALWAYS share GND between Pico and the servo supply.
+    """
+
+    def __init__(self, cfg: dict):
+        self.idx            = cfg["idx"]
+        self.zero_offset    = cfg.get("zero_offset_deg", 0.0)
+        self.min_pulse_us   = cfg.get("min_pulse_us", 1000)
+        self.max_pulse_us   = cfg.get("max_pulse_us", 2000)
+        self.angle_range    = cfg.get("angle_range_deg", 180)
+        self.velocity       = 0.0   # always 0 — servo has built-in position control
+
+        pins = cfg.get("pins", [])
+        if not pins:
+            raise ValueError(f"servo joint {cfg.get('idx')} needs at least 1 pin")
+        self._pwm = PWM(Pin(pins[0]))
+        self._pwm.freq(50)   # standard 50 Hz servo signal
+
+    def set_target_angle(self, angle_deg: float) -> None:
+        """Move servo to angle_deg immediately.
+
+        Simulator joint angles are centered at 0° (negative = one direction,
+        positive = other).  The servo range starts at 0°, so we shift by
+        half the range: simulator 0° → servo midpoint → centre pulse width.
+
+        Example (180° range, 1000–2000 µs):
+            sim  0° → servo  90° → 1500 µs  (centre)
+            sim +90° → servo 180° → 2000 µs (max)
+            sim -90° → servo   0° → 1000 µs (min)
+        """
+        angle = angle_deg - self.zero_offset
+        # Shift so simulator 0° maps to the servo's midpoint
+        servo_angle = angle + self.angle_range / 2.0
+        servo_angle = max(0.0, min(self.angle_range, servo_angle))
+        pulse_us = self.min_pulse_us + (servo_angle / max(self.angle_range, 1)) * (
+            self.max_pulse_us - self.min_pulse_us
+        )
+        # duty_u16 range: 0–65535 = 0–100% of 20 ms period
+        duty = int((pulse_us / 20000.0) * 65535)
+        self._pwm.duty_u16(max(0, min(65535, duty)))
+
+    def update(self, dt: float) -> None:
+        pass   # servo handles its own motion — nothing to do each tick
+
+    def deenergise(self) -> None:
+        pass   # servos hold position without coil heating — nothing to cut
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+def make_axis(cfg: dict):
+    driver = cfg.get("driver", "stepdir").lower()
+    if driver == "28byj":
+        return StepperAxis28BYJ(cfg)
+    elif driver == "stepdir":
+        return StepperAxisStepDir(cfg)
+    elif driver == "servo":
+        return ServoAxis(cfg)
+    else:
+        raise ValueError(f"Unknown driver type '{driver}' for joint {cfg.get('idx')}")
+
+
+# ---------------------------------------------------------------------------
+# Serial command parser
+# ---------------------------------------------------------------------------
+
+def parse_command(line: str) -> dict | None:
+    """Parse 'J0:45.00,J1:32.50,...' → {0: 45.0, 1: 32.5, ...}"""
+    result = {}
+    try:
+        for token in line.strip().split(","):
+            token = token.strip()
+            if not token:
+                continue
+            key, val = token.split(":")
+            result[int(key[1:])] = float(val)
+        return result
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def main():
+    # LEDs first — so they always blink even if motor config is bad
+    # GP28 = last ADC pin, not used by any default motor config
+    # NOTE: WiFi is disabled AFTER LED setup.  On Pico 2W, Pin("LED") is
+    # routed through the CYW43 chip — disabling WiFi first breaks the LED.
+    led = Pin("LED", Pin.OUT)
+    led_ext = Pin(28, Pin.OUT)
+    led_last_us = time.ticks_us()
+    # Random blink period so you can visually confirm new firmware is flashed.
+    # Range: 100 ms – 900 ms per half-cycle  (0.55 Hz – 5 Hz blink rate).
+    led_period_us = random.randint(100_000, 900_000)
+
+    # Disable WiFi AP AFTER LED is set up (CYW43 must stay alive for LED)
+    try:
+        import network as _net
+        _net.WLAN(_net.AP_IF).active(False)
+    except Exception:
+        pass
+
+    # Build axes — skip any joint whose pin config is invalid
+    axes = []
+    for cfg in JOINTS:
+        try:
+            axes.append(make_axis(cfg))
+        except Exception as e:
+            print(f"WARN: skipping joint {cfg.get('idx','?')}: {e}")
+
+    buf = ""
+    idle_ticks = 0
+    dt = STEP_US * 1e-6   # fixed dt — loop runs at exactly STEP_US period
+
+    # Non-blocking poll — avoids sys.stdin.read(1) blocking the whole loop
+    _poller = select.poll()
+    _poller.register(sys.stdin, select.POLLIN)
+
+    print("Robot Arm Pico Controller ready")
+    print("firmware ready")
+
+    tick_us = time.ticks_us()
+
+    while True:
+        # ── 1. Advance all motor axes (GPIO writes only, no sleep) ──────────
+        any_moving = False
+        for axis in axes:
+            axis.update(dt)
+            if abs(axis.velocity) > 0.1:
+                any_moving = True
+
+        # ── 2. LED blink (random period) ────────────────────────────────────
+        now_us = time.ticks_us()
+        if time.ticks_diff(now_us, led_last_us) >= led_period_us:
+            led.toggle()
+            led_ext.toggle()
+            led_last_us = now_us
+            led_period_us = random.randint(100_000, 900_000)
+
+        # ── 3. Non-blocking serial read ──────────────────────────────────────
+        try:
+            while _poller.poll(0):
+                ch = sys.stdin.read(1)
+                if ch is None:
+                    break
+                if ch == "\n":
+                    line = buf.strip()
+                    buf = ""
+                    if line == "PING":
+                        print("Robot Arm Pico Controller ready")
+                        print("firmware ready")
+                    else:
+                        cmd = parse_command(line)
+                        if cmd is not None:
+                            for axis in axes:
+                                if axis.idx in cmd:
+                                    axis.set_target_angle(cmd[axis.idx])
+                            idle_ticks = 0
+                            print("OK")
+                        else:
+                            print("ERR:bad command")
+                else:
+                    buf += ch
+                    if len(buf) > 256:
+                        buf = ""
+        except Exception:
+            pass
+
+        # ── 4. De-energise coils after ~2 s of idleness ─────────────────────
+        if not any_moving:
+            idle_ticks += 1
+            if idle_ticks > 2500:   # 2500 × 800 µs ≈ 2 s
+                for axis in axes:
+                    if isinstance(axis, StepperAxis28BYJ):
+                        axis.deenergise()
+                idle_ticks = 0
+        else:
+            idle_ticks = 0
+
+        # ── 5. Sleep for the remainder of the STEP_US period ────────────────
+        # This makes every loop iteration exactly STEP_US long, giving the
+        # 28BYJ-48 coils a constant hold time and perfectly uniform step rate.
+        tick_us = time.ticks_add(tick_us, STEP_US)
+        remaining = time.ticks_diff(tick_us, time.ticks_us())
+        if remaining > 0:
+            time.sleep_us(remaining)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

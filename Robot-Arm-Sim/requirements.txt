@@ -1,0 +1,16 @@
+PyQt6>=6.5
+pyqtgraph>=0.13
+PyOpenGL>=3.1
+numpy>=1.24
+sympy>=1.12
+PyOpenGL-accelerate
+
+# Optional — required for Raspberry Pi Pico 2W hardware synchronization:
+pyserial>=3.5   # Serial communication with the Pico
+# mpremote>=1.22  # Firmware deployment (pip install mpremote); falls back to raw REPL if absent
+
+#run pip install -r requirements.txt
+#to install the required dependencies for the Robot Arm Simulator project.
+
+#the "-r" flag signifies installing packages inside the given file
+
