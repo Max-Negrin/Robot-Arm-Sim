@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:/Users/maxwe/OneDrive/Documents/GitHub/Robot Arm Sim/Robot-Arm-Sim/\"*.py)"
+    ]
+  }
+}

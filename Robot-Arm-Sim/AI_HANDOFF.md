@@ -56,7 +56,7 @@ python main.py
 Run acceptance tests:
 
 ```bash
-python test_acceptance.py
+python tests/test_acceptance.py
 ```
 
 Expected: 10/10 tests pass ✅
@@ -69,7 +69,6 @@ Expected: 10/10 tests pass ✅
 Robot-Arm-Sim/
 ├── main.py                      # Entry point & QApplication launcher
 ├── main_old.py                  # Legacy tkinter/matplotlib version (reference only)
-├── web-script.py                # PyScript/asyncio port for browser (embedded in docs)
 │
 ├── kinematics.py                # Core math: FK, IK, DH transforms, Jacobian
 ├── constraints.py               # Constraint validation, collision, singularity checks
@@ -77,23 +76,48 @@ Robot-Arm-Sim/
 ├── animation.py                 # Smooth interpolation & timing system
 ├── gui.py                       # PyQt6 GUI: MainWindow, panels, 3D viewport
 │
-├── test_integration.py          # Module compatibility & basic functionality
-├── test_math_correctness.py     # Mathematical accuracy validation
-├── test_acceptance.py           # 10 comprehensive acceptance tests
+├── blink_test.py                # Standalone diagnostic: deploys blink firmware, confirms LED
+├── diagnose_pico.py             # Port/REPL diagnostic and firmware deployer
+│
+├── tests/
+│   ├── test_integration.py      # Module compatibility & basic functionality
+│   ├── test_math_correctness.py # Mathematical accuracy validation
+│   └── test_acceptance.py       # 10 comprehensive acceptance tests
+│
+├── hardware/
+│   ├── __init__.py              # Package marker
+│   ├── protocol.py              # Serial message encoding
+│   ├── pico_interface.py        # PicoInterface class + find_pico_port()
+│   └── micropython_deployer.py  # MicroPythonDeployer (raw serial REPL)
+│
+├── firmware/
+│   └── pico_control_script.py   # MicroPython stepper control (deployed to Pico)
+│
+├── config/
+│   ├── arm_config.json          # Auto-saved full session state (all panels)
+│   └── motor_config.json        # Motor parameters (steps, gear ratio, etc.)
+│
+├── logs/
+│   └── hardware_log.txt         # Rotating file log (2 MB × 3 files)
+│
+├── waypoints/                   # Drop .json files here for auto-load on startup
+│
+├── text files/
+│   ├── ARCHITECTURE.md          # Detailed technical architecture
+│   └── future_improvements.md
 │
 ├── requirements.txt             # Python dependencies
-├── ARCHITECTURE.md              # Detailed technical architecture
 ├── AI_HANDOFF.md               # THIS FILE
 └── README.md                    # User-facing documentation
 ```
 
 **Key File Sizes:**
 
-- `gui.py` ~1100 lines (largest)
-- `kinematics.py` ~900 lines
-- `constraints.py` ~400 lines
+- `gui.py` ~3100 lines (largest)
+- `kinematics.py` ~550 lines
+- `constraints.py` ~265 lines
 - `animation.py` ~200 lines
-- `math_engine.py` ~200 lines
+- `math_engine.py` ~170 lines
 
 ---
 
@@ -219,6 +243,7 @@ class ElbowConfig(Enum):
 **`ConstraintSet`** — Constraints (in `constraints.py`)
 
 ```python
+@dataclass
 class ConstraintSet:
     locked_joints: Dict[int, float]        # joint_idx → angle (rad)
     custom_limits: Dict[int, Tuple[float, float]]  # joint_idx → (min, max)
@@ -409,7 +434,7 @@ duration = clamp(max_delta × 1.5, 0.5, 5.0) / speed_multiplier
 - `_solve_2r(...)` — 2-link closed-form solver
 - `_validate_joint_limits(...)` — Check if angles within bounds
 
-**Line count:** ~900 lines
+**Line count:** ~550 lines
 
 ---
 
@@ -431,7 +456,7 @@ duration = clamp(max_delta × 1.5, 0.5, 5.0) / speed_multiplier
 
 **Design:** Pure functions, no state; called during every IK solve.
 
-**Line count:** ~400 lines
+**Line count:** ~265 lines
 
 ---
 
@@ -525,7 +550,7 @@ math_engine.set_expression(2, "L1 + L2 * cos(theta_1)")
 
 **Rendering:** 60fps timer loop
 
-**Line count:** ~1100 lines
+**Line count:** ~3100 lines
 
 ---
 
@@ -544,7 +569,7 @@ math_engine.set_expression(2, "L1 + L2 * cos(theta_1)")
 
 - Per-waypoint approach_angle (degrees, optional)
 - Per-waypoint elbow preference (up/down/auto)
-- JSON v1.0 export/import with metadata
+- JSON v2.0 export/import with metadata
 - Drag-drop reordering with automatic list sync
 - Import validation: reports errors per waypoint without aborting
 
@@ -697,9 +722,9 @@ Uses **QSplitter** (horizontal orientation):
 ### Run All Tests
 
 ```bash
-python test_integration.py      # Basic functionality
-python test_math_correctness.py # Mathematical accuracy
-python test_acceptance.py       # High-level requirements
+python tests/test_integration.py      # Basic functionality
+python tests/test_math_correctness.py # Mathematical accuracy
+python tests/test_acceptance.py       # High-level requirements
 ```
 
 **Expected result:** All tests pass ✅
@@ -726,7 +751,7 @@ python test_acceptance.py       # High-level requirements
 - **IK solving**: Analytical (N=1..10), numerical fallback
 - **Elbow selection**: Both ELBOW_UP and ELBOW_DOWN with proper sign (ELBOW_UP → peak toward +Z)
 - **Orientation constraints**: Constrain End Effector panel with auto-capture
-- **Waypoint system**: JSON v1.0, per-waypoint angle/elbow, drag-drop reordering, full sequence animation, loop mode
+- **Waypoint system**: JSON v2.0, per-waypoint angle/elbow, drag-drop reordering, full sequence animation, loop mode
 - **Animation**: Smooth cubic interpolation with orientation enforcement
 - **Collision detection**: Self-collision, singularity, workspace validation
 - **Custom math expressions**: SymPy sandboxed evaluator
@@ -751,7 +776,7 @@ python test_acceptance.py       # High-level requirements
    - Cleaner UX, aligns with orientation lock feature
 
 4. **Waypoint enhancements**: Full per-waypoint angle/elbow support
-   - JSON schema v1.0 with metadata
+   - JSON schema v2.0 with metadata
    - Copy-from-target button syncs target panel + EE constraint
    - Drag-drop reordering with immediate list sync
    - Import validation: reports errors per waypoint
@@ -894,7 +919,7 @@ def test_my_feature():
 Run:
 
 ```bash
-python -m pytest test_acceptance.py::test_my_feature -v
+python -m pytest tests/test_acceptance.py::test_my_feature -v
 ```
 
 ---
@@ -909,9 +934,9 @@ python -m pytest test_acceptance.py::test_my_feature -v
 4. **Run tests**:
 
 ```bash
-python test_integration.py
-python test_math_correctness.py
-python test_acceptance.py
+python tests/test_integration.py
+python tests/test_math_correctness.py
+python tests/test_acceptance.py
 ```
 
 5. **Manual testing**: Launch `python main.py` and verify behavior
@@ -976,7 +1001,10 @@ diagnose_pico.py                 # Port/REPL diagnostic and firmware deployer
 
 - **`PicoInterface`**: optional, auto-detects Pico via USB VID 0x2E8A. Two background threads: TX thread (`pico-tx`) drains a size-4 angle queue at up to 60 Hz; RX thread (`pico-rx`) reads response lines ("OK", "ERR:...") and calls `rx_callback`. Angles sent only when delta > 0.005 rad. **RX thread starts only after the boot-wait loop completes** — if started earlier, it races with `connect()` for the "firmware ready" banner, causing connection to fail. If Pico disconnects, `is_connected` → False; simulator continues normally.
 - **`MicroPythonDeployer`**: always uses raw serial REPL — mpremote was removed because its `reset` sub-command silently swallowed exceptions (bare `except: pass`), leaving the Pico running old firmware even when copy succeeded. Uploads `firmware/pico_control_script.py` as `main.py`. Injects GUI motor config into the `JOINTS` block between `# <<BEGIN_JOINTS_CONFIG>>` / `# <<END_JOINTS_CONFIG>>` sentinels.
-- **Firmware**: fixed-period main loop (`STEP_US = 800` µs per iteration). No `sleep_us()` inside `_step()` — all blocking removed. One `time.sleep_us(remaining)` at the **end** of each loop iteration keeps exactly 800 µs/loop regardless of GPIO write time. `dt = STEP_US * 1e-6` (constant, never computed from wall clock). Step accumulator (`_accumulator += velocity * dt`, fire step when `|acc| >= 1.0`) prevents position drift between float velocity and integer steps. Trapezoidal velocity profile unchanged. Random LED blink period (`random.randint(100_000, 900_000)` µs, regenerated on each toggle) proves new firmware deployed vs. fixed 1 Hz heartbeat. PING command returns ready string.
+
+- **Firmware**:
+fixed-period main loop (`STEP_US = 800` µs per iteration). No `sleep_us()` inside `_step()` — all blocking removed. One `time.sleep_us(remaining)` at the **end** of each loop iteration keeps exactly 800 µs/loop regardless of GPIO write time. `dt = STEP_US * 1e-6` (constant, never computed from wall clock). Step accumulator (`_accumulator += velocity * dt`, fire step when `|acc| >= 1.0`) prevents position drift between float velocity and integer steps. Trapezoidal velocity profile unchanged. Random LED blink period (`random.randint(100_000, 900_000)` µs, regenerated on each toggle) proves new firmware deployed vs. fixed 1 Hz heartbeat. PING command returns ready string.
+
 - **GUI → thread communication (PyQt6 bug)**: `QTimer.singleShot(0, fn)` called from a background thread does **not** fire in PyQt6 — the timer object is created in the calling thread's context, which has no event loop. All background → GUI updates (deploy progress, deploy done, connect result, Pico RX) use a `queue.Queue` + a main-thread `QTimer.singleShot(50, _poll)` chain that drains the queue every 50 ms.
 
 ### Connection Protocol
@@ -1175,7 +1203,8 @@ pyserial>=3.5    # pip install pyserial   (for hardware mode)
 - **2026-03-05 (waypoint fixes)**: Fixed critical waypoint callback bug (callback clear order in animation.py step()) that caused only 2 waypoints to animate. Added Loop Sequence checkbox and Stop button to WaypointPanel. Updated _advance_sequence() to restart from beginning when loop is enabled. Fixed EE orientation snapping by capturing start orientation and interpolating smoothly to target during animation via lerp_angle(start, target, smoothstep(t)).
 - **2026-03-05 (starting angles feature)**: Added editable "Starting Angles" panel (InitialJointPanel) with spinboxes for base rotation and each planar joint. Users can set any starting pose (-180 to 180° per joint) before solving IK. "Copy from Arm" button captures current pose. Does not affect IK because analytical solver ignores initial state and numerical solver only uses it as seed. Panel auto-rebuilds when arm config changes.
 - **2026-03-07 (hardware integration, Pico 2W fixes, config save)**: Full hardware integration with Raspberry Pi Pico 2W. Four critical firmware bugs found and fixed — see "Critical MicroPython v1.27 Compatibility Issues" section above for full detail. Summary: (1) `sys.stdout.flush()` crashes on MicroPython v1.27 — removed. (2) `sys.stdin.read(1)` blocks the main loop when idle — replaced with `select.poll(0)` non-blocking check. (3) Disabling WiFi before `Pin("LED")` silently breaks the onboard LED (CYW43 chip powers down) — LED pin must be created first. (4) `reset_input_buffer()` after soft reset discards boot output — removed. External LED moved from GP15 (conflicts with Wrist motor) to GP28. `blink_test.py` standalone diagnostic created. Config auto-save (`arm_config.json`) now saves every panel: motor configs, GPIO pins, math expressions, EE constraint, target panel, elbow. `MotorConfigPanel.rebuild()` now preserves user values (gear ratio, driver, etc.) across link-count changes. PING command added to firmware for on-demand connection confirmation. `num_links` added to config JSON. Auto-run waypoints removed (auto-load only). Zoom restored in 3D viewport. GPIO numbers shown in Pinout panel spinboxes.
-- **2026-03-08 (deploy pipeline fix, RX monitoring, smooth steppers)**: Six issues diagnosed and fixed in one session. **(1) mpremote reset silently failing** — mpremote's `reset` sub-command had a bare `except: pass`, so Pico never rebooted into new firmware even though copy succeeded. Fix: removed mpremote entirely; always use raw serial REPL with 4-step verbose progress (`[1/4]`–`[4/4]`) shown in the Hardware panel label. **(2) Deploy label never updating past "Starting deploy..."** — `QTimer.singleShot(0, fn)` called from a background thread does NOT fire in PyQt6 (timer created in thread context with no event loop). Fix: `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` chain for all background→GUI updates (deploy progress, deploy done, connect result, Pico RX). **(3) Race condition in serial reads** — `_rx_worker` thread started before `connect()`'s boot-wait loop caused both to read the same port, consuming "firmware ready" before `connect()` saw it. Fix: start `_rx_worker` only after boot-wait loop exits. **(4) RX monitoring added** — `_rx_loop()` thread reads Pico response lines ("OK", "ERR:..."), delivers via `rx_callback` → `_pico_rx_queue` (thread-safe) → drained in `_try_send_hardware_update()` → `_on_pico_rx()` shows green "Pico RX: OK" in Hardware panel, confirming commands arrive. **(5) Random LED blink rate** — firmware now uses `random.randint(100_000, 900_000)` µs per toggle (regenerated each toggle) so irregular blink rate visually proves new firmware was deployed vs. the fixed 1 Hz heartbeat. **(6) Jerky/vibrating motor movement (two-iteration fix)**: First tried reducing loop period and adding step accumulator; still jerky because `time.sleep_us(500)` was still inside `_step()`. Real fix: remove ALL sleep from `_step()`, put a single `time.sleep_us(remaining)` at the END of each loop iteration to hit exactly `STEP_US=800` µs/loop. `dt = STEP_US * 1e-6` (constant). Step accumulator (`_accumulator += velocity * dt`; step when `|acc| >= 1.0`) prevents float→int drift. Result: perfectly uniform step rate, smooth trapezoid velocity profile.
+- **2026-03-08 (deploy pipeline fix, RX monitoring, smooth steppers)**: 
+Six issues diagnosed and fixed in one session. **(1) mpremote reset silently failing** — mpremote's `reset` sub-command had a bare `except: pass`, so Pico never rebooted into new firmware even though copy succeeded. Fix: removed mpremote entirely; always use raw serial REPL with 4-step verbose progress (`[1/4]`–`[4/4]`) shown in the Hardware panel label. **(2) Deploy label never updating past "Starting deploy..."** — `QTimer.singleShot(0, fn)` called from a background thread does NOT fire in PyQt6 (timer created in thread context with no event loop). Fix: `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` chain for all background→GUI updates (deploy progress, deploy done, connect result, Pico RX). **(3) Race condition in serial reads** — `_rx_worker` thread started before `connect()`'s boot-wait loop caused both to read the same port, consuming "firmware ready" before `connect()` saw it. Fix: start `_rx_worker` only after boot-wait loop exits. **(4) RX monitoring added** — `_rx_loop()` thread reads Pico response lines ("OK", "ERR:..."), delivers via `rx_callback` → `_pico_rx_queue` (thread-safe) → drained in `_try_send_hardware_update()` → `_on_pico_rx()` shows green "Pico RX: OK" in Hardware panel, confirming commands arrive. **(5) Random LED blink rate** — firmware now uses `random.randint(100_000, 900_000)` µs per toggle (regenerated each toggle) so irregular blink rate visually proves new firmware was deployed vs. the fixed 1 Hz heartbeat. **(6) Jerky/vibrating motor movement (two-iteration fix)**: First tried reducing loop period and adding step accumulator; still jerky because `time.sleep_us(500)` was still inside `_step()`. Real fix: remove ALL sleep from `_step()`, put a single `time.sleep_us(remaining)` at the END of each loop iteration to hit exactly `STEP_US=800` µs/loop. `dt = STEP_US * 1e-6` (constant). Step accumulator (`_accumulator += velocity * dt`; step when `|acc| >= 1.0`) prevents float→int drift. Result: perfectly uniform step rate, smooth trapezoid velocity profile.
 - **2026-03-05 (offsets, table collision, JSON v2.0)**: Implemented `joint_plane_offsets` and `base_vertical_offset` in `forward_kinematics()` and `solve_ik_analytical()`. IK adjusts effective target Z by subtracting all offsets before solving; FK reapplies them. Added `check_table_collision()` to constraints.py (checks any joint z < 0). Added `collision_margin` field to `ConstraintSet`. New `JointPlaneOffsetPanel` in sidebar with base offset spinbox, per-joint offset spinboxes, and collision margin spinbox. `StatsPanel` now shows separate Self Collision and Table Collision rows. `WaypointPanel` JSON export upgraded to v2.0 with `arm_config` section; import is backwards compatible with v1.0. Note: distributed tail angles (Feature 6 as described) cannot preserve IK accuracy with the wrist-subtraction algorithm — collinear tail links are retained. All 10 acceptance tests pass.
 
 ---
