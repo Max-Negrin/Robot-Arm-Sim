@@ -42,12 +42,22 @@ class ArmConfig:
     joint_plane_offsets: List[float] = field(default_factory=list)
     # Lifts the entire arm base above the XY plane (world Z = 0).
     base_vertical_offset: float = 0.0
+    # Per-joint lateral offsets in the joint's local face plane (perpendicular to link).
+    # joint_lateral_x: in-plane perpendicular to the link (within the arm's vertical plane).
+    # joint_lateral_y: out-of-plane (perpendicular to the arm's vertical plane).
+    # Both rotate with the joint angle. Zero = standard centered attachment.
+    joint_lateral_x: List[float] = field(default_factory=list)
+    joint_lateral_y: List[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        # Ensure offset list is always padded to match link count
+        # Ensure offset lists are always padded to match link count
         n = len(self.link_lengths)
         if len(self.joint_plane_offsets) < n:
             self.joint_plane_offsets.extend([0.0] * (n - len(self.joint_plane_offsets)))
+        if len(self.joint_lateral_x) < n:
+            self.joint_lateral_x.extend([0.0] * (n - len(self.joint_lateral_x)))
+        if len(self.joint_lateral_y) < n:
+            self.joint_lateral_y.extend([0.0] * (n - len(self.joint_lateral_y)))
 
     @property
     def num_planar_joints(self) -> int:
@@ -143,28 +153,58 @@ def forward_kinematics(config: ArmConfig, state: ArmState) -> List[np.ndarray]:
     - sin(cumulative_angle) gives the radial (r) component.
     - cos(cumulative_angle) gives the vertical (z) component.
     - base_angle rotates the entire vertical plane around the Z axis.
+    - joint_lateral_x[i] / joint_lateral_y[i]: shift where the CHILD link of
+      joint i originates, in the joint face plane perpendicular to link i.
+      The offset rotates with the joint angle.
 
-    Returns
-    -------
-    List of (N+1) 3-element numpy arrays: [base, joint1, ..., end_effector]
+    Return format — interleaved (2N + 1 elements):
+      [eff[0], nom[0], eff[1], nom[1], …, eff[N-1], nom[N-1], eff_EE]
+
+    Where:
+      eff[i]  = effective start of link i  (= nom[i-1] + lateral_offset[i-1])
+      nom[i]  = nominal endpoint of link i  (= eff[i] + link displacement)
+      eff_EE  = end-effector position after applying last joint's lateral offset
+
+    The parent-link line is eff[i] → nom[i] and is NOT affected by offset[i].
+    The offset bridge eff[i+1] = nom[i] + offset[i] shifts without tilting link i.
+    positions[-1] is always the true end-effector position (used by IK).
     """
-    # Step 1: compute positions in the (r, z) vertical plane.
-    # Base starts at z = base_vertical_offset; each joint adds its plane offset to z.
-    planar_positions = [np.array([0.0, config.base_vertical_offset])]  # (r, z)
-    cumulative = 0.0
-    for i, length in enumerate(config.link_lengths):
-        cumulative += state.planar_angles[i]
-        dr = length * math.sin(cumulative)
-        dz = length * math.cos(cumulative) + config.joint_plane_offsets[i]
-        planar_positions.append(planar_positions[-1] + np.array([dr, dz]))
-
-    # Step 2: rotate into 3D by base_angle
     cb = math.cos(state.base_angle)
     sb = math.sin(state.base_angle)
+    r_hat = np.array([cb, sb, 0.0])   # radial direction in arm's plane
+    z_hat = np.array([0.0, 0.0, 1.0])
+    y_hat = np.array([-sb, cb, 0.0])  # perpendicular to arm's plane
+
     positions_3d: List[np.ndarray] = []
-    for rz in planar_positions:
-        r, z = rz[0], rz[1]
-        positions_3d.append(np.array([r * cb, r * sb, z]))
+    eff_start = np.array([0.0, 0.0, config.base_vertical_offset])
+    cumulative = 0.0
+
+    for i, length in enumerate(config.link_lengths):
+        positions_3d.append(eff_start)          # eff[i]: effective start of link i
+
+        cumulative += state.planar_angles[i]
+        sin_c = math.sin(cumulative)
+        cos_c = math.cos(cumulative)
+
+        # Nominal endpoint: parent link ends here, unchanged by this joint's offset
+        nom_end = (
+            eff_start
+            + length * sin_c * r_hat
+            + (length * cos_c + config.joint_plane_offsets[i]) * z_hat
+        )
+        positions_3d.append(nom_end)             # nom[i]: nominal end of link i
+
+        # Next link's effective start = nom_end + lateral offset (bridge segment)
+        lx = config.joint_lateral_x[i]
+        ly = config.joint_lateral_y[i]
+        eff_start = nom_end.copy()
+        if lx != 0.0:
+            eff_start = eff_start + lx * (cos_c * r_hat - sin_c * z_hat)
+        if ly != 0.0:
+            eff_start = eff_start + ly * y_hat
+
+    # Append true EE position (nom[N-1] + last offset bridge)
+    positions_3d.append(eff_start)               # eff_EE = positions[-1]
     return positions_3d
 
 
@@ -217,18 +257,20 @@ def compute_jacobian(config: ArmConfig, state: ArmState) -> np.ndarray:
     J = np.zeros((3, n))
 
     # Column 0: base rotation axis = world Z = [0, 0, 1]
+    # positions[0] = eff[0] = base (unchanged in interleaved format)
     z0 = np.array([0.0, 0.0, 1.0])
     J[:, 0] = np.cross(z0, p_ee - positions[0])
 
     # Columns 1..N: planar joint axes = perpendicular to the vertical plane
-    # In world coords: y_world = [-sin(base), cos(base), 0]
+    # In the interleaved format, eff[i] is at positions[2*i].
+    # The rotation axis for planar joint i is at eff[i] (effective start of link i).
     y_world = np.array([
         -math.sin(state.base_angle),
         math.cos(state.base_angle),
         0.0,
     ])
     for i in range(config.num_planar_joints):
-        J[:, 1 + i] = np.cross(y_world, p_ee - positions[i])
+        J[:, 1 + i] = np.cross(y_world, p_ee - positions[2 * i])
 
     return J
 
@@ -310,6 +352,14 @@ def solve_ik_analytical(
     """
     if locked_joints is None:
         locked_joints = {}
+
+    # Lateral offsets make the EE position a nonlinear function of joint angles;
+    # the planar analytical solver cannot handle them. Fall back to numerical IK.
+    if any(v != 0.0 for v in config.joint_lateral_x) or any(v != 0.0 for v in config.joint_lateral_y):
+        return IKResult(
+            success=False, state=None, error_distance=float("inf"),
+            message="Lateral offsets present: analytical IK unavailable, using numerical IK",
+        )
 
     tx, ty, tz = float(target[0]), float(target[1]), float(target[2])
     N = config.num_planar_joints

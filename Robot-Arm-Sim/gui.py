@@ -138,7 +138,9 @@ class ArmViewport(gl.GLViewWidget):
 
         pos_arr = np.array(positions, dtype=np.float32)
         self.link_plot.setData(pos=pos_arr)
-        self.joint_scatter.setData(pos=pos_arr[:-1])
+        # FK returns interleaved [eff0, nom0, eff1, nom1, …, eff_EE] (2N+1 elements).
+        # Joint dots at eff positions (even indices, excluding eff_EE).
+        self.joint_scatter.setData(pos=pos_arr[:-1:2])
         self.ee_scatter.setData(pos=pos_arr[-1:])
         self.target_scatter.setData(pos=np.array([target], dtype=np.float32))
 
@@ -465,34 +467,82 @@ class JointPlaneOffsetPanel(QGroupBox):
         layout.addLayout(global_form)
 
         # Per-joint offsets (dynamic, rebuilt when link count changes)
-        self.joint_form = QFormLayout()
+        self.joint_grid = QGridLayout()
         self.joint_spins: list[QDoubleSpinBox] = []
-        layout.addLayout(self.joint_form)
+        self.lateral_x_spins: list[QDoubleSpinBox] = []
+        self.lateral_y_spins: list[QDoubleSpinBox] = []
+        layout.addLayout(self.joint_grid)
 
     def rebuild(self, n: int) -> None:
         """Rebuild per-joint spinboxes for n planar joints."""
-        for spin in self.joint_spins:
+        for spin in self.joint_spins + self.lateral_x_spins + self.lateral_y_spins:
             spin.deleteLater()
-        while self.joint_form.count():
-            self.joint_form.removeRow(0)
+        # Clear grid
+        while self.joint_grid.count():
+            item = self.joint_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         self.joint_spins = []
+        self.lateral_x_spins = []
+        self.lateral_y_spins = []
+
+        # Header row
+        for col, text in enumerate(["Joint", "Z Offset", "Lateral X", "Lateral Y"]):
+            lbl = QLabel(text)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.joint_grid.addWidget(lbl, 0, col)
 
         for i in range(n):
-            spin = QDoubleSpinBox()
-            spin.setRange(-5.0, 5.0)
-            spin.setSingleStep(0.1)
-            spin.setDecimals(2)
-            spin.setValue(0.0)
-            spin.setToolTip(f"Additional Z offset at the endpoint of link {i + 1}")
-            spin.valueChanged.connect(self.config_changed.emit)
-            self.joint_form.addRow(f"Joint {i + 1} Z:", spin)
-            self.joint_spins.append(spin)
+            row = i + 1
+            self.joint_grid.addWidget(QLabel(f"{i + 1}"), row, 0)
+
+            z_spin = QDoubleSpinBox()
+            z_spin.setRange(-5.0, 5.0)
+            z_spin.setSingleStep(0.1)
+            z_spin.setDecimals(2)
+            z_spin.setValue(0.0)
+            z_spin.setToolTip(f"Z offset added at the endpoint of link {i + 1} (world Z)")
+            z_spin.valueChanged.connect(self.config_changed.emit)
+            self.joint_grid.addWidget(z_spin, row, 1)
+            self.joint_spins.append(z_spin)
+
+            x_spin = QDoubleSpinBox()
+            x_spin.setRange(-5.0, 5.0)
+            x_spin.setSingleStep(0.1)
+            x_spin.setDecimals(2)
+            x_spin.setValue(0.0)
+            x_spin.setToolTip(
+                f"Lateral offset for joint {i + 1}: in-plane perpendicular to the link.\n"
+                "Rotates with the joint angle."
+            )
+            x_spin.valueChanged.connect(self.config_changed.emit)
+            self.joint_grid.addWidget(x_spin, row, 2)
+            self.lateral_x_spins.append(x_spin)
+
+            y_spin = QDoubleSpinBox()
+            y_spin.setRange(-5.0, 5.0)
+            y_spin.setSingleStep(0.1)
+            y_spin.setDecimals(2)
+            y_spin.setValue(0.0)
+            y_spin.setToolTip(
+                f"Lateral offset for joint {i + 1}: perpendicular to the arm's vertical plane.\n"
+                "Rotates with base angle only."
+            )
+            y_spin.valueChanged.connect(self.config_changed.emit)
+            self.joint_grid.addWidget(y_spin, row, 3)
+            self.lateral_y_spins.append(y_spin)
 
     def get_base_offset(self) -> float:
         return self.base_offset_spin.value()
 
     def get_joint_offsets(self) -> list[float]:
         return [s.value() for s in self.joint_spins]
+
+    def get_lateral_x(self) -> list[float]:
+        return [s.value() for s in self.lateral_x_spins]
+
+    def get_lateral_y(self) -> list[float]:
+        return [s.value() for s in self.lateral_y_spins]
 
     def get_collision_margin(self) -> float:
         return self.collision_margin_spin.value()
@@ -502,6 +552,8 @@ class JointPlaneOffsetPanel(QGroupBox):
         base_offset: float,
         joint_offsets: list[float],
         collision_margin: float = 0.25,
+        lateral_x: list[float] | None = None,
+        lateral_y: list[float] | None = None,
     ) -> None:
         """Set all fields without triggering intermediate signals, then emit once."""
         for spin, attr in [
@@ -513,6 +565,16 @@ class JointPlaneOffsetPanel(QGroupBox):
             spin.blockSignals(False)
 
         for spin, val in zip(self.joint_spins, joint_offsets):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
+        for spin, val in zip(self.lateral_x_spins, lateral_x or []):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
+        for spin, val in zip(self.lateral_y_spins, lateral_y or []):
             spin.blockSignals(True)
             spin.setValue(val)
             spin.blockSignals(False)
@@ -2520,6 +2582,8 @@ class MainWindow(QMainWindow):
             joint_limits=base_cfg.joint_limits,
             joint_plane_offsets=self.offset_panel.get_joint_offsets(),
             base_vertical_offset=self.offset_panel.get_base_offset(),
+            joint_lateral_x=self.offset_panel.get_lateral_x(),
+            joint_lateral_y=self.offset_panel.get_lateral_y(),
         )
         self.constraints.collision_margin = self.offset_panel.get_collision_margin()
 
@@ -2538,12 +2602,14 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Configuration updated")
 
     def _on_offsets_changed(self) -> None:
-        """Handle changes to joint plane offsets, base offset, or collision margin."""
+        """Handle changes to joint plane offsets, base offset, lateral offsets, or collision margin."""
         self.arm_config = ArmConfig(
             link_lengths=self.arm_config.link_lengths,
             joint_limits=self.arm_config.joint_limits,
             joint_plane_offsets=self.offset_panel.get_joint_offsets(),
             base_vertical_offset=self.offset_panel.get_base_offset(),
+            joint_lateral_x=self.offset_panel.get_lateral_x(),
+            joint_lateral_y=self.offset_panel.get_lateral_y(),
         )
         self.constraints.collision_margin = self.offset_panel.get_collision_margin()
         self._render_arm()
@@ -2656,6 +2722,8 @@ class MainWindow(QMainWindow):
             "num_links": len(self.arm_config.link_lengths),
             "link_lengths": list(self.arm_config.link_lengths),
             "joint_plane_offsets": list(self.arm_config.joint_plane_offsets),
+            "joint_lateral_x": list(self.arm_config.joint_lateral_x),
+            "joint_lateral_y": list(self.arm_config.joint_lateral_y),
             "base_vertical_offset": self.arm_config.base_vertical_offset,
             "starting_angles": starting,
             "elbow": self.config_panel.elbow_combo.currentIndex(),
@@ -2680,9 +2748,16 @@ class MainWindow(QMainWindow):
 
         # Update JointPlaneOffsetPanel
         offsets = d.get("joint_plane_offsets", [0.0] * n)
+        lat_x = d.get("joint_lateral_x", [0.0] * n)
+        lat_y = d.get("joint_lateral_y", [0.0] * n)
         base_v = float(d.get("base_vertical_offset", 0.0))
         self.offset_panel.rebuild(n)
-        self.offset_panel.set_values(base_v, [float(o) for o in offsets])
+        self.offset_panel.set_values(
+            base_v,
+            [float(o) for o in offsets],
+            lateral_x=[float(v) for v in lat_x],
+            lateral_y=[float(v) for v in lat_y],
+        )
 
         # Apply starting angles if present
         starting = d.get("starting_angles")

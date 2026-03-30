@@ -6,9 +6,7 @@ Usage:
     pip install -r requirements.txt
     python main.py
 
-Lively Wallpaper:
-    Drop the compiled .exe into Lively Wallpaper, or pass --wallpaper / --wp
-    on the command line to activate wallpaper mode manually.
+
 """
 
 import os

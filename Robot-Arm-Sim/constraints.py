@@ -237,14 +237,18 @@ def check_self_collision(
     Returns True if collision detected.
     """
     positions = forward_kinematics(config, state)
-    n_links = len(positions) - 1
+    # FK returns interleaved [eff0, nom0, eff1, nom1, …, eff_EE] (2N+1 elements).
+    # Link segments are at even-indexed pairs: (positions[2i], positions[2i+1]).
+    n_links = config.num_planar_joints
 
     for i in range(n_links):
+        seg_i_a, seg_i_b = positions[2 * i], positions[2 * i + 1]
         for j in range(i + 2, n_links):
-            d1 = _point_to_segment_distance(positions[i], positions[j], positions[j + 1])
-            d2 = _point_to_segment_distance(positions[i + 1], positions[j], positions[j + 1])
-            d3 = _point_to_segment_distance(positions[j], positions[i], positions[i + 1])
-            d4 = _point_to_segment_distance(positions[j + 1], positions[i], positions[i + 1])
+            seg_j_a, seg_j_b = positions[2 * j], positions[2 * j + 1]
+            d1 = _point_to_segment_distance(seg_i_a, seg_j_a, seg_j_b)
+            d2 = _point_to_segment_distance(seg_i_b, seg_j_a, seg_j_b)
+            d3 = _point_to_segment_distance(seg_j_a, seg_i_a, seg_i_b)
+            d4 = _point_to_segment_distance(seg_j_b, seg_i_a, seg_i_b)
             if min(d1, d2, d3, d4) < margin:
                 return True
     return False
