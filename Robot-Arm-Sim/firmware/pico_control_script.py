@@ -431,6 +431,7 @@ def main():
     # for this use-case (one producer, one consumer).
     _wifi_rx = []    # str lines arriving from TCP client → main loop
     _wifi_tx = []    # str responses from main loop → TCP client
+    _wifi_log = []   # status strings the background thread wants printed
 
     if WIFI_SSID:
         import network as _net
@@ -446,10 +447,10 @@ def main():
                     break
                 time.sleep(0.1)
             if not wlan.isconnected():
-                print("WiFi connect failed — USB serial still active")
+                _wifi_log.append("WiFi connect failed - USB serial still active")
                 return
             ip = wlan.ifconfig()[0]
-            print("WiFi connected: " + ip)
+            _wifi_log.append("WiFi connected: " + ip)
 
             srv = _socket.socket()
             srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
@@ -578,6 +579,11 @@ def main():
                         buf = ""
         except Exception:
             pass
+
+        # WiFi status messages from background thread — print from main thread
+        # so they appear reliably in Thonny's serial monitor.
+        while _wifi_log:
+            print(_wifi_log.pop(0))
 
         # WiFi TCP (non-blocking drain — lines placed by _wifi_server thread)
         while _wifi_rx:

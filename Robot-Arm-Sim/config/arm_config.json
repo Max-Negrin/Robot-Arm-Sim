@@ -24,7 +24,7 @@
       0.0,
       0.0
     ],
-    "elbow": 1,
+    "elbow": 0,
     "motor_configs": [
       {
         "idx": 0,
@@ -99,9 +99,9 @@
       "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 7.0,
-      "y": 4.0,
-      "z": 1.0,
+      "x": 4.0,
+      "y": 3.0,
+      "z": 2.5,
       "approach_auto": true,
       "approach_angle_deg": 0.0
     }
