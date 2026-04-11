@@ -20,7 +20,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSlider, QGroupBox, QFormLayout,
-    QComboBox, QCheckBox, QLineEdit, QSplitter, QScrollArea,
+    QComboBox, QCheckBox, QLineEdit, QRadioButton, QSplitter, QScrollArea,
     QSpinBox, QDoubleSpinBox, QToolBox, QStatusBar, QProgressBar,
     QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QGridLayout,
