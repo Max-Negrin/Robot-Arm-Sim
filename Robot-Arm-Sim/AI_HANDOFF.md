@@ -1,6 +1,6 @@
 # Robot-Arm-Sim — Comprehensive AI Handoff
 <!-- IMPORTANT: Update this file every time you iterate on the simulator. -->
-<!-- Last updated: 2026-03-08 -->
+<!-- Last updated: 2026-04-11 -->
 
 ## 🎯 Project Overview
 
@@ -87,7 +87,8 @@ Robot-Arm-Sim/
 ├── hardware/
 │   ├── __init__.py              # Package marker
 │   ├── protocol.py              # Serial message encoding
-│   ├── pico_interface.py        # PicoInterface class + find_pico_port()
+│   ├── pico_interface.py        # PicoInterface class + find_pico_port() (USB)
+│   ├── pico_wifi_interface.py   # PicoWifiInterface class (WiFi TCP, same API)
 │   └── micropython_deployer.py  # MicroPythonDeployer (raw serial REPL)
 │
 ├── firmware/
@@ -100,7 +101,8 @@ Robot-Arm-Sim/
 ├── logs/
 │   └── hardware_log.txt         # Rotating file log (2 MB × 3 files)
 │
-├── waypoints/                   # Drop .json files here for auto-load on startup
+├── waypoints/                   # JSON waypoint files (load manually via Waypoint panel)
+│   └── helix.json               # 64-point 3D helix (x=3.5cos t, y=3.5sin t, z=2.5+t/π)
 │
 ├── text files/
 │   ├── ARCHITECTURE.md          # Detailed technical architecture
@@ -206,10 +208,20 @@ class ArmConfig:
     joint_limits: List[Tuple[float, float]]  # (min_rad, max_rad) per joint
     joint_plane_offsets: List[float]       # Incremental Z offset at each joint endpoint
     base_vertical_offset: float            # Lifts the entire arm base above z=0 (default 0.0)
+    joint_lateral_x: List[float]          # In-plane lateral offset at START of link i
+    joint_lateral_y: List[float]          # Out-of-plane lateral offset at START of link i
     num_planar_joints: int                 # N (computed)
     total_reach: float                     # Sum of all link lengths
     min_reach: float                       # Longest single link
 ```
+
+**Lateral offset semantics (important):**
+
+- `joint_lateral_x[0]` / `joint_lateral_y[0]` = where the shoulder attaches to the base
+- `joint_lateral_x[1]` / `joint_lateral_y[1]` = where the elbow attaches to the shoulder
+- `joint_lateral_x[i]` is applied at the **start** of link i (before link i rotates), using the parent cumulative angle
+- Direction: X = in-plane perpendicular to the parent link; Y = out-of-plane (perpendicular to arm's vertical plane)
+- When any lateral offset ≠ 0, analytical IK falls back to numerical IK automatically
 
 **`ArmState`** — Mutable joint state
 
@@ -327,7 +339,11 @@ Two implementations:
 
 - Accumulates angles in (r, z) plane starting at z = `base_vertical_offset`
 - Each link i adds `joint_plane_offsets[i]` to its z endpoint contribution
-- Returns list of N+1 joint positions (base → EE)
+- Returns **interleaved list of 2N positions**: `[eff[0], nom[0], eff[1], nom[1], …, eff[N-1], nom[N-1]]`
+  - `eff[i]` = effective start of link i (after mount offset applied)
+  - `nom[i]` = nominal end of link i (where the link physically ends)
+  - `positions[-1]` = `nom[N-1]` = end-effector (used by all IK code)
+- Lateral offset `joint_lateral_x[i]` / `joint_lateral_y[i]` applied **before** link i, using parent cumulative angle
 - Used for rendering and IK error computation
 
 **2. DH FK** (`forward_kinematics_frames`)
@@ -387,8 +403,8 @@ For an N-link arm:
 
 **Geometric Jacobian** (3×(1+N)):
 
-- Column 0: `z_world × (p_ee - p_base)` (base revolute)
-- Columns 1..N: `y_i × (p_ee - p_i)` (planar joints, perpendicular to plane)
+- Column 0: `z_world × (p_ee - base_pos)` where `base_pos = [0, 0, base_vertical_offset]` (NOT `positions[0]`, which may include a lateral offset)
+- Columns 1..N: `y_i × (p_ee - positions[2*i])` — uses `eff[i]` (even indices in interleaved FK output) as joint pivot locations
 
 **Condition number** (`J·J^T`):
 
@@ -528,21 +544,41 @@ math_engine.set_expression(2, "L1 + L2 * cos(theta_1)")
 
 | Panel | Role |
 |-------|------|
-| `ArmConfigPanel` | Link count, link lengths, elbow selector |
+| `ArmConfigPanel` | Link count, link lengths (max 100), elbow selector, Apply Configuration button |
 | `TargetPanel` | Target XYZ spinboxes, approach angle (fallback) |
 | `InitialJointPanel` | Editable starting pose before IK solving |
-| `JointPlaneOffsetPanel` | Base Z offset, per-joint Z offsets, collision margin spinbox |
+| `JointPlaneOffsetPanel` | Base Z offset, per-joint Z + lateral X/Y offsets, collision margin spinbox |
 | `JointOutputPanel` | Real-time joint angle display (degrees) |
 | `ConstrainEndEffectorPanel` | EE orientation toggle + auto-capture + manual angle |
 | `CustomMathPanel` | SymPy expression input per joint |
 | `AnimationControlPanel` | Speed slider (0.1x–5.0x), progress bar |
 | `WaypointPanel` | Multi-waypoint path: create, reorder, run, import/export JSON v2.0 |
 | `StatsPanel` | EE distance, reachability, self-collision, table-collision, singularity, FPS |
+| `MotorConfigPanel` | Per-joint steps/rev, gear ratio, microstepping, zero offset |
+| `HardwarePanel` | USB/WiFi toggle, port/IP fields, Connect/Deploy, status |
+| `PinoutPanel` | GPIO pin assignment table per joint |
+
+**Toolbox layout (grouped):**
+
+| Toolbox page | Contains |
+|---|---|
+| Arm Setup | ArmConfigPanel + JointPlaneOffsetPanel |
+| Target & Constraints | TargetPanel + ConstrainEndEffectorPanel |
+| Joint State | InitialJointPanel + JointOutputPanel |
+| Animation | AnimationControlPanel |
+| Waypoint Path | WaypointPanel |
+| Custom Math | CustomMathPanel |
+| Motor Configuration | MotorConfigPanel |
+| Pico Pinout | PinoutPanel |
+| Hardware (Pico 2W) | HardwarePanel |
+| Status | StatsPanel |
+
+**Save as Default button:** Persistent button above the toolbox. Calls `_save_arm_config()` and shows confirmation in status bar. All current settings are written to `config/arm_config.json` and will be restored on next startup.
 
 **Layout:**
 
 - QSplitter (horizontal) with resizable divider
-- Left: Sidebar (QScrollArea → QToolBox with all panels)
+- Left: Sidebar (QScrollArea → Save button + QToolBox with grouped panels)
 - Right: 3D viewport (GLViewWidget)
 - Bottom: Status bar (messages and progress)
 
@@ -1155,16 +1191,54 @@ Every panel's state is saved to `config/arm_config.json` when the arm configurat
 
 Old files missing `target_panel` or `elbow` fall back to top-level `"target"` and `"elbow"` keys (legacy format).
 
+### WiFi Support (`hardware/pico_wifi_interface.py`)
+
+**`PicoWifiInterface`** — drop-in replacement for `PicoInterface` when the Pico is connected over WiFi (station mode). Identical public API: `connect(host, port)`, `send_joint_angles()`, `rx_callback`, `is_connected`.
+
+- Connects via `socket.create_connection((host, port))`, retries for up to 15 s (Pico may still be joining network)
+- Same TX/RX daemon thread model as `PicoInterface`
+- Same protocol: `J0:45.00,J1:32.50,…\n` → `OK\n`
+
+**Firmware WiFi config** (injected by deployer via sentinels):
+
+```python
+# <<BEGIN_WIFI_CONFIG>>
+WIFI_SSID = "YourNetwork"
+WIFI_PASSWORD = "yourpassword"
+TCP_PORT = 8888
+# <<END_WIFI_CONFIG>>
+```
+
+If `WIFI_SSID` is empty, WiFi is disabled (USB-only mode, same as before).
+When set, firmware starts a `_thread` TCP server on `TCP_PORT` at boot. Both USB serial and WiFi work simultaneously.
+
+**WiFi firmware boot sequence:**
+
+1. Connects to home router (up to 10 s)
+2. Prints `WiFi connected: 192.168.x.x` over USB serial — **note this IP on first setup**
+3. Starts TCP server on `TCP_PORT`
+4. Prints `Robot Arm Pico Controller ready` + `firmware ready`
+
+**GUI HardwarePanel (WiFi mode):**
+
+- Radio buttons: USB (default) | WiFi
+- WiFi mode shows: IP Address field, TCP Port spinner (default 8888)
+- SSID + Password fields visible in WiFi mode (used only at deploy time, not for connecting)
+- Connect button emits `wifi_connect_requested(host, port)` instead of `connect_requested(port, baud)`
+- Deploy in WiFi mode injects SSID/password into firmware before upload
+
+**Finding the Pico's IP:** On first deploy, open Thonny's serial monitor — the Pico prints its IP. Then set a static DHCP lease in your router (bind MAC → fixed IP) so it never changes.
+
 ### New GUI Panels
 
 | Panel | Role |
 |-------|------|
 | `MotorConfigPanel` | Per-joint steps/rev, gear ratio, microstepping, zero offset. Save/load JSON. |
-| `HardwarePanel` | Enable toggle, port selector, Connect/Disconnect, Deploy Firmware, status display |
+| `HardwarePanel` | USB/WiFi toggle, port/IP fields, SSID/password (deploy), Connect/Deploy, status display |
 
 ### MainWindow Changes
 
-- `_hardware: Optional[PicoInterface]` — None when disconnected
+- `_hardware: Optional[PicoInterface | PicoWifiInterface]` — None when disconnected
 - `_pico_rx_queue: queue.Queue` — thread-safe queue; RX callback pushes here, main thread drains in `_try_send_hardware_update()`
 - `_try_send_hardware_update()` — called every animation timer tick; drains `_pico_rx_queue`; sends angle updates; detects unexpected disconnect
 - `_on_hardware_connect()` / `_on_hardware_disconnect()` — signal handlers
@@ -1206,6 +1280,7 @@ pyserial>=3.5    # pip install pyserial   (for hardware mode)
 - **2026-03-08 (deploy pipeline fix, RX monitoring, smooth steppers)**: 
 Six issues diagnosed and fixed in one session. **(1) mpremote reset silently failing** — mpremote's `reset` sub-command had a bare `except: pass`, so Pico never rebooted into new firmware even though copy succeeded. Fix: removed mpremote entirely; always use raw serial REPL with 4-step verbose progress (`[1/4]`–`[4/4]`) shown in the Hardware panel label. **(2) Deploy label never updating past "Starting deploy..."** — `QTimer.singleShot(0, fn)` called from a background thread does NOT fire in PyQt6 (timer created in thread context with no event loop). Fix: `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` chain for all background→GUI updates (deploy progress, deploy done, connect result, Pico RX). **(3) Race condition in serial reads** — `_rx_worker` thread started before `connect()`'s boot-wait loop caused both to read the same port, consuming "firmware ready" before `connect()` saw it. Fix: start `_rx_worker` only after boot-wait loop exits. **(4) RX monitoring added** — `_rx_loop()` thread reads Pico response lines ("OK", "ERR:..."), delivers via `rx_callback` → `_pico_rx_queue` (thread-safe) → drained in `_try_send_hardware_update()` → `_on_pico_rx()` shows green "Pico RX: OK" in Hardware panel, confirming commands arrive. **(5) Random LED blink rate** — firmware now uses `random.randint(100_000, 900_000)` µs per toggle (regenerated each toggle) so irregular blink rate visually proves new firmware was deployed vs. the fixed 1 Hz heartbeat. **(6) Jerky/vibrating motor movement (two-iteration fix)**: First tried reducing loop period and adding step accumulator; still jerky because `time.sleep_us(500)` was still inside `_step()`. Real fix: remove ALL sleep from `_step()`, put a single `time.sleep_us(remaining)` at the END of each loop iteration to hit exactly `STEP_US=800` µs/loop. `dt = STEP_US * 1e-6` (constant). Step accumulator (`_accumulator += velocity * dt`; step when `|acc| >= 1.0`) prevents float→int drift. Result: perfectly uniform step rate, smooth trapezoid velocity profile.
 - **2026-03-05 (offsets, table collision, JSON v2.0)**: Implemented `joint_plane_offsets` and `base_vertical_offset` in `forward_kinematics()` and `solve_ik_analytical()`. IK adjusts effective target Z by subtracting all offsets before solving; FK reapplies them. Added `check_table_collision()` to constraints.py (checks any joint z < 0). Added `collision_margin` field to `ConstraintSet`. New `JointPlaneOffsetPanel` in sidebar with base offset spinbox, per-joint offset spinboxes, and collision margin spinbox. `StatsPanel` now shows separate Self Collision and Table Collision rows. `WaypointPanel` JSON export upgraded to v2.0 with `arm_config` section; import is backwards compatible with v1.0. Note: distributed tail angles (Feature 6 as described) cannot preserve IK accuracy with the wrist-subtraction algorithm — collinear tail links are retained. All 10 acceptance tests pass.
+- **2026-04-11 (lateral offsets, FK semantics, WiFi support, GUI cleanup)**: Eight changes in one session. **(1) Per-joint lateral offsets** — added `joint_lateral_x[]` and `joint_lateral_y[]` to `ArmConfig` (saved in arm_config.json); new spinboxes in `JointPlaneOffsetPanel`; FK applies them as radial/lateral displacements in 3D before each link. **(2) FK semantics fix** — `offset[i]` now applied at START of link `i` (using parent cumulative angle), not after `nom[i]`. Return format changed from 2N+1 to 2N interleaved `[eff[0], nom[0], eff[1], nom[1], …]`; `positions[-1]` is the EE. `ArmViewport.update_arm()` index fix: `pos_arr[::2]` for joint scatter (was `pos_arr[:-1:2]`). **(3) Jacobian base column fix** — after FK semantics change, `positions[0]` includes offset[0] so it can no longer be used as the base pivot. Replaced with explicit `base_pos = [0, 0, base_vertical_offset]`; planar joint columns still use `positions[2*i]` for eff[i]. **(4) Config save/load bug fix** — `_on_config_changed()` was calling `offset_panel.rebuild(n)` which discarded user-entered offset values. Fix: save and restore all offset panel values (joint offsets, lateral x/y, base offset, collision margin) around the rebuild call. **(5) Link length max raised to 100** — `ArmConfigPanel._rebuild_links()` spinbox range was `(0.1, 20.0)`, raised to `(0.1, 100.0)`. **(6) Save as Default button** — new "Save as Default" `QPushButton` above the toolbox; clicking calls `_on_save_as_default()` which calls `_save_arm_config()` and shows a status bar message. **(7) Toolbox reorganization** — sidebar toolbox restructured into 10 logical groups: "Arm Setup" (ArmConfigPanel + JointPlaneOffsetPanel), "Target & Constraints" (TargetPanel + ConstrainEndEffectorPanel), "Joint State" (InitialJointPanel + JointOutputPanel), plus Animation, Waypoint Path, Custom Math, Motor Configuration, Pico Pinout, Hardware, Status. **(8) Auto-open features removed** — `_show_help_on_start` startup timer and `_load_auto_waypoints` timer removed; methods and `import glob` removed. **(9) WiFi support** — `PicoWifiInterface` (`hardware/pico_wifi_interface.py`) added as drop-in replacement for `PicoInterface`; identical public API using TCP socket instead of serial. Firmware (`firmware/pico_control_script.py`) gains `<<BEGIN_WIFI_CONFIG>>` sentinel block and a `_thread` TCP server that activates when `WIFI_SSID` is non-empty; USB serial still works simultaneously. Deployer (`hardware/micropython_deployer.py`) extended with `_inject_wifi_config()` and new `wifi_ssid`/`wifi_password`/`wifi_port` parameters. `HardwarePanel` rewritten with USB/WiFi radio toggle: USB mode shows existing port/baud; WiFi mode shows IP address, TCP port, SSID, password fields. New `wifi_connect_requested(host, port)` signal; `MainWindow._on_hardware_wifi_connect()` handles it with same background-thread polling pattern as USB. **(10) QRadioButton import fix** — `QRadioButton` was missing from the `PyQt6.QtWidgets` import list, causing `NameError` on startup; added between `QCheckBox` and `QSplitter`.
 
 ---
 
