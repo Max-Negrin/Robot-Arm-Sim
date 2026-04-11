@@ -1779,6 +1779,14 @@ class HardwarePanel(QGroupBox):
         btn_row.addWidget(self.deploy_btn)
         layout.addLayout(btn_row)
 
+        # Pico IP address (populated when "WiFi connected: x.x.x.x" arrives)
+        self.ip_lbl = QLabel("")
+        self.ip_lbl.setFont(QFont("Consolas", 9))
+        self.ip_lbl.setWordWrap(False)
+        self.ip_lbl.setStyleSheet("color: #00cc00;")
+        self.ip_lbl.setVisible(False)
+        layout.addWidget(self.ip_lbl)
+
         # Error/info log
         self.log_lbl = QLabel("")
         self.log_lbl.setFont(QFont("Consolas", 8))
@@ -3061,7 +3069,11 @@ class MainWindow(QMainWindow):
 
     def _on_pico_rx(self, text: str) -> None:
         """Called in the main thread with each line received from the Pico."""
-        if text.startswith("OK"):
+        if text.startswith("WiFi connected:"):
+            ip = text.split(":", 1)[1].strip()
+            self.hardware_panel.ip_lbl.setText(f"Pico IP: {ip}")
+            self.hardware_panel.ip_lbl.setVisible(True)
+        elif text.startswith("OK"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text} — commands are arriving")
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
         elif text.startswith("ERR"):
