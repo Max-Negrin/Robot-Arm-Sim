@@ -61,33 +61,6 @@ def get_runtime_base_path() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Lively Wallpaper detection
-# ---------------------------------------------------------------------------
-
-def detect_wallpaper_mode() -> bool:
-    """Return True if the process appears to be running inside Lively Wallpaper."""
-    # Explicit command-line flag (for testing or manual invocation)
-    if "--wallpaper" in sys.argv or "--wp" in sys.argv:
-        logger.info("Wallpaper mode: detected via command-line flag")
-        return True
-
-    # Parent process name check (requires psutil; silently skipped if unavailable)
-    try:
-        import psutil
-        parent = psutil.Process().parent()
-        if parent:
-            name = parent.name().lower()
-            lively_names = ("lively.exe", "livelywallpaper.exe", "lively wallpaper.exe")
-            if any(n in name for n in lively_names):
-                logger.info("Wallpaper mode: detected via parent process '%s'", name)
-                return True
-    except Exception:
-        pass  # psutil not installed or access denied — not a fatal error
-
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 
@@ -124,10 +97,6 @@ def main():
         if not check_dependencies():
             sys.exit(1)
 
-    wallpaper_mode = detect_wallpaper_mode()
-    if wallpaper_mode:
-        logger.info("Running in Lively Wallpaper mode")
-
     try:
         from PyQt6.QtWidgets import QApplication
         from gui import MainWindow
@@ -138,7 +107,7 @@ def main():
         logger.info("QApplication created successfully")
 
         logger.info("Creating MainWindow...")
-        window = MainWindow(wallpaper_mode=wallpaper_mode)
+        window = MainWindow()
         logger.info("MainWindow created successfully")
 
         window.show()

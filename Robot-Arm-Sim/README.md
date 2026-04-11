@@ -23,7 +23,7 @@ build_exe.bat
 
 Output: `../robot-arm-sim-build/robot_arm_sim.exe`
 
-See [BUILD.md](BUILD.md) for detailed build instructions, waypoint auto-loading, and wallpaper mode info.
+See [BUILD.md](BUILD.md) for detailed build instructions and waypoint auto-loading info.
 
 ## Features
 

@@ -153,21 +153,25 @@ def forward_kinematics(config: ArmConfig, state: ArmState) -> List[np.ndarray]:
     - sin(cumulative_angle) gives the radial (r) component.
     - cos(cumulative_angle) gives the vertical (z) component.
     - base_angle rotates the entire vertical plane around the Z axis.
-    - joint_lateral_x[i] / joint_lateral_y[i]: shift where the CHILD link of
-      joint i originates, in the joint face plane perpendicular to link i.
-      The offset rotates with the joint angle.
+    - joint_lateral_x[i] / joint_lateral_y[i]: shift where link i STARTS,
+      relative to the end of link i-1 (i.e. the mount point of link i on
+      the previous link). The offset direction uses the cumulative angle
+      BEFORE joint i rotates, so it rotates with the parent link.
+      offset[0] = shoulder mount on base
+      offset[1] = elbow mount on shoulder
+      offset[N-1] = last joint mount on previous link
 
-    Return format — interleaved (2N + 1 elements):
-      [eff[0], nom[0], eff[1], nom[1], …, eff[N-1], nom[N-1], eff_EE]
+    Return format — interleaved (2N elements):
+      [eff[0], nom[0], eff[1], nom[1], …, eff[N-1], nom[N-1]]
 
     Where:
-      eff[i]  = effective start of link i  (= nom[i-1] + lateral_offset[i-1])
-      nom[i]  = nominal endpoint of link i  (= eff[i] + link displacement)
-      eff_EE  = end-effector position after applying last joint's lateral offset
+      eff[i]  = effective start of link i (= nom[i-1] + lateral_offset[i])
+      nom[i]  = nominal endpoint of link i (= eff[i] + link displacement)
 
-    The parent-link line is eff[i] → nom[i] and is NOT affected by offset[i].
-    The offset bridge eff[i+1] = nom[i] + offset[i] shifts without tilting link i.
-    positions[-1] is always the true end-effector position (used by IK).
+    The mount-offset bridge is eff[i] = nom[i-1] + offset[i], applied BEFORE
+    link i rotates. Link i-1 draws nom[i-1] unchanged; the bridge shifts only
+    the child attachment point.
+    positions[-1] = nom[N-1] is always the true end-effector position (used by IK).
     """
     cb = math.cos(state.base_angle)
     sb = math.sin(state.base_angle)
@@ -176,35 +180,37 @@ def forward_kinematics(config: ArmConfig, state: ArmState) -> List[np.ndarray]:
     y_hat = np.array([-sb, cb, 0.0])  # perpendicular to arm's plane
 
     positions_3d: List[np.ndarray] = []
-    eff_start = np.array([0.0, 0.0, config.base_vertical_offset])
+    attach = np.array([0.0, 0.0, config.base_vertical_offset])
     cumulative = 0.0
 
     for i, length in enumerate(config.link_lengths):
-        positions_3d.append(eff_start)          # eff[i]: effective start of link i
+        # Apply mount offset[i] BEFORE link i, using parent cumulative angle
+        lx = config.joint_lateral_x[i]
+        ly = config.joint_lateral_y[i]
+        sin_pre = math.sin(cumulative)
+        cos_pre = math.cos(cumulative)
+        eff_start = attach.copy()
+        if lx != 0.0:
+            eff_start = eff_start + lx * (cos_pre * r_hat - sin_pre * z_hat)
+        if ly != 0.0:
+            eff_start = eff_start + ly * y_hat
+
+        positions_3d.append(eff_start)           # eff[i]: effective start of link i
 
         cumulative += state.planar_angles[i]
         sin_c = math.sin(cumulative)
         cos_c = math.cos(cumulative)
 
-        # Nominal endpoint: parent link ends here, unchanged by this joint's offset
+        # Nominal endpoint: link i ends here
         nom_end = (
             eff_start
             + length * sin_c * r_hat
             + (length * cos_c + config.joint_plane_offsets[i]) * z_hat
         )
         positions_3d.append(nom_end)             # nom[i]: nominal end of link i
+        attach = nom_end                         # next link attaches here
 
-        # Next link's effective start = nom_end + lateral offset (bridge segment)
-        lx = config.joint_lateral_x[i]
-        ly = config.joint_lateral_y[i]
-        eff_start = nom_end.copy()
-        if lx != 0.0:
-            eff_start = eff_start + lx * (cos_c * r_hat - sin_c * z_hat)
-        if ly != 0.0:
-            eff_start = eff_start + ly * y_hat
-
-    # Append true EE position (nom[N-1] + last offset bridge)
-    positions_3d.append(eff_start)               # eff_EE = positions[-1]
+    # positions[-1] = nom[N-1] = end-effector
     return positions_3d
 
 
@@ -257,9 +263,11 @@ def compute_jacobian(config: ArmConfig, state: ArmState) -> np.ndarray:
     J = np.zeros((3, n))
 
     # Column 0: base rotation axis = world Z = [0, 0, 1]
-    # positions[0] = eff[0] = base (unchanged in interleaved format)
+    # Use actual base pivot (origin + base_vertical_offset), not eff[0] which
+    # may include offset[0] applied before link 0.
     z0 = np.array([0.0, 0.0, 1.0])
-    J[:, 0] = np.cross(z0, p_ee - positions[0])
+    base_pos = np.array([0.0, 0.0, config.base_vertical_offset])
+    J[:, 0] = np.cross(z0, p_ee - base_pos)
 
     # Columns 1..N: planar joint axes = perpendicular to the vertical plane
     # In the interleaved format, eff[i] is at positions[2*i].

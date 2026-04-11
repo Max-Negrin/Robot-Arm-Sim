@@ -8,7 +8,6 @@ Main window with:
 - 60fps timer loop driving animation
 """
 
-import glob
 import json
 import math
 import os
@@ -138,9 +137,9 @@ class ArmViewport(gl.GLViewWidget):
 
         pos_arr = np.array(positions, dtype=np.float32)
         self.link_plot.setData(pos=pos_arr)
-        # FK returns interleaved [eff0, nom0, eff1, nom1, …, eff_EE] (2N+1 elements).
-        # Joint dots at eff positions (even indices, excluding eff_EE).
-        self.joint_scatter.setData(pos=pos_arr[:-1:2])
+        # FK returns interleaved [eff0, nom0, eff1, nom1, …, nomN-1] (2N elements).
+        # Joint dots at eff positions (even indices).
+        self.joint_scatter.setData(pos=pos_arr[::2])
         self.ee_scatter.setData(pos=pos_arr[-1:])
         self.target_scatter.setData(pos=np.array([target], dtype=np.float32))
 
@@ -205,7 +204,7 @@ class ArmConfigPanel(QGroupBox):
             row = QHBoxLayout()
             row.addWidget(QLabel(f"L{i + 1}:"))
             spin = QDoubleSpinBox()
-            spin.setRange(0.1, 20.0)
+            spin.setRange(0.1, 100.0)
             spin.setSingleStep(0.1)
             spin.setDecimals(2)
             spin.setValue(defaults[i] if i < len(defaults) else 1.0)
@@ -1637,22 +1636,23 @@ class HardwarePanel(QGroupBox):
     """Raspberry Pi Pico 2W hardware connection panel.
 
     Provides:
-    - Enable/disable hardware mode toggle
-    - Serial port selector with auto-detect
-    - Connect / Disconnect button
-    - Deploy firmware button (uploads pico_control_script.py via mpremote or raw REPL)
+    - USB mode: serial port selector, baud rate, Connect/Deploy buttons
+    - WiFi mode: IP address + port fields, SSID/password for firmware deploy
+    - Connection type radio buttons to switch between USB and WiFi
     - Connection status display (red/green)
 
-    When enabled and connected, the MainWindow timer sends joint angles
-    to the Pico in a background thread at up to 60 Hz.
+    When connected, the MainWindow timer sends joint angles at up to 60 Hz.
     """
 
     # Emitted when user changes hardware enable state
     hardware_enabled = pyqtSignal(bool)
-    # Emitted when user clicks Connect (True) or Disconnect (False)
-    connect_requested = pyqtSignal(str, int)   # port, baud
+    # USB: port string + baud rate
+    connect_requested = pyqtSignal(str, int)
+    # WiFi: host IP string + TCP port
+    wifi_connect_requested = pyqtSignal(str, int)
     disconnect_requested = pyqtSignal()
-    deploy_requested = pyqtSignal(str)          # port
+    # USB port for deploy; WiFi: empty string signals WiFi deploy mode
+    deploy_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__("Hardware (Pico 2W)", parent)
@@ -1662,7 +1662,7 @@ class HardwarePanel(QGroupBox):
         self.enable_cb = QCheckBox("Enable hardware synchronization")
         self.enable_cb.setToolTip(
             "When checked, joint angles are streamed to the physical robot arm\n"
-            "via USB serial at up to 60 Hz."
+            "at up to 60 Hz."
         )
         layout.addWidget(self.enable_cb)
 
@@ -1675,29 +1675,91 @@ class HardwarePanel(QGroupBox):
         status_row.addWidget(self.status_lbl)
         layout.addLayout(status_row)
 
-        # Port selector
+        # ── Connection type toggle ──────────────────────────────────────────
+        mode_row = QHBoxLayout()
+        self.usb_radio = QRadioButton("USB")
+        self.wifi_radio = QRadioButton("WiFi")
+        self.usb_radio.setChecked(True)
+        mode_row.addWidget(QLabel("Connection:"))
+        mode_row.addWidget(self.usb_radio)
+        mode_row.addWidget(self.wifi_radio)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
+        # ── USB fields ─────────────────────────────────────────────────────
+        self._usb_widget = QWidget()
+        usb_layout = QVBoxLayout(self._usb_widget)
+        usb_layout.setContentsMargins(0, 0, 0, 0)
+
         port_row = QHBoxLayout()
         port_row.addWidget(QLabel("Port:"))
         self.port_combo = QComboBox()
         self.port_combo.setEditable(True)
-        self.port_combo.setToolTip("Serial port (auto-detect on 'Connect' if empty)")
+        self.port_combo.setToolTip("Serial port (auto-detect on Connect if empty)")
         port_row.addWidget(self.port_combo)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setMaximumWidth(60)
         self.refresh_btn.clicked.connect(self._refresh_ports)
         port_row.addWidget(self.refresh_btn)
-        layout.addLayout(port_row)
+        usb_layout.addLayout(port_row)
 
-        # Baud rate
         baud_row = QHBoxLayout()
         baud_row.addWidget(QLabel("Baud:"))
         self.baud_combo = QComboBox()
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400"])
         self.baud_combo.setCurrentText("115200")
         baud_row.addWidget(self.baud_combo)
-        layout.addLayout(baud_row)
+        usb_layout.addLayout(baud_row)
 
-        # Connect / Deploy buttons
+        layout.addWidget(self._usb_widget)
+
+        # ── WiFi fields ────────────────────────────────────────────────────
+        self._wifi_widget = QWidget()
+        wifi_layout = QVBoxLayout(self._wifi_widget)
+        wifi_layout.setContentsMargins(0, 0, 0, 0)
+
+        ip_row = QHBoxLayout()
+        ip_row.addWidget(QLabel("IP Address:"))
+        self.ip_edit = QLineEdit()
+        self.ip_edit.setPlaceholderText("192.168.1.xxx")
+        self.ip_edit.setToolTip(
+            "IP address of the Pico on your home network.\n"
+            "Find it by checking your router's DHCP table or by viewing the\n"
+            "serial output in Thonny right after the Pico boots\n"
+            "(it prints 'WiFi connected: x.x.x.x')."
+        )
+        ip_row.addWidget(self.ip_edit)
+        wifi_layout.addLayout(ip_row)
+
+        tcp_row = QHBoxLayout()
+        tcp_row.addWidget(QLabel("TCP Port:"))
+        self.tcp_port_spin = QSpinBox()
+        self.tcp_port_spin.setRange(1024, 65535)
+        self.tcp_port_spin.setValue(8888)
+        tcp_row.addWidget(self.tcp_port_spin)
+        wifi_layout.addLayout(tcp_row)
+
+        # SSID/password used only for Deploy — not needed to Connect
+        wifi_layout.addWidget(QLabel("WiFi credentials (for Deploy only):"))
+        ssid_row = QHBoxLayout()
+        ssid_row.addWidget(QLabel("SSID:"))
+        self.ssid_edit = QLineEdit()
+        self.ssid_edit.setPlaceholderText("Your network name")
+        ssid_row.addWidget(self.ssid_edit)
+        wifi_layout.addLayout(ssid_row)
+
+        pw_row = QHBoxLayout()
+        pw_row.addWidget(QLabel("Password:"))
+        self.wifi_pw_edit = QLineEdit()
+        self.wifi_pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.wifi_pw_edit.setPlaceholderText("Network password")
+        pw_row.addWidget(self.wifi_pw_edit)
+        wifi_layout.addLayout(pw_row)
+
+        self._wifi_widget.setVisible(False)
+        layout.addWidget(self._wifi_widget)
+
+        # ── Connect / Deploy buttons ────────────────────────────────────────
         btn_row = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setStyleSheet(
@@ -1710,7 +1772,8 @@ class HardwarePanel(QGroupBox):
         self.deploy_btn = QPushButton("Deploy Firmware")
         self.deploy_btn.setToolTip(
             "Upload pico_control_script.py to the Pico as main.py.\n"
-            "Requires MicroPython firmware on the board."
+            "USB mode: uses serial REPL.  WiFi mode: requires USB port on\n"
+            "another machine — enter SSID + password above before deploying."
         )
         self.deploy_btn.clicked.connect(self._on_deploy_clicked)
         btn_row.addWidget(self.deploy_btn)
@@ -1725,15 +1788,21 @@ class HardwarePanel(QGroupBox):
         self.log_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.log_lbl)
 
+        # Wire mode toggle
+        self.usb_radio.toggled.connect(self._on_mode_changed)
+
         # Initial port population
         self._refresh_ports()
         self._connected = False
 
     # ── Public API ─────────────────────────────────────────────────────────
 
+    def is_wifi_mode(self) -> bool:
+        return self.wifi_radio.isChecked()
+
     def set_connected(self, connected: bool, message: str = "") -> None:
         self._connected = connected
-        self.connect_btn.setEnabled(True)   # always re-enable after attempt
+        self.connect_btn.setEnabled(True)
         if connected:
             self._set_status("connected")
             self.connect_btn.setText("Disconnect")
@@ -1766,7 +1835,23 @@ class HardwarePanel(QGroupBox):
         except ValueError:
             return 115200
 
+    def get_wifi_host(self) -> str:
+        return self.ip_edit.text().strip()
+
+    def get_wifi_port(self) -> int:
+        return self.tcp_port_spin.value()
+
+    def get_wifi_ssid(self) -> str:
+        return self.ssid_edit.text().strip()
+
+    def get_wifi_password(self) -> str:
+        return self.wifi_pw_edit.text()
+
     # ── Internal ───────────────────────────────────────────────────────────
+
+    def _on_mode_changed(self, usb_checked: bool) -> None:
+        self._usb_widget.setVisible(usb_checked)
+        self._wifi_widget.setVisible(not usb_checked)
 
     def _set_status(self, state: str) -> None:
         if state == "connected":
@@ -1788,7 +1873,6 @@ class HardwarePanel(QGroupBox):
         except Exception:
             ports = []
         self.port_combo.addItems(ports)
-        # Auto-select previous value if still available
         idx = self.port_combo.findText(current)
         if idx >= 0:
             self.port_combo.setCurrentIndex(idx)
@@ -1798,15 +1882,23 @@ class HardwarePanel(QGroupBox):
             self.disconnect_requested.emit()
         else:
             self._set_status("connecting")
-            self.connect_btn.setEnabled(False)   # prevent double-click while thread runs
-            self.connect_requested.emit(self.get_port(), self.get_baud())
+            self.connect_btn.setEnabled(False)
+            if self.is_wifi_mode():
+                self.wifi_connect_requested.emit(self.get_wifi_host(), self.get_wifi_port())
+            else:
+                self.connect_requested.emit(self.get_port(), self.get_baud())
 
     def _on_deploy_clicked(self) -> None:
-        port = self.get_port()
-        self.log_lbl.setText(f"Starting deploy to {port}...")
         self.log_lbl.setStyleSheet("color: #ffaa00;")
         self.deploy_btn.setEnabled(False)
-        self.deploy_requested.emit(port)
+        if self.is_wifi_mode():
+            # Signal with empty string tells MainWindow to use WiFi deploy path
+            self.log_lbl.setText("Starting WiFi firmware deploy...")
+            self.deploy_requested.emit("")
+        else:
+            port = self.get_port()
+            self.log_lbl.setText(f"Starting deploy to {port}...")
+            self.deploy_requested.emit(port)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2120,9 +2212,8 @@ class MainWindow(QMainWindow):
 
     TIMER_INTERVAL_MS = 16  # ~60 fps
 
-    def __init__(self, wallpaper_mode: bool = False):
+    def __init__(self):
         super().__init__()
-        self._wallpaper_mode = wallpaper_mode
         self.setWindowTitle("Robot Arm Simulator")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
@@ -2156,15 +2247,8 @@ class MainWindow(QMainWindow):
         # Initial render
         self._render_arm()
 
-        # Restore last session arm config (before waypoints auto-load)
+        # Restore last session arm config
         QTimer.singleShot(50, self._load_arm_config_on_startup)
-
-        # Show help dialog on startup (not in wallpaper mode)
-        if not wallpaper_mode:
-            QTimer.singleShot(100, self._show_help_on_start)
-
-        # Auto-load waypoints folder after window is fully ready
-        QTimer.singleShot(600, self._load_auto_waypoints)
 
     # ── Theme ──────────────────────────────────────────────────────────
 
@@ -2204,8 +2288,22 @@ class MainWindow(QMainWindow):
         sidebar_scroll.setMaximumWidth(600)
         sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+        # ── Save as Default button (always visible above toolbox) ──
+        self.save_default_btn = QPushButton("Save as Default")
+        self.save_default_btn.setToolTip(
+            "Save all current settings as defaults — they will be restored on next startup"
+        )
+
         toolbox = QToolBox()
-        sidebar_scroll.setWidget(toolbox)
+
+        # Wrap sidebar content: save button + toolbox
+        sidebar_widget = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(2)
+        sidebar_layout.addWidget(self.save_default_btn)
+        sidebar_layout.addWidget(toolbox)
+        sidebar_scroll.setWidget(sidebar_widget)
 
         self.config_panel = ArmConfigPanel()
         self.target_panel = TargetPanel()
@@ -2221,22 +2319,43 @@ class MainWindow(QMainWindow):
         self.pinout_panel = PinoutPanel()
         self.hardware_panel = HardwarePanel()
 
-        toolbox.addItem(self.config_panel, "Arm Configuration")
-        toolbox.addItem(self.target_panel, "Target Position")
-        toolbox.addItem(self.start_pose_panel, "Starting Angles")
-        toolbox.addItem(self.offset_panel, "Joint Plane Offsets")
-        toolbox.addItem(self.joint_panel, "Joint Angles")
-        toolbox.addItem(self.ee_constraint_panel, "End Effector Constraint")
-        toolbox.addItem(self.math_panel, "Custom Math")
+        # ── Group: Arm Setup (config + joint offsets) ──
+        arm_setup_widget = QWidget()
+        arm_setup_layout = QVBoxLayout(arm_setup_widget)
+        arm_setup_layout.setContentsMargins(0, 0, 0, 0)
+        arm_setup_layout.setSpacing(4)
+        arm_setup_layout.addWidget(self.config_panel)
+        arm_setup_layout.addWidget(self.offset_panel)
+
+        # ── Group: Target & Constraints ──
+        target_widget = QWidget()
+        target_layout = QVBoxLayout(target_widget)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        target_layout.setSpacing(4)
+        target_layout.addWidget(self.target_panel)
+        target_layout.addWidget(self.ee_constraint_panel)
+
+        # ── Group: Joint State (starting angles + live readout) ──
+        joint_state_widget = QWidget()
+        joint_state_layout = QVBoxLayout(joint_state_widget)
+        joint_state_layout.setContentsMargins(0, 0, 0, 0)
+        joint_state_layout.setSpacing(4)
+        joint_state_layout.addWidget(self.start_pose_panel)
+        joint_state_layout.addWidget(self.joint_panel)
+
+        toolbox.addItem(arm_setup_widget, "Arm Setup")
+        toolbox.addItem(target_widget, "Target & Constraints")
+        toolbox.addItem(joint_state_widget, "Joint State")
         toolbox.addItem(self.anim_panel, "Animation")
         toolbox.addItem(self.waypoint_panel, "Waypoint Path")
+        toolbox.addItem(self.math_panel, "Custom Math")
         toolbox.addItem(self.motor_config_panel, "Motor Configuration")
         toolbox.addItem(self.pinout_panel, "Pico Pinout")
         toolbox.addItem(self.hardware_panel, "Hardware (Pico 2W)")
         toolbox.addItem(self.stats_panel, "Status")
 
-        # Expand important panels by default
-        toolbox.setCurrentIndex(1)  # Target panel
+        # Expand Target & Constraints by default
+        toolbox.setCurrentIndex(1)
 
         # ── 3D Viewport ──
         self.viewport = ArmViewport()
@@ -2267,6 +2386,7 @@ class MainWindow(QMainWindow):
         self._help_dialog = HelpDialog(self)
 
         # ── Wire up signals ──
+        self.save_default_btn.clicked.connect(self._on_save_as_default)
         self.config_panel.apply_btn.clicked.connect(self._on_config_changed)
         self.anim_panel.reset_btn.clicked.connect(self._on_reset_to_vertical)
         self.target_panel.update_btn.clicked.connect(self._on_update_clicked)
@@ -2295,6 +2415,7 @@ class MainWindow(QMainWindow):
 
         # Wire hardware panel signals
         self.hardware_panel.connect_requested.connect(self._on_hardware_connect)
+        self.hardware_panel.wifi_connect_requested.connect(self._on_hardware_wifi_connect)
         self.hardware_panel.disconnect_requested.connect(self._on_hardware_disconnect)
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
 
@@ -2350,93 +2471,6 @@ class MainWindow(QMainWindow):
             dlg.show()
             dlg.raise_()
             self._help_hint_label.hide()
-
-    # ── Auto-waypoints folder ─────────────────────────────────────────
-
-    def _get_waypoints_dir(self) -> str:
-        """Return path to the waypoints folder beside the executable (or source)."""
-        if getattr(sys, "frozen", False):
-            base = os.path.dirname(sys.executable)
-        else:
-            base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, "waypoints")
-
-    def _load_auto_waypoints(self) -> None:
-        """Scan the waypoints/ folder and auto-load any JSON files found.
-
-        Creates the folder if it does not exist. Invalid files are skipped
-        with a warning. All valid waypoints are concatenated into one
-        sequence and auto-started with looping enabled.
-        """
-        folder = self._get_waypoints_dir()
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except OSError as e:
-            logger.warning("Could not create waypoints folder %s: %s", folder, e)
-            return
-
-        json_files = sorted(glob.glob(os.path.join(folder, "*.json")))
-        if not json_files:
-            logger.info("Waypoints folder is empty (%s) — running normally", folder)
-            return
-
-        all_waypoints: list[dict] = []
-        arm_config_applied = False
-
-        for path in json_files:
-            try:
-                with open(path, "r") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Skipping invalid waypoint file %s: %s", path, e)
-                continue
-
-            # Apply arm_config from the first file that has one
-            if not arm_config_applied and "arm_config" in data:
-                try:
-                    self._apply_arm_config_dict(data["arm_config"])
-                    arm_config_applied = True
-                except Exception as e:
-                    logger.warning("Could not apply arm_config from %s: %s", path, e)
-
-            pts = data.get("waypoints", [])
-            if not isinstance(pts, list):
-                logger.warning("No 'waypoints' list in %s — skipping", path)
-                continue
-
-            loaded = 0
-            for i, p in enumerate(pts):
-                try:
-                    wp = {
-                        "x": float(p["x"]),
-                        "y": float(p["y"]),
-                        "z": float(p["z"]),
-                        "approach_angle": (
-                            float(p["approach_angle"])
-                            if p.get("approach_angle") is not None else None
-                        ),
-                        "elbow": str(p["elbow"]) if p.get("elbow") is not None else None,
-                    }
-                    all_waypoints.append(wp)
-                    loaded += 1
-                except (KeyError, TypeError, ValueError) as e:
-                    logger.warning("Waypoint %d in %s is invalid: %s", i + 1, path, e)
-
-            logger.info("Auto-loaded %d waypoints from %s", loaded, path)
-
-        if not all_waypoints:
-            logger.info("No valid waypoints found in folder — running normally")
-            return
-
-        # Load into the waypoint panel (do not auto-start)
-        self.waypoint_panel._waypoints = all_waypoints
-        self.waypoint_panel._refresh_list()
-        self.waypoint_panel.loop_checkbox.setChecked(True)
-
-        logger.info("Auto-loaded %d waypoints (not started)", len(all_waypoints))
-        self.status_bar.showMessage(
-            f"Auto-loaded {len(all_waypoints)} waypoints from '{os.path.basename(folder)}/' — press Run to start"
-        )
 
     def _on_ee_constraint_toggled(self, checked: bool) -> None:
         """Capture EE orientation when the constraint is activated with Auto mode."""
@@ -2574,8 +2608,24 @@ class MainWindow(QMainWindow):
         base_cfg = self.config_panel.get_config()
         n = base_cfg.num_planar_joints
 
-        # Rebuild offset panel to match new link count (preserves existing values where possible)
+        # Save current offset values before rebuild so they survive the reset
+        old_z = self.offset_panel.get_joint_offsets()
+        old_x = self.offset_panel.get_lateral_x()
+        old_y = self.offset_panel.get_lateral_y()
+        old_base = self.offset_panel.get_base_offset()
+        old_margin = self.offset_panel.get_collision_margin()
+
+        # Rebuild offset panel spinboxes for new link count
         self.offset_panel.rebuild(n)
+
+        # Restore saved values (truncate or pad with zeros to match new n)
+        self.offset_panel.set_values(
+            old_base,
+            (old_z + [0.0] * n)[:n],
+            collision_margin=old_margin,
+            lateral_x=(old_x + [0.0] * n)[:n],
+            lateral_y=(old_y + [0.0] * n)[:n],
+        )
 
         self.arm_config = ArmConfig(
             link_lengths=base_cfg.link_lengths,
@@ -2623,6 +2673,11 @@ class MainWindow(QMainWindow):
         else:
             base = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(base, "config", "arm_config.json")
+
+    def _on_save_as_default(self) -> None:
+        """Explicitly save current configuration as the startup default."""
+        self._save_arm_config()
+        self.status_bar.showMessage("Saved as default — will load automatically on next startup", 4000)
 
     def _save_arm_config(self) -> None:
         """Save current arm config (joints, lengths, offsets) to config/arm_config.json."""
@@ -3101,6 +3156,56 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, _poll_connect)
 
+    def _on_hardware_wifi_connect(self, host: str, port: int) -> None:
+        """Handle WiFi Connect: open TCP link to the Pico."""
+        if not host:
+            self.hardware_panel.set_connected(False, "ERROR: Enter the Pico's IP address first")
+            return
+
+        from hardware.pico_wifi_interface import PicoWifiInterface
+
+        if self._hardware is not None:
+            self._hardware.disconnect()
+            self._hardware = None
+        if self._connecting_iface is not None:
+            self._connecting_iface.disconnect()
+            self._connecting_iface = None
+
+        self.hardware_panel.deploy_btn.setEnabled(False)
+
+        import queue as _queue
+        _connect_result: _queue.Queue = _queue.Queue()
+
+        def _worker():
+            iface = PicoWifiInterface()
+            self._connecting_iface = iface
+            ok, msg = iface.connect(host, port)
+            _connect_result.put((ok, msg, iface))
+
+        import threading as _threading
+        _threading.Thread(target=_worker, name="pico-wifi-connect", daemon=True).start()
+
+        def _poll_connect():
+            try:
+                ok, msg, iface = _connect_result.get_nowait()
+            except _queue.Empty:
+                QTimer.singleShot(100, _poll_connect)
+                return
+            self._connecting_iface = None
+            self.hardware_panel.deploy_btn.setEnabled(True)
+            if ok:
+                self._hardware = iface
+                iface.rx_callback = self._on_pico_rx_threadsafe
+                self.hardware_panel.set_connected(True, msg)
+                self.status_bar.showMessage(msg.split("\n")[0])
+                logger.info("Hardware WiFi connected: %s", msg)
+            else:
+                self.hardware_panel.set_connected(False, msg)
+                self.status_bar.showMessage("Pico WiFi connection failed — see Hardware panel")
+                logger.error("Hardware WiFi connect failed: %s", msg)
+
+        QTimer.singleShot(100, _poll_connect)
+
     def _on_hardware_disconnect(self) -> None:
         """Handle Disconnect button."""
         if self._hardware is not None:
@@ -3110,7 +3215,12 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Hardware disconnected")
 
     def _on_hardware_deploy(self, port: str) -> None:
-        """Handle Deploy Firmware button: upload pico_control_script.py."""
+        """Handle Deploy Firmware button: upload pico_control_script.py.
+
+        When port is empty, the panel is in WiFi mode — SSID and password
+        are read from the WiFi fields and injected into the firmware before
+        uploading via a USB serial port (which must still be selected).
+        """
         try:
             from hardware.micropython_deployer import MicroPythonDeployer
         except ImportError as exc:
@@ -3119,21 +3229,27 @@ class MainWindow(QMainWindow):
             self.hardware_panel.deploy_btn.setEnabled(True)
             return
 
-        target_port = port or (self._hardware.port if self._hardware else None)
+        # In WiFi deploy mode the panel's port combo still needs a COM port
+        # for the actual upload (home PC with USB) — use whatever is selected.
+        target_port = port or self.hardware_panel.get_port()
         if not target_port:
             from hardware.pico_interface import find_pico_port
             target_port = find_pico_port()
         if not target_port:
             msg = (
                 "ERROR: No port specified\n"
-                "FIX:   Select a port or connect the Pico first"
+                "FIX:   Select a serial port (even in WiFi mode, the USB port\n"
+                "       is needed to upload the firmware)"
             )
             self.hardware_panel.log_lbl.setText(msg)
             self.hardware_panel.deploy_btn.setEnabled(True)
             return
 
-        # Grab motor config + pins from both panels to inject into firmware
+        # Grab motor config + pins and (optionally) WiFi credentials
         joints_config = self._get_full_joint_configs()
+        wifi_ssid = self.hardware_panel.get_wifi_ssid() if self.hardware_panel.is_wifi_mode() else ""
+        wifi_pw   = self.hardware_panel.get_wifi_password() if self.hardware_panel.is_wifi_mode() else ""
+        wifi_port = self.hardware_panel.get_wifi_port() if self.hardware_panel.is_wifi_mode() else 8888
 
         # Release the port completely — deployer needs exclusive access
         was_connected = self._hardware is not None or self._connecting_iface is not None
@@ -3145,7 +3261,7 @@ class MainWindow(QMainWindow):
             self._hardware = None
         if was_connected:
             self.hardware_panel.set_connected(False, "Disconnected for firmware deploy…")
-            self.hardware_panel.deploy_btn.setEnabled(True)  # re-enable (was blocked by connect)
+            self.hardware_panel.deploy_btn.setEnabled(True)
 
         # Run deployment in a background thread so the GUI stays responsive.
         # Cross-thread UI updates use a queue polled by a main-thread QTimer —
@@ -3161,7 +3277,13 @@ class MainWindow(QMainWindow):
         def _deploy():
             deployer = MicroPythonDeployer()
             ok, result_msg = deployer.deploy(
-                target_port, joints_config=joints_config, progress_cb=_progress)
+                target_port,
+                joints_config=joints_config,
+                wifi_ssid=wifi_ssid,
+                wifi_password=wifi_pw,
+                wifi_port=wifi_port,
+                progress_cb=_progress,
+            )
             _msg_queue.put(("done", ok, result_msg))
 
         threading.Thread(target=_deploy, daemon=True, name="pico-deploy").start()

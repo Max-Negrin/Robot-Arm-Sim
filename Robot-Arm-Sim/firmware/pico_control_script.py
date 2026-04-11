@@ -17,12 +17,12 @@ Supports three driver types per joint — mix and match as needed:
               Power servo from VBUS (5 V) — GPIO pin is signal only.
               Share GND between Pico and servo supply!
 
-Protocol (USB serial, 115200 baud):
+Protocol (USB serial OR WiFi TCP, same message format):
     Host → Pico:  J0:45.00,J1:32.50,J2:10.00,J3:0.00\n
     Pico → Host:  OK\n   (or ERR:<message>\n on error)
 
 ──────────────────────────────────────────────────────────────────────────────
-CONFIGURATION — edit JOINTS to match your wiring
+CONFIGURATION — edit JOINTS and WIFI_CONFIG to match your setup
 ──────────────────────────────────────────────────────────────────────────────
 """
 
@@ -33,9 +33,15 @@ import random
 import select
 from machine import Pin, PWM
 
-# WiFi is disabled inside main() AFTER LED setup.
-# Pin("LED") on Pico 2W routes through the CYW43 chip, so the chip must
-# stay alive until after the LED Pin object is created.
+# WiFi config is injected here by the deployer (or edit manually).
+# If WIFI_SSID is non-empty the Pico joins your home network and starts
+# a TCP server on TCP_PORT so the simulator can connect wirelessly.
+# Leave WIFI_SSID empty to use USB serial only (WiFi chip is then disabled).
+# <<BEGIN_WIFI_CONFIG>>
+WIFI_SSID = ""
+WIFI_PASSWORD = ""
+TCP_PORT = 8888
+# <<END_WIFI_CONFIG>>
 
 # ---------------------------------------------------------------------------
 # Half-step sequence for 28BYJ-48 (IN1 IN2 IN3 IN4)
@@ -408,8 +414,9 @@ def parse_command(line: str) -> dict | None:
 def main():
     # LEDs first — so they always blink even if motor config is bad
     # GP28 = last ADC pin, not used by any default motor config
-    # NOTE: WiFi is disabled AFTER LED setup.  On Pico 2W, Pin("LED") is
-    # routed through the CYW43 chip — disabling WiFi first breaks the LED.
+    # NOTE: WiFi initialisation must come AFTER Pin("LED") is created.
+    # On Pico 2W, Pin("LED") routes through the CYW43 chip — if you
+    # disable WiFi first the LED pin object creation will fail.
     led = Pin("LED", Pin.OUT)
     led_ext = Pin(28, Pin.OUT)
     led_last_us = time.ticks_us()
@@ -417,12 +424,88 @@ def main():
     # Range: 100 ms – 900 ms per half-cycle  (0.55 Hz – 5 Hz blink rate).
     led_period_us = random.randint(100_000, 900_000)
 
-    # Disable WiFi AP AFTER LED is set up (CYW43 must stay alive for LED)
-    try:
+    # ── WiFi / TCP server (station mode) ────────────────────────────────────
+    # Commands received over TCP are placed in _wifi_rx; responses to send
+    # back are placed in _wifi_tx.  Both lists are accessed from two threads
+    # but MicroPython's GIL makes single append/pop operations atomic enough
+    # for this use-case (one producer, one consumer).
+    _wifi_rx = []    # str lines arriving from TCP client → main loop
+    _wifi_tx = []    # str responses from main loop → TCP client
+
+    if WIFI_SSID:
         import network as _net
-        _net.WLAN(_net.AP_IF).active(False)
-    except Exception:
-        pass
+        import socket as _socket
+        import _thread
+
+        def _wifi_server():
+            wlan = _net.WLAN(_net.STA_IF)
+            wlan.active(True)
+            wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+            for _ in range(100):          # wait up to 10 s for connection
+                if wlan.isconnected():
+                    break
+                time.sleep(0.1)
+            if not wlan.isconnected():
+                print("WiFi connect failed — USB serial still active")
+                return
+            ip = wlan.ifconfig()[0]
+            print("WiFi connected: " + ip)
+
+            srv = _socket.socket()
+            srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            srv.bind(("", TCP_PORT))
+            srv.listen(1)
+            srv.settimeout(1)
+
+            conn = [None]
+            tcp_buf = [""]
+
+            while True:
+                # Accept new connection if we have none
+                if conn[0] is None:
+                    try:
+                        c, _ = srv.accept()
+                        c.settimeout(0.05)
+                        conn[0] = c
+                        tcp_buf[0] = ""
+                    except OSError:
+                        pass
+
+                if conn[0] is not None:
+                    # Read incoming data
+                    try:
+                        data = conn[0].recv(256)
+                        if data == b"":       # client closed connection
+                            conn[0].close()
+                            conn[0] = None
+                        elif data:
+                            tcp_buf[0] += data.decode("utf-8", "replace")
+                            while "\n" in tcp_buf[0]:
+                                line, tcp_buf[0] = tcp_buf[0].split("\n", 1)
+                                stripped = line.strip()
+                                if stripped:
+                                    _wifi_rx.append(stripped)
+                    except OSError:
+                        pass
+
+                    # Send queued responses
+                    while _wifi_tx:
+                        resp = _wifi_tx.pop(0)
+                        try:
+                            conn[0].sendall(resp.encode())
+                        except OSError:
+                            conn[0].close()
+                            conn[0] = None
+                            break
+
+        _thread.start_new_thread(_wifi_server, ())
+    else:
+        # No WiFi — disable the AP (CYW43 must stay alive until after LED setup)
+        try:
+            import network as _net
+            _net.WLAN(_net.AP_IF).active(False)
+        except Exception:
+            pass
 
     # Build axes — skip any joint whose pin config is invalid
     axes = []
@@ -461,7 +544,25 @@ def main():
             led_last_us = now_us
             led_period_us = random.randint(100_000, 900_000)
 
-        # ── 3. Non-blocking serial read ──────────────────────────────────────
+        # ── 3. Serial + WiFi command processing ─────────────────────────────
+        # Helper: dispatch one parsed command line, send response to `reply_fn`
+        def _handle_line(line, reply_fn):
+            nonlocal idle_ticks
+            if line == "PING":
+                reply_fn("Robot Arm Pico Controller ready\n")
+                reply_fn("firmware ready\n")
+            else:
+                cmd = parse_command(line)
+                if cmd is not None:
+                    for axis in axes:
+                        if axis.idx in cmd:
+                            axis.set_target_angle(cmd[axis.idx])
+                    idle_ticks = 0
+                    reply_fn("OK\n")
+                else:
+                    reply_fn("ERR:bad command\n")
+
+        # USB serial (non-blocking)
         try:
             while _poller.poll(0):
                 ch = sys.stdin.read(1)
@@ -470,25 +571,18 @@ def main():
                 if ch == "\n":
                     line = buf.strip()
                     buf = ""
-                    if line == "PING":
-                        print("Robot Arm Pico Controller ready")
-                        print("firmware ready")
-                    else:
-                        cmd = parse_command(line)
-                        if cmd is not None:
-                            for axis in axes:
-                                if axis.idx in cmd:
-                                    axis.set_target_angle(cmd[axis.idx])
-                            idle_ticks = 0
-                            print("OK")
-                        else:
-                            print("ERR:bad command")
+                    _handle_line(line, sys.stdout.write)
                 else:
                     buf += ch
                     if len(buf) > 256:
                         buf = ""
         except Exception:
             pass
+
+        # WiFi TCP (non-blocking drain — lines placed by _wifi_server thread)
+        while _wifi_rx:
+            line = _wifi_rx.pop(0)
+            _handle_line(line, _wifi_tx.append)
 
         # ── 4. De-energise coils after ~2 s of idleness ─────────────────────
         if not any_moving:

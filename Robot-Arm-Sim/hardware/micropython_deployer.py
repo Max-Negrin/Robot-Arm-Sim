@@ -286,10 +286,35 @@ def _inject_joints_config(firmware_text: str, joints_config: list[dict]) -> str:
     return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
 
 
+def _inject_wifi_config(
+    firmware_text: str,
+    ssid: str,
+    password: str,
+    port: int = 8888,
+) -> str:
+    """Replace the WiFi config block in firmware_text with the supplied credentials."""
+    begin_marker = "# <<BEGIN_WIFI_CONFIG>>"
+    end_marker   = "# <<END_WIFI_CONFIG>>"
+    start = firmware_text.find(begin_marker)
+    end   = firmware_text.find(end_marker)
+    if start == -1 or end == -1:
+        logger.warning("WiFi sentinels not found in firmware — WiFi config not injected")
+        return firmware_text
+    new_block = (
+        f"# <<BEGIN_WIFI_CONFIG>>\n"
+        f'WIFI_SSID = "{ssid}"\n'
+        f'WIFI_PASSWORD = "{password}"\n'
+        f"TCP_PORT = {port}\n"
+        f"# <<END_WIFI_CONFIG>>"
+    )
+    return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
+
+
 class MicroPythonDeployer:
     """Deploys the control script to the Pico 2W automatically."""
 
     def deploy(self, port: str, joints_config: list[dict] | None = None,
+               wifi_ssid: str = "", wifi_password: str = "", wifi_port: int = 8888,
                progress_cb=None) -> tuple[bool, str]:
         """Deploy ``firmware/pico_control_script.py`` to the Pico on *port*.
 
@@ -338,6 +363,12 @@ class MicroPythonDeployer:
             firmware_text = _inject_joints_config(firmware_text, joints_config)
             _prog(f"Injected {len(joints_config)} joint config(s) into firmware")
             logger.info("Injected %d joint configs into firmware", len(joints_config))
+
+        # Inject WiFi credentials if provided
+        if wifi_ssid:
+            firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, wifi_port)
+            _prog(f"Injected WiFi config: SSID={wifi_ssid!r}, port={wifi_port}")
+            logger.info("Injected WiFi config: SSID=%r port=%d", wifi_ssid, wifi_port)
 
         # Write patched firmware to a temp file for upload
         import tempfile
