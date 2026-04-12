@@ -3989,6 +3989,173 @@ class MainWindow(QMainWindow):
                 for i, cmd in enumerate(hist[-20:], start=max(1, len(hist) - 19)):
                     self.terminal.log(f"  {i:>3}  {cmd}", "info")
 
+        # ── MARK ──────────────────────────────────────────────────────────
+        elif upper.startswith("MARK"):
+            label = raw[5:].strip() if len(raw) > 5 else ""
+            ts = time.strftime("%H:%M:%S")
+            divider = f"──── {label}  [{ts}] " if label else f"──── [{ts}] "
+            divider = divider.ljust(60, "─")
+            self.terminal.log(divider, "info")
+
+        # ── UPTIME ────────────────────────────────────────────────────────
+        elif upper == "UPTIME":
+            if not hasattr(self, "_session_start"):
+                self._session_start = time.monotonic()
+            elapsed = time.monotonic() - self._session_start
+            h, rem = divmod(int(elapsed), 3600)
+            m, s = divmod(rem, 60)
+            self.terminal.log(f"Session uptime: {h:02d}:{m:02d}:{s:02d}", "info")
+
+        # ── VERSION ───────────────────────────────────────────────────────
+        elif upper == "VERSION":
+            self.terminal.log("Robot Arm Simulator", "info")
+            self.terminal.log(f"  Python   {sys.version.split()[0]}", "info")
+            try:
+                import PyQt6.QtCore as _qc
+                self.terminal.log(f"  PyQt6    {_qc.PYQT_VERSION_STR}", "info")
+            except Exception:
+                pass
+            self.terminal.log(f"  Config   {self._arm_config_save_path()}", "info")
+
+        # ── SOLVE ─────────────────────────────────────────────────────────
+        elif upper == "SOLVE":
+            self._on_update_clicked()
+            self.terminal.log("IK re-solved for current target", "info")
+
+        # ── STARTPOSE ─────────────────────────────────────────────────────
+        elif upper == "STARTPOSE":
+            self.arm_state = self.start_pose_panel.get_state()
+            self.viewport.update_arm(self.arm_config, self.arm_state)
+            self.terminal.log("Applied starting pose", "info")
+
+        # ── STATS ─────────────────────────────────────────────────────────
+        elif upper == "STATS":
+            self_col = check_self_collision(self.arm_config, self.arm_state,
+                                            margin=self.constraints.collision_margin)
+            table_col = check_table_collision(self.arm_config, self.arm_state)
+            validation = validate_target(self.arm_config, self.target, ConstraintSet())
+            sing = check_singularity(self.arm_config, self.arm_state)
+            self.terminal.log("", "info")
+            self.terminal.log(f"Self collision : {'YES !' if self_col else 'no'}", "error" if self_col else "info")
+            self.terminal.log(f"Table collision: {'YES !' if table_col else 'no'}", "error" if table_col else "info")
+            self.terminal.log(f"Target valid   : {'yes' if validation.reachable else 'NO — out of reach'}", "info" if validation.reachable else "error")
+            self.terminal.log(f"Singularity    : {'YES' if sing else 'no'}", "error" if sing else "info")
+            margin = self.constraints.collision_margin
+            self.terminal.log(f"Coll. margin   : {margin:.3f}", "info")
+            self.terminal.log("", "info")
+
+        # ── LIMITS ────────────────────────────────────────────────────────
+        elif upper == "LIMITS":
+            self.terminal.log("Joint limits:", "info")
+            for i, (lo, hi) in enumerate(self.arm_config.joint_limits):
+                self.terminal.log(f"  J{i}: [{math.degrees(lo):.1f}°, {math.degrees(hi):.1f}°]", "info")
+
+        # ── TARGET ────────────────────────────────────────────────────────
+        elif upper == "TARGET":
+            self.terminal.log(
+                f"Target: X={self.target[0]:.4f}  Y={self.target[1]:.4f}  Z={self.target[2]:.4f}",
+                "info",
+            )
+
+        # ── SETLINK ───────────────────────────────────────────────────────
+        elif upper.startswith("SETLINK") and len(parts) == 3:
+            try:
+                idx = int(parts[1])
+                length = float(parts[2])
+            except ValueError:
+                self.terminal.log("SETLINK: usage  SETLINK <index> <length>", "error")
+                return
+            n = len(self.config_panel.link_spins)
+            if 0 <= idx < n:
+                self.config_panel.link_spins[idx].setValue(length)
+                self._on_config_changed()
+                self.terminal.log(f"Link {idx} length → {length:.3f}", "info")
+            else:
+                self.terminal.log(f"SETLINK: index {idx} out of range (0–{n-1})", "error")
+
+        # ── SETBASE ───────────────────────────────────────────────────────
+        elif upper.startswith("SETBASE") and len(parts) == 2:
+            try:
+                height = float(parts[1])
+            except ValueError:
+                self.terminal.log("SETBASE: usage  SETBASE <height>", "error")
+                return
+            self.offset_panel.base_offset_spin.setValue(height)
+            self._on_offsets_changed()
+            self.terminal.log(f"Base vertical offset → {height:.3f}", "info")
+
+        # ── SETOFFSET ─────────────────────────────────────────────────────
+        elif upper.startswith("SETOFFSET") and len(parts) == 3:
+            try:
+                idx = int(parts[1])
+                val = float(parts[2])
+            except ValueError:
+                self.terminal.log("SETOFFSET: usage  SETOFFSET <joint> <mm>", "error")
+                return
+            rows = self.offset_panel.joint_spins
+            if 0 <= idx < len(rows):
+                rows[idx].setValue(val)
+                self._on_offsets_changed()
+                self.terminal.log(f"Joint {idx} plane offset → {val:.3f}", "info")
+            else:
+                self.terminal.log(f"SETOFFSET: joint {idx} out of range", "error")
+
+        # ── DEPLOY ────────────────────────────────────────────────────────
+        elif upper == "DEPLOY":
+            self.hardware_panel.deploy_btn.setEnabled(False)
+            self.hardware_panel._on_deploy_clicked()
+            self.terminal.log("Firmware deploy started — check Hardware panel for progress", "info")
+
+        # ── REBOOT ────────────────────────────────────────────────────────
+        elif upper == "REBOOT":
+            if self._hardware is not None:
+                self._hardware.send_raw("import machine; machine.reset()\n")
+                self.terminal.log("Soft reset sent to Pico — connection will drop", "info")
+                self.terminal.log("Reconnect after ~5 seconds", "info")
+            else:
+                self.terminal.log("Not connected", "error")
+
+        # ── REPEAT ────────────────────────────────────────────────────────
+        elif upper.startswith("REPEAT") and len(parts) >= 3:
+            try:
+                count = int(parts[1])
+            except ValueError:
+                self.terminal.log("REPEAT: usage  REPEAT <n> <command...>", "error")
+                return
+            sub = " ".join(parts[2:])
+            self.terminal.log(f"Repeating '{sub}' × {count}", "info")
+            for _ in range(max(1, min(count, 50))):   # cap at 50
+                self._on_terminal_command(sub)
+
+        # ── MARGIN ────────────────────────────────────────────────────────
+        elif upper.startswith("MARGIN") and len(parts) == 2:
+            try:
+                val = float(parts[1])
+            except ValueError:
+                self.terminal.log("MARGIN: usage  MARGIN <value>", "error")
+                return
+            self.offset_panel.collision_margin_spin.setValue(val)
+            self._on_offsets_changed()
+            self.terminal.log(f"Collision margin → {val:.3f}", "info")
+
+        # ── FORWARD KINEMATICS DUMP ───────────────────────────────────────
+        elif upper == "FK":
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            self.terminal.log("FK positions (all joints):", "info")
+            for i in range(0, len(positions), 2):
+                eff = positions[i]
+                nom = positions[i + 1] if i + 1 < len(positions) else None
+                j = i // 2
+                self.terminal.log(
+                    f"  J{j} eff: ({eff[0]:.3f}, {eff[1]:.3f}, {eff[2]:.3f})", "info"
+                )
+                if nom is not None:
+                    self.terminal.log(
+                        f"  J{j} nom: ({nom[0]:.3f}, {nom[1]:.3f}, {nom[2]:.3f})", "info"
+                    )
+            ee = positions[-1]
+            self.terminal.log(f"  EE:    ({ee[0]:.3f}, {ee[1]:.3f}, {ee[2]:.3f})", "info")
+
         # ── Forward to hardware ───────────────────────────────────────────
         else:
             if self._hardware is not None:

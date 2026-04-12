@@ -598,6 +598,10 @@ def main():
             elif line == "LED_TOGGLE":
                 led.toggle()
                 reply_fn("OK\n")
+            elif line == "REBOOT":
+                reply_fn("Rebooting...\n")
+                time.sleep(0.1)
+                import machine as _m; _m.reset()
             else:
                 cmd = parse_command(line)
                 if cmd is not None:
