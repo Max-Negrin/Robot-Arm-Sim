@@ -2596,10 +2596,19 @@ class MainWindow(QMainWindow):
         self._right_splitter.addWidget(self.terminal)
         self._right_splitter.setCollapsible(0, False)
         self._right_splitter.setCollapsible(1, True)
-        self._right_splitter.setHandleWidth(4)
-        # Terminal starts hidden
-        self.terminal.hide()
-        self._terminal_visible = False
+        # Thick handle so it's easy to grab and drag
+        self._right_splitter.setHandleWidth(8)
+        self._right_splitter.setStyleSheet(
+            "QSplitter::handle:vertical {"
+            "  background: #3f3f46;"
+            "  border-top: 1px solid #555;"
+            "  border-bottom: 1px solid #555;"
+            "}"
+            "QSplitter::handle:vertical:hover { background: #007acc; }"
+        )
+        # Terminal open by default at 200px
+        self._terminal_visible = True
+        self._right_splitter.setSizes([600, 200])
 
         # ── Horizontal splitter: sidebar | right panel ──
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -2630,6 +2639,7 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: #505050; }"
         )
         self._terminal_btn.setToolTip("Toggle terminal panel  (Ctrl+`)")
+        self._terminal_btn.setChecked(True)   # terminal starts open
         self._terminal_btn.clicked.connect(self._toggle_terminal)
         self.status_bar.addWidget(self._terminal_btn)
 
@@ -3364,12 +3374,24 @@ class MainWindow(QMainWindow):
                 err = self._hardware.last_error
                 if err:
                     self.hardware_panel.set_connected(False, err)
+                    self.terminal.set_connected(False)
+                    self.terminal.log(f"Unexpected disconnect: {err.splitlines()[0]}", "error")
                     self.status_bar.showMessage("Hardware disconnected")
                     self._hardware = None
             return
 
         angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
         self._hardware.send_joint_angles(angles)
+
+        # Log outgoing angle command to terminal at most once per second
+        now = time.monotonic()
+        if not hasattr(self, "_last_tx_log_time"):
+            self._last_tx_log_time = 0.0
+        if now - self._last_tx_log_time >= 1.0:
+            self._last_tx_log_time = now
+            from hardware.protocol import encode_angles
+            cmd = encode_angles(angles).decode("utf-8", "replace").strip()
+            self.terminal.log(cmd, "tx")
 
     def _on_hardware_connect(self, port: str, baud: int) -> None:
         """Handle Connect button: open serial link to the Pico."""
