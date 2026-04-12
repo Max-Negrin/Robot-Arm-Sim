@@ -4967,10 +4967,10 @@ class MainWindow(QMainWindow):
         self.hardware_panel.deploy_btn.setEnabled(True)
         if ok:
             self.hardware_panel.log_lbl.setText(
-                f"Deploy OK — reconnecting to {port}…"
+                f"Deploy OK — reconnecting to {port} in 4 s…"
             )
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log(f"Deploy OK — reconnecting via USB to {port}", "deploy")
+            self.terminal.log(f"Deploy OK — waiting 4 s for USB re-enumeration…", "deploy")
             if self.hardware_panel.get_wifi_ssid():
                 self.terminal.log(
                     "WiFi credentials embedded — Pico will join your network on boot.", "info"
@@ -4979,10 +4979,12 @@ class MainWindow(QMainWindow):
                     "Watch for 'WiFi connected: x.x.x.x' below (~10 s). "
                     "Copy that IP into the WiFi IP field, then switch to WiFi mode.", "info"
                 )
-            self.status_bar.showMessage("Firmware deployed — reconnecting…")
+            self.status_bar.showMessage("Firmware deployed — waiting for USB re-enumeration…")
             logger.info("Deploy succeeded: %s", msg)
-            # Always reconnect via USB so we can read the WiFi IP from boot output
-            self._on_hardware_connect(port, 115200)
+            # Delay reconnect: after soft-reset the Pico re-enumerates on the USB bus.
+            # Windows takes 2-4 s to release/re-assign the COM port; connecting too fast
+            # causes "Access Denied".  4 s is enough margin for all tested boards.
+            QTimer.singleShot(4000, lambda: self._on_hardware_connect(port, 115200))
         else:
             # Show full error — truncate only if very long
             self.hardware_panel.log_lbl.setText(msg[:500])
