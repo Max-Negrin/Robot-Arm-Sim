@@ -461,6 +461,52 @@ def main():
             conn = [None]
             tcp_buf = [""]
 
+            def _do_upload(c):
+                """Receive firmware over TCP and write to main.py, then reset.
+
+                Protocol (all lines terminated with \\n):
+                  Host → Pico: UPLOAD_BEGIN <total_bytes>
+                  Pico → Host: UPLOAD_READY
+                  Host → Pico: UPLOAD_CHUNK <hex_data>   (repeat)
+                  Pico → Host: UPLOAD_ACK                (for each chunk)
+                  Host → Pico: UPLOAD_END
+                  Pico → Host: UPLOAD_DONE
+                  Pico resets.
+                """
+                import machine as _machine
+                c.settimeout(10.0)
+                buf = tcp_buf[0]   # carry over any bytes already buffered
+                try:
+                    f = open("main_upload.py", "wb")
+                    c.sendall(b"UPLOAD_READY\n")
+                    while True:
+                        # Read until we have a complete line
+                        while "\n" not in buf:
+                            chunk = c.recv(512)
+                            if not chunk:
+                                f.close()
+                                return
+                            buf += chunk.decode("utf-8", "replace")
+                        line, buf = buf.split("\n", 1)
+                        line = line.strip()
+                        if line.startswith("UPLOAD_CHUNK "):
+                            hex_data = line[13:]
+                            f.write(bytes.fromhex(hex_data))
+                            c.sendall(b"UPLOAD_ACK\n")
+                        elif line == "UPLOAD_END":
+                            f.close()
+                            import os as _os
+                            _os.rename("main_upload.py", "main.py")
+                            c.sendall(b"UPLOAD_DONE\n")
+                            time.sleep(0.3)
+                            _machine.reset()
+                        # ignore unknown lines
+                except Exception:
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
+
             while True:
                 # Accept new connection if we have none
                 if conn[0] is None:
@@ -484,20 +530,31 @@ def main():
                             while "\n" in tcp_buf[0]:
                                 line, tcp_buf[0] = tcp_buf[0].split("\n", 1)
                                 stripped = line.strip()
-                                if stripped:
+                                if not stripped:
+                                    continue
+                                if stripped.startswith("UPLOAD_BEGIN"):
+                                    # Hand off to upload handler (blocks until reset)
+                                    _do_upload(conn[0])
+                                    # Only reached on upload failure
+                                    conn[0].close()
+                                    conn[0] = None
+                                    tcp_buf[0] = ""
+                                    break
+                                else:
                                     _wifi_rx.append(stripped)
                     except OSError:
                         pass
 
                     # Send queued responses
-                    while _wifi_tx:
-                        resp = _wifi_tx.pop(0)
-                        try:
-                            conn[0].sendall(resp.encode())
-                        except OSError:
-                            conn[0].close()
-                            conn[0] = None
-                            break
+                    if conn[0] is not None:
+                        while _wifi_tx:
+                            resp = _wifi_tx.pop(0)
+                            try:
+                                conn[0].sendall(resp.encode())
+                            except OSError:
+                                conn[0].close()
+                                conn[0] = None
+                                break
 
         _thread.start_new_thread(_wifi_server, ())
     else:

@@ -310,6 +310,102 @@ def _inject_wifi_config(
     return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
 
 
+def _deploy_via_wifi(host: str, port: int, firmware_text: str,
+                     progress_cb=None) -> tuple[bool, str]:
+    """Upload firmware to the Pico over the existing WiFi TCP connection.
+
+    Uses the UPLOAD_BEGIN / UPLOAD_CHUNK / UPLOAD_END protocol that the
+    firmware's TCP server understands.  The Pico calls machine.reset() after
+    writing the file, so the connection will drop at the end — that is normal.
+
+    Parameters
+    ----------
+    host:
+        Pico IP address (e.g. ``'192.168.1.42'``).
+    port:
+        TCP port (default 8888).
+    firmware_text:
+        The full firmware script as a string (already patched by the caller).
+    progress_cb:
+        Optional callable(str) for progress messages.
+    """
+    import socket as _socket
+
+    def _prog(msg):
+        if progress_cb:
+            progress_cb(msg)
+        logger.info(msg)
+
+    CHUNK = 128
+
+    _prog(f"WiFi deploy: connecting to {host}:{port}...")
+    try:
+        sock = _socket.create_connection((host, port), timeout=15.0)
+        sock.settimeout(15.0)
+    except Exception as exc:
+        return False, (
+            f"ERROR: Cannot connect to Pico at {host}:{port}\n"
+            f"CAUSE: {exc}\n"
+            "FIX:   Ensure the Pico is running and on the same network"
+        )
+
+    try:
+        script_bytes = firmware_text.encode("utf-8")
+        total = len(script_bytes)
+        n_chunks = (total + CHUNK - 1) // CHUNK
+
+        def _readline(timeout=15.0):
+            """Read one \\n-terminated line from sock."""
+            buf = b""
+            import time as _time
+            deadline = _time.monotonic() + timeout
+            while _time.monotonic() < deadline:
+                try:
+                    b = sock.recv(1)
+                    if b:
+                        buf += b
+                        if buf.endswith(b"\n"):
+                            return buf.decode("utf-8", "replace").strip()
+                except Exception:
+                    break
+            return ""
+
+        # Send UPLOAD_BEGIN
+        sock.sendall(f"UPLOAD_BEGIN {total}\n".encode())
+        resp = _readline()
+        if resp != "UPLOAD_READY":
+            return False, f"ERROR: Expected UPLOAD_READY, got {resp!r}"
+
+        _prog(f"[1/3] Uploading {total} bytes in {n_chunks} chunks over WiFi...")
+
+        for i in range(0, total, CHUNK):
+            chunk = script_bytes[i: i + CHUNK]
+            sock.sendall(f"UPLOAD_CHUNK {chunk.hex()}\n".encode())
+            resp = _readline()
+            if resp != "UPLOAD_ACK":
+                return False, f"ERROR: Expected UPLOAD_ACK at byte {i}, got {resp!r}"
+            chunk_num = i // CHUNK + 1
+            if chunk_num % 20 == 0 or chunk_num == n_chunks:
+                _prog(f"[2/3] chunk {chunk_num}/{n_chunks}...")
+
+        _prog("[3/3] Finalising — Pico will reset...")
+        sock.sendall(b"UPLOAD_END\n")
+        resp = _readline(timeout=10.0)
+        # UPLOAD_DONE may or may not arrive before the reset drops the connection
+        if resp in ("UPLOAD_DONE", ""):
+            logger.info("WiFi deployment succeeded to %s:%d", host, port)
+            return True, "Deployed via WiFi successfully — Pico is rebooting"
+        return False, f"ERROR: Unexpected response after UPLOAD_END: {resp!r}"
+
+    except Exception as exc:
+        return False, f"ERROR: WiFi deploy error: {exc}"
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
 class MicroPythonDeployer:
     """Deploys the control script to the Pico 2W automatically."""
 
@@ -404,3 +500,47 @@ class MicroPythonDeployer:
         )
         logger.error(full_msg)
         return False, full_msg
+
+    def deploy_wifi(self, host: str, tcp_port: int = 8888,
+                    joints_config: list[dict] | None = None,
+                    wifi_ssid: str = "", wifi_password: str = "",
+                    progress_cb=None) -> tuple[bool, str]:
+        """Deploy firmware to the Pico over WiFi TCP (no USB required).
+
+        The Pico must already be running firmware with the WiFi upload
+        protocol (UPLOAD_BEGIN / UPLOAD_CHUNK / UPLOAD_END).
+
+        Parameters
+        ----------
+        host:
+            Pico IP address.
+        tcp_port:
+            TCP port the Pico listens on (default 8888).
+        joints_config, wifi_ssid, wifi_password:
+            Same as ``deploy()`` — injected into the firmware before upload.
+        """
+        def _prog(msg):
+            if progress_cb:
+                progress_cb(msg)
+            logger.info(msg)
+
+        firmware_path = _get_firmware_path()
+        if firmware_path is None:
+            return False, "ERROR: Firmware script not found (firmware/pico_control_script.py)"
+
+        _prog(f"Reading firmware from {firmware_path}...")
+        try:
+            with open(firmware_path, "r", encoding="utf-8") as f:
+                firmware_text = f.read()
+        except OSError as exc:
+            return False, f"Cannot read firmware file: {exc}"
+
+        if joints_config:
+            firmware_text = _inject_joints_config(firmware_text, joints_config)
+            _prog(f"Injected {len(joints_config)} joint config(s) into firmware")
+
+        if wifi_ssid:
+            firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, tcp_port)
+            _prog(f"Injected WiFi config: SSID={wifi_ssid!r}, port={tcp_port}")
+
+        return _deploy_via_wifi(host, tcp_port, firmware_text, progress_cb=progress_cb)

@@ -3248,9 +3248,11 @@ class MainWindow(QMainWindow):
     def _on_hardware_deploy(self, port: str) -> None:
         """Handle Deploy Firmware button: upload pico_control_script.py.
 
-        When port is empty, the panel is in WiFi mode — SSID and password
-        are read from the WiFi fields and injected into the firmware before
-        uploading via a USB serial port (which must still be selected).
+        Three paths:
+        - USB mode: upload over serial REPL (requires USB port).
+        - WiFi mode, already connected via WiFi: upload over the existing
+          TCP connection — no USB needed.
+        - WiFi mode, not connected: still needs a USB port (initial flash).
         """
         try:
             from hardware.micropython_deployer import MicroPythonDeployer
@@ -3260,8 +3262,62 @@ class MainWindow(QMainWindow):
             self.hardware_panel.deploy_btn.setEnabled(True)
             return
 
-        # In WiFi deploy mode the panel's port combo still needs a COM port
-        # for the actual upload (home PC with USB) — use whatever is selected.
+        joints_config = self._get_full_joint_configs()
+        wifi_ssid = self.hardware_panel.get_wifi_ssid() if self.hardware_panel.is_wifi_mode() else ""
+        wifi_pw   = self.hardware_panel.get_wifi_password() if self.hardware_panel.is_wifi_mode() else ""
+        wifi_port = self.hardware_panel.get_wifi_port() if self.hardware_panel.is_wifi_mode() else 8888
+
+        # ── WiFi deploy: already connected via TCP ───────────────────────────
+        from hardware.pico_wifi_interface import PicoWifiInterface
+        if self.hardware_panel.is_wifi_mode() and isinstance(self._hardware, PicoWifiInterface):
+            wifi_host = self._hardware.host
+            self.hardware_panel.log_lbl.setText(f"Deploying over WiFi to {wifi_host}:{wifi_port}...")
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
+
+            # Disconnect so the deployer can use the TCP port exclusively
+            self._hardware.disconnect()
+            self._hardware = None
+            self.hardware_panel.set_connected(False, "Disconnected for WiFi deploy…")
+            self.hardware_panel.deploy_btn.setEnabled(True)
+
+            import threading, queue as _queue
+            _msg_queue: _queue.Queue = _queue.Queue()
+
+            def _progress(msg: str) -> None:
+                _msg_queue.put(("progress", msg))
+
+            def _deploy():
+                deployer = MicroPythonDeployer()
+                ok, result_msg = deployer.deploy_wifi(
+                    wifi_host,
+                    tcp_port=wifi_port,
+                    joints_config=joints_config,
+                    wifi_ssid=wifi_ssid,
+                    wifi_password=wifi_pw,
+                    progress_cb=_progress,
+                )
+                _msg_queue.put(("done", ok, result_msg))
+
+            threading.Thread(target=_deploy, daemon=True, name="pico-deploy").start()
+            logger.info("WiFi firmware deployment started to %s:%d", wifi_host, wifi_port)
+
+            def _poll_wifi():
+                try:
+                    while True:
+                        item = _msg_queue.get_nowait()
+                        if item[0] == "progress":
+                            self._on_deploy_progress(item[1])
+                        elif item[0] == "done":
+                            self._on_deploy_finished_wifi(item[1], item[2], wifi_host, wifi_port)
+                            return
+                except _queue.Empty:
+                    pass
+                QTimer.singleShot(50, _poll_wifi)
+
+            QTimer.singleShot(50, _poll_wifi)
+            return
+
+        # ── USB deploy (or WiFi mode without an active WiFi connection) ──────
         target_port = port or self.hardware_panel.get_port()
         if not target_port:
             from hardware.pico_interface import find_pico_port
@@ -3269,18 +3325,12 @@ class MainWindow(QMainWindow):
         if not target_port:
             msg = (
                 "ERROR: No port specified\n"
-                "FIX:   Select a serial port (even in WiFi mode, the USB port\n"
-                "       is needed to upload the firmware)"
+                "FIX:   Select a serial port, or connect via WiFi first to\n"
+                "       deploy wirelessly without USB"
             )
             self.hardware_panel.log_lbl.setText(msg)
             self.hardware_panel.deploy_btn.setEnabled(True)
             return
-
-        # Grab motor config + pins and (optionally) WiFi credentials
-        joints_config = self._get_full_joint_configs()
-        wifi_ssid = self.hardware_panel.get_wifi_ssid() if self.hardware_panel.is_wifi_mode() else ""
-        wifi_pw   = self.hardware_panel.get_wifi_password() if self.hardware_panel.is_wifi_mode() else ""
-        wifi_port = self.hardware_panel.get_wifi_port() if self.hardware_panel.is_wifi_mode() else 8888
 
         # Release the port completely — deployer needs exclusive access
         was_connected = self._hardware is not None or self._connecting_iface is not None
@@ -3343,7 +3393,7 @@ class MainWindow(QMainWindow):
 
     def _on_deploy_finished(self, ok: bool, msg: str,
                              port: str, _reconnect: bool) -> None:
-        """Called in the main thread when deployment completes."""
+        """Called in the main thread when USB deployment completes."""
         self.hardware_panel.deploy_btn.setEnabled(True)
         if ok:
             self.hardware_panel.log_lbl.setText(
@@ -3361,6 +3411,26 @@ class MainWindow(QMainWindow):
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
             self.status_bar.showMessage("Firmware deployment failed — see Hardware panel")
             logger.error("Deploy failed: %s", msg)
+
+    def _on_deploy_finished_wifi(self, ok: bool, msg: str,
+                                  host: str, port: int) -> None:
+        """Called in the main thread when WiFi deployment completes."""
+        self.hardware_panel.deploy_btn.setEnabled(True)
+        if ok:
+            self.hardware_panel.log_lbl.setText(
+                f"WiFi deploy OK — reconnecting to {host}:{port}…\n"
+                "(Pico is rebooting, may take a few seconds)"
+            )
+            self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.status_bar.showMessage("Firmware deployed over WiFi — reconnecting…")
+            logger.info("WiFi deploy succeeded: %s", msg)
+            # Reconnect after a short delay to give the Pico time to reboot
+            QTimer.singleShot(4000, lambda: self._on_hardware_wifi_connect(host, port))
+        else:
+            self.hardware_panel.log_lbl.setText(msg[:500])
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.status_bar.showMessage("WiFi firmware deployment failed — see Hardware panel")
+            logger.error("WiFi deploy failed: %s", msg)
 
     def closeEvent(self, event) -> None:
         """Clean up hardware on window close."""
