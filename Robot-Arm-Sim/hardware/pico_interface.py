@@ -310,6 +310,24 @@ class PicoInterface:
         except queue.Full:
             pass  # Silently drop frame
 
+    def send_raw(self, text: str) -> None:
+        """Queue a raw text command for transmission (non-blocking).
+
+        Bypasses the angle-change threshold — use for one-off commands
+        such as ``LED_TOGGLE\\n`` or ``PING\\n``.
+        """
+        if not self._connected:
+            return
+        try:
+            if self._tx_queue.full():
+                try:
+                    self._tx_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self._tx_queue.put_nowait(text.encode("utf-8"))
+        except queue.Full:
+            pass
+
     # ── Internal ───────────────────────────────────────────────────────────
 
     def _tx_loop(self) -> None:

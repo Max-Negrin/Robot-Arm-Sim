@@ -552,6 +552,9 @@ def main():
             if line == "PING":
                 reply_fn("Robot Arm Pico Controller ready\n")
                 reply_fn("firmware ready\n")
+            elif line == "LED_TOGGLE":
+                led.toggle()
+                reply_fn("OK\n")
             else:
                 cmd = parse_command(line)
                 if cmd is not None:

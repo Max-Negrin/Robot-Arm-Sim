@@ -1653,6 +1653,8 @@ class HardwarePanel(QGroupBox):
     disconnect_requested = pyqtSignal()
     # USB port for deploy; WiFi: empty string signals WiFi deploy mode
     deploy_requested = pyqtSignal(str)
+    # Request to toggle the onboard LED
+    led_toggle_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__("Hardware (Pico 2W)", parent)
@@ -1779,6 +1781,16 @@ class HardwarePanel(QGroupBox):
         btn_row.addWidget(self.deploy_btn)
         layout.addLayout(btn_row)
 
+        # LED toggle — only usable when connected
+        led_row = QHBoxLayout()
+        self.led_btn = QPushButton("Toggle LED")
+        self.led_btn.setToolTip("Toggle the Pico onboard LED to confirm the connection is live.")
+        self.led_btn.setEnabled(False)
+        self.led_btn.clicked.connect(self.led_toggle_requested.emit)
+        led_row.addWidget(self.led_btn)
+        led_row.addStretch()
+        layout.addLayout(led_row)
+
         # Pico IP address (populated when "WiFi connected: x.x.x.x" arrives)
         self.ip_lbl = QLabel("")
         self.ip_lbl.setFont(QFont("Consolas", 9))
@@ -1811,6 +1823,7 @@ class HardwarePanel(QGroupBox):
     def set_connected(self, connected: bool, message: str = "") -> None:
         self._connected = connected
         self.connect_btn.setEnabled(True)
+        self.led_btn.setEnabled(connected)
         if connected:
             self._set_status("connected")
             self.connect_btn.setText("Disconnect")
@@ -2426,6 +2439,7 @@ class MainWindow(QMainWindow):
         self.hardware_panel.wifi_connect_requested.connect(self._on_hardware_wifi_connect)
         self.hardware_panel.disconnect_requested.connect(self._on_hardware_disconnect)
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
+        self.hardware_panel.led_toggle_requested.connect(self._on_led_toggle)
 
         # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
         self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
@@ -3225,6 +3239,11 @@ class MainWindow(QMainWindow):
             self._hardware = None
         self.hardware_panel.set_connected(False, "Disconnected by user")
         self.status_bar.showMessage("Hardware disconnected")
+
+    def _on_led_toggle(self) -> None:
+        """Send LED_TOGGLE command to Pico to confirm the connection is live."""
+        if self._hardware is not None:
+            self._hardware.send_raw("LED_TOGGLE\n")
 
     def _on_hardware_deploy(self, port: str) -> None:
         """Handle Deploy Firmware button: upload pico_control_script.py.
