@@ -1,23 +1,56 @@
+# Future Improvements
 
+Items marked ✅ are complete. Items marked 🔲 are still open.
 
+---
 
-Add functionality to offset each joint so that the planes along which the two links rotate are evenly spaced out, and the end effector always reaches the target.
+## Completed
 
+✅ Add joint plane offsets — planes along which joints rotate are evenly spaced, IK still accurate
+✅ Document JSON file structure in ARCHITECTURE.md
+✅ JSON v2.0 — records arm config (link lengths, offsets, starting angles) alongside waypoints; backwards compatible with v1.0
+✅ Collision margin in GUI — arm never intersects itself; never touches below XY plane (table); collision margin spinbox in Joint Plane Offsets panel
+✅ Base vertical offset in Joint Plane Offsets panel
+✅ Higher-N IK cosmetic: tail links now bend collinearly along approach angle instead of all locking straight
+✅ Implement joint plane offsets in GUI and IK
+✅ Hardware integration — Raspberry Pi Pico 2W stepper control over USB serial
+✅ WiFi transport — PicoWifiInterface, firmware TCP server, over-the-air firmware deploy
+✅ Terminal panel — VS Code-style terminal under the simulation area with 95+ commands
+✅ Named poses — SAVEPOSE / LOADPOSE / POSES / DIFFPOSE
+✅ Terminal scripting — ALIAS, MACRO, EXEC, LOAD, WATCH, REPEAT
+✅ Hardware panel state persistence — IP, SSID, port, baud saved across sessions
+✅ LED toggle button in Hardware panel
+✅ Pico IP display in Hardware panel (shown on WiFi connect)
+✅ Update all documentation files
 
-add documentation for the json file's structure in the documentation file
+---
 
-For the json file - add syntax that records the arm's information (ie the number and length of the links, as well as their offsets from each other, and other information required (starting angle, to name another)) that can be recorded. It should still be able to hold waypoints too.
+## Open / Ideas
 
+🔲 **SAVEPOSE / LOADPOSE persistence** — named poses are currently session-only; save them to `arm_config.json` so they survive restarts
 
-Add the collision margin to the gui somehow- the arm should never intersect itself, and it should never touch below the xy plane, as that is the table. add a vertical offset functionality for the baseto the joint plane offsets tab menu
+🔲 **TRAIL ON/OFF** — render the end-effector path as a 3D line in the viewport as the arm moves
 
+🔲 **GHOST pose** — leave a translucent arm overlay at a saved pose for visual comparison
 
-In higher values of N, the links >joint 3 are all locked in a straight line, not bending. the other joints should be moving, even though this is mostly a cosmetic change.
+🔲 **PAUSE / RESUME animation** — `Animator` currently only supports `cancel()`; add true pause/resume state
 
-adding the link/joint offsets is essential for user experience, and it is also extremely important that with this change, the IK is still accurate.
+🔲 **VELOCITY streaming** — track and log estimated joint angular velocities in the terminal POS stream
 
+🔲 **BROADCAST persistence** — remember last found Pico IP and pre-fill the hardware panel
 
-implement the joint plane offsets into the GUI
+🔲 **Static DHCP / mDNS** — document how to configure a router DHCP reservation so the Pico always gets the same IP
 
-Update the handoff and documentation file accordingly
+🔲 **6-DOF arm support** — current architecture assumes base-rotation + N planar joints; 3D joint orientations would require DH frame overhaul and IK reformulation
 
+🔲 **DH FK with offsets** — `forward_kinematics_frames` (used for Jacobian) does not account for `joint_plane_offsets` or `base_vertical_offset`; numerical IK slightly inaccurate with large offsets
+
+🔲 **Trajectory export** — export animated trajectories as time-stamped angle CSV for offline replay or hardware upload
+
+🔲 **N > 10 links** — math engine uses `theta_1..10`; extending requires expanding variable mapping in `math_engine.py`
+
+🔲 **PLOTPATH polish** — currently requires `matplotlib`; could use pyqtgraph (already a dependency) for an embedded plot window
+
+🔲 **Terminal ALIASES/MACROS persistence** — save to `arm_config.json` so they survive restarts
+
+🔲 **CAMERA preset memory** — save last camera angle/zoom to `arm_config.json`

@@ -417,3 +417,130 @@ Basic integration test exercising FK, IK, animation, and math engine.
 Mathematical correctness tests: DH transforms, FK consistency between
 methods, Jacobian verification via finite differences, 2R solver accuracy,
 and singularity/collision detection.
+
+---
+
+## Hardware Integration
+
+### Transport Layer
+
+Two transport classes with identical public APIs:
+
+| Class | File | Transport |
+|-------|------|-----------|
+| `PicoInterface` | `hardware/pico_interface.py` | USB serial (pyserial) |
+| `PicoWifiInterface` | `hardware/pico_wifi_interface.py` | TCP socket (port 8888) |
+
+Both expose: `connect()`, `disconnect()`, `send_joint_angles(angles_rad)`, `send_raw(text)`, `rx_callback`, `is_connected`.
+
+**Threading model (same for both):**
+
+- TX daemon thread drains a `queue.Queue(maxsize=4)` and writes to the transport.
+- RX daemon thread reads lines and fires `rx_callback`.
+- If the queue is full, the oldest frame is dropped (new frame replaces it).
+- Angles only sent when delta > `UPDATE_THRESHOLD_RAD` (0.005 rad).
+- `send_raw(text)` bypasses the threshold — for one-off commands (LED_TOGGLE, PING, REBOOT, etc.).
+
+**GUI → thread communication (PyQt6 constraint):**
+`QTimer.singleShot(0, fn)` called from a background thread does NOT fire — the timer is created in the calling thread's context, which has no event loop. All background→GUI updates use `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` polling chains.
+
+### Firmware
+
+`firmware/pico_control_script.py` is the MicroPython firmware deployed to the Pico 2W.
+
+**Config injection sentinels** (replaced by deployer at upload time):
+```python
+# <<BEGIN_JOINTS_CONFIG>>
+JOINTS = [ ... ]          # motor config — replaced with GUI values
+# <<END_JOINTS_CONFIG>>
+
+# <<BEGIN_WIFI_CONFIG>>
+WIFI_SSID = ""            # set by deployer
+WIFI_PASSWORD = ""
+TCP_PORT = 8888
+# <<END_WIFI_CONFIG>>
+```
+
+**Main loop structure:**
+
+1. Non-blocking stdin poll (`select.poll(0)`) — reads one char if available
+2. Drain `_wifi_rx` list (commands received from WiFi TCP thread)
+3. `_handle_line(line, reply_fn)` for any complete command
+4. Motor step updates (trapezoidal velocity, step accumulator)
+5. `time.sleep_us(remaining)` to hit exactly `STEP_US = 800 µs` per loop
+
+**`_handle_line` commands:** `PING`, `LED_TOGGLE`, `REBOOT`, and any `J0:deg,J1:deg,…` angle command.
+
+**WiFi TCP server** (background `_thread`):
+
+- Connects to home router (station mode), starts TCP server on `TCP_PORT`
+- Appends IP/status messages to `_wifi_log` (drained by main loop via `sys.stdout.write`) — direct `print()` from MicroPython threads is unreliable
+- Handles firmware upload protocol (`UPLOAD_BEGIN / UPLOAD_CHUNK / UPLOAD_END`) for over-the-air deploy
+
+**WiFi firmware upload protocol:**
+```
+PC → Pico : UPLOAD_BEGIN <size>
+Pico → PC : UPLOAD_READY
+PC → Pico : UPLOAD_CHUNK <hex_bytes>   (repeated)
+Pico → PC : UPLOAD_ACK                 (per chunk)
+PC → Pico : UPLOAD_END
+Pico → PC : UPLOAD_DONE
+Pico calls machine.reset()
+```
+Firmware written to `main_upload.py`, then `os.rename("main_upload.py", "main.py")` before reset. First deploy must be via USB to bootstrap the upload protocol.
+
+### Deployer
+
+`hardware/micropython_deployer.py` — `MicroPythonDeployer` class.
+
+**USB deploy (`deploy()`):** 4-step raw serial REPL process:
+
+1. `[1/4]` Send Ctrl+B, Ctrl+C×3 to reach `>>>` prompt
+2. `[2/4]` Send Ctrl+A to enter raw REPL
+3. `[3/4]` Write firmware in 128-byte hex chunks
+4. `[4/4]` Exit raw REPL (Ctrl+B), soft reset (Ctrl+D)
+
+**WiFi deploy (`deploy_wifi()`):** Connects a fresh TCP socket to the Pico, sends the upload protocol above.
+
+Both methods inject the JOINTS config and (optionally) WiFi config before upload.
+
+---
+
+## Terminal System
+
+`PicoTerminal` (in `gui.py`) is a VS Code-style terminal widget placed below the 3D viewport in a vertical `QSplitter` (8px handle, default 200px open).
+
+### Output Format
+
+Each line: `[HH:MM:SS] <symbol> <text>` rendered as HTML in a readonly `QPlainTextEdit`.
+
+| Kind | Colour | Symbol |
+|------|--------|--------|
+| `tx` | `#4fc1ff` | `→` (sent to Pico) |
+| `rx` | `#4ec9b0` | `←` (from Pico) |
+| `info` | `#888888` | `·` |
+| `error` | `#f44747` | `!` |
+| `deploy` | `#ce9178` | `⬆` |
+
+### Command Dispatch (`_on_terminal_command`)
+
+- Case-insensitive: `upper = raw.upper()`
+- History capped at 200 entries
+- Fallback: check `_aliases` dict, then forward raw text to hardware via `send_raw()`
+- 1 Hz stream tick (`_try_send_hardware_update`): logs joint positions and/or EE coords when streaming flags are set
+
+### Session-Only State
+
+These are not persisted to `arm_config.json`:
+
+| Attribute | Type | Purpose |
+|-----------|------|---------|
+| `_aliases` | `dict[str, str]` | ALIAS definitions |
+| `_macros` | `dict[str, str]` | MACRO definitions (semicolon-separated) |
+| `_saved_poses` | `dict[str, list[float]]` | SAVEPOSE named poses |
+| `_watch_timer` | `QTimer` | WATCH auto-repeat timer |
+| `_latency_t0` | `float` | LATENCY RTT start time |
+| `_sweep_iter` | `iterator` | SWEEP step iterator |
+| `_session_start` | `float` | UPTIME reference (monotonic) |
+| `_pos_log_enabled` | `bool` | POS stream toggle |
+| `_ee_log_enabled` | `bool` | EE stream toggle |

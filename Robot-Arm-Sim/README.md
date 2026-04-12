@@ -44,6 +44,28 @@ See [BUILD.md](BUILD.md) for detailed build instructions and waypoint auto-loadi
 - **Adjustable collision margin**: 0.0–2.0 units, set in the Joint Plane Offsets panel
 - **Custom math expressions**: Per-joint SymPy expressions for advanced constraint rules
 
+### Hardware Control (Raspberry Pi Pico 2W)
+- **USB and WiFi transport**: connect to a Pico 2W over USB serial or WiFi TCP (port 8888) — same API, drop-in switch in Hardware panel
+- **One-click firmware deploy**: uploads `firmware/pico_control_script.py` as `main.py` via USB serial REPL or over-the-air WiFi upload protocol
+- **Motor config injection**: JOINTS config (steps/rev, gear ratio, GPIO pins) injected at deploy time from GUI Motor Config panel
+- **LED toggle**: Hardware panel button toggles the Pico onboard LED to confirm connection is live
+- **Pico IP display**: when connected over WiFi, the Pico's IP address is shown in the Hardware panel
+- **State persistence**: all Hardware panel fields (IP, port, SSID/password, USB port/baud) saved to `arm_config.json` and restored on next launch
+
+### Terminal Panel
+- VS Code-style terminal below the 3D viewport, draggable to resize
+- Colored output: transmitted commands (blue), Pico responses (teal), info (grey), errors (red), deploy progress (orange)
+- **95+ built-in commands** including:
+  - Motion: `JOG`, `GOTO`, `SWEEP`, `PARK`, `EXTEND`, `HOME`, `SETJOINT`
+  - Waypoints: `ADDWP`, `WP <n>`, `CLEARWP`, `RUN`, `LOOP`, `PLOTPATH`
+  - Named poses: `SAVEPOSE`, `LOADPOSE`, `POSES`, `DIFFPOSE`, `COMPARE`
+  - Scripting: `ALIAS`, `MACRO`, `EXEC`, `LOAD <file>`, `WATCH <s> <cmd>`
+  - Hardware: `CONNECT`, `DEPLOY`, `REBOOT`, `BROADCAST`, `LATENCY`
+  - Viewport: `ZOOM`, `CAMERA <preset>`, `SCREENSHOT`
+  - Config: `CONFIG`, `SETLINK`, `SETBASE`, `ACCEL`, `RESET`
+- Unknown commands forwarded verbatim to the Pico hardware
+- Type `HELP` for the full command list
+
 ### Waypoint Sequencing
 - Add, reorder (drag-drop or Up/Down buttons), and remove waypoints
 - Per-waypoint approach angle and elbow preference
@@ -100,6 +122,17 @@ python -c "import sys; sys.path.insert(0, '.'); exec(open('tests/test_integratio
 ```
 
 Expected: 10/10 acceptance tests pass, all integration tests pass.
+
+## Keyboard Shortcuts (updated)
+
+| Key / Input | Action |
+|-------------|--------|
+| Space | Solve IK and animate to target |
+| Mouse drag | Rotate 3D view |
+| Scroll | Zoom |
+| Terminal: `CAMERA ISO` | Snap to isometric view |
+| Terminal: `ZOOM <val>` | Set camera distance |
+| Terminal: `SCREENSHOT` | Save viewport PNG |
 
 ## Architecture
 

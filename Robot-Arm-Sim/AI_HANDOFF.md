@@ -1,6 +1,6 @@
 # Robot-Arm-Sim — Comprehensive AI Handoff
 <!-- IMPORTANT: Update this file every time you iterate on the simulator. -->
-<!-- Last updated: 2026-04-11 -->
+<!-- Last updated: 2026-04-12 -->
 
 ## 🎯 Project Overview
 
@@ -113,13 +113,17 @@ Robot-Arm-Sim/
 └── README.md                    # User-facing documentation
 ```
 
-**Key File Sizes:**
+**Key File Sizes (approximate, as of 2026-04-12):**
 
-- `gui.py` ~3100 lines (largest)
+- `gui.py` ~4800 lines (largest — includes full terminal command dispatcher)
 - `kinematics.py` ~550 lines
 - `constraints.py` ~265 lines
 - `animation.py` ~200 lines
 - `math_engine.py` ~170 lines
+- `firmware/pico_control_script.py` ~650 lines
+- `hardware/pico_interface.py` ~390 lines
+- `hardware/pico_wifi_interface.py` ~300 lines
+- `hardware/micropython_deployer.py` ~450 lines
 
 ---
 
@@ -1191,6 +1195,98 @@ Every panel's state is saved to `config/arm_config.json` when the arm configurat
 
 Old files missing `target_panel` or `elbow` fall back to top-level `"target"` and `"elbow"` keys (legacy format).
 
+### Terminal Panel (`PicoTerminal` in `gui.py`)
+
+A VS Code-style terminal panel sits **below the 3D viewport** in a vertical `QSplitter`, draggable to resize. Default height: 200px (open on launch).
+
+**Layout:**
+- Dark header bar: "TERMINAL" label + connection status label + × close button
+- `QPlainTextEdit` (readonly, `#1e1e1e` bg, Consolas 9pt, max 2000 blocks)
+- Input row: `>` label + `QLineEdit` (disabled when not connected)
+
+**Color coding of output lines:**
+
+| Kind | Color | Symbol | Use |
+|------|-------|--------|-----|
+| `tx` | `#4fc1ff` (blue) | `→` | Commands sent to Pico |
+| `rx` | `#4ec9b0` (teal) | `←` | Responses from Pico |
+| `info` | `#888888` (grey) | `·` | Simulator messages |
+| `error` | `#f44747` (red) | `!` | Errors & warnings |
+| `deploy` | `#ce9178` (orange) | `⬆` | Deploy progress |
+
+**Signals:** `command_entered(str)`, `close_requested()`
+
+**Command dispatcher** (`_on_terminal_command` in `MainWindow`):
+- Case-insensitive dispatch on `raw.upper()`
+- Command history tracked (capped at 200, shown with `HISTORY`)
+- Alias resolution: unknown commands checked against `_aliases` dict first, then forwarded verbatim to hardware
+- 1 Hz streaming loop (`_try_send_hardware_update`): logs TX commands, joint positions (if `_pos_log_enabled`), EE coords (if `_ee_log_enabled`)
+- LATENCY RTT: `_latency_t0` set on PING send, cleared and logged when OK/firmware-ready received
+
+**Full command list (95+ commands):**
+
+```
+─── Info & diagnostics ──────────────────────────────────────────
+  HELP          STATUS         HISTORY        JOINTS (deg + rad)
+  LINKS         MOTORS         REACH          DIST
+  BBOX          NEAREST        STATS          LIMITS
+  TARGET        FK             LATENCY (RTT)
+
+─── Display streams ─────────────────────────────────────────────
+  POS                          EE / EE ON / EE OFF
+
+─── Motion ──────────────────────────────────────────────────────
+  HOME    PARK    EXTEND    FLIP    ELBOW UP|DOWN    PAUSE    STOP
+  SPEED <mult>    JOG J<n>|X|Y|Z <val>    NUDGE <axis> <val>
+  SETJOINT J<n> <deg>    GOTO <x> <y> <z>
+  SWEEP J<n> <start> <end> [steps]    SOLVE
+
+─── Waypoints ───────────────────────────────────────────────────
+  WAYPOINTS  WP <n>  ADDWP  CLEARWP  CLEARPATH
+  LOOP / LOOP ON / OFF    RUN    PLOTPATH
+
+─── Named poses ─────────────────────────────────────────────────
+  SAVEPOSE <name>    LOADPOSE <name>    POSES
+  DELETEPOSE <name>  DIFFPOSE <name>    COMPARE <a> <b>
+  STARTPOSE
+
+─── Config ──────────────────────────────────────────────────────
+  CONFIG    ZERO    SAVE    RESET / RESET CONFIRM
+  SETLINK <i> <len>    SETBASE <height>    SETOFFSET <j> <mm>
+  MARGIN <val>    ACCEL <sps²>    CONSTRAINT / ON / OFF
+
+─── Hardware ────────────────────────────────────────────────────
+  CONNECT    DISCONNECT    RECONNECT    WIFI    SETPORT <n>
+  BROADCAST    DEPLOY    REBOOT    PING    LATENCY
+  LED_TOGGLE    MEM    TEMP    LOG [n]    LOG LEVEL <lvl>
+
+─── Scripting ───────────────────────────────────────────────────
+  ALIAS <name> <cmd>    ALIASES    MACRO <name> <c1;c2;…>
+  MACROS    EXEC <name>    REPEAT <n> <cmd>
+  LOAD <file>    WATCH <s> <cmd>    WATCH STOP
+
+─── Viewport ────────────────────────────────────────────────────
+  ZOOM <val>    CAMERA <ISO|TOP|FRONT|SIDE|BACK>    SCREENSHOT
+
+─── Terminal ────────────────────────────────────────────────────
+  CLEAR    ECHO <text>    MARK [label]    UPTIME    VERSION
+  EXPORT [filename]    HISTORY
+  <any other text> → forwarded verbatim to hardware
+```
+
+**Notable implementations:**
+- `SWEEP` — animates joint through range via chained `QTimer.singleShot(80ms)` callbacks, capped at 100 steps
+- `WATCH` — creates a `QTimer` (min 200 ms interval); `WATCH STOP` stops it
+- `BROADCAST` — spawns daemon thread that `socket.create_connection` tests all `/24` subnet hosts on port 8888 in parallel; results polled by `QTimer` in main thread
+- `SWEEP`, `LOAD`, `EXEC` — recursive calls to `_on_terminal_command` for sub-commands
+- `ALIASES` / `MACROS` — in-session only (not persisted to JSON)
+- `PLOTPATH` — requires `matplotlib`; opens a 2D XY + XZ chart of waypoints
+- `SCREENSHOT` — uses `QWidget.grab()` on the viewport
+- `CAMERA` — calls `viewport.setCameraParams(elevation, azimuth)`
+- Stub commands (`TRAIL`, `GHOST`, `GRAVITY`, `VELOCITY`) return informative "not implemented" messages
+
+---
+
 ### WiFi Support (`hardware/pico_wifi_interface.py`)
 
 **`PicoWifiInterface`** — drop-in replacement for `PicoInterface` when the Pico is connected over WiFi (station mode). Identical public API: `connect(host, port)`, `send_joint_angles()`, `rx_callback`, `is_connected`.
@@ -1234,7 +1330,28 @@ When set, firmware starts a `_thread` TCP server on `TCP_PORT` at boot. Both USB
 | Panel | Role |
 |-------|------|
 | `MotorConfigPanel` | Per-joint steps/rev, gear ratio, microstepping, zero offset. Save/load JSON. |
-| `HardwarePanel` | USB/WiFi toggle, port/IP fields, SSID/password (deploy), Connect/Deploy, status display |
+| `HardwarePanel` | USB/WiFi toggle, port/IP fields, SSID/password (deploy), Connect/Deploy, LED toggle, IP display, status |
+| `PicoTerminal` | VS Code-style terminal below viewport; colored TX/RX/info output; 95+ command dispatcher |
+
+**HardwarePanel additional features (2026-04-12):**
+
+- **LED toggle button** (`led_btn`): disabled until connected; sends `LED_TOGGLE\n` via `send_raw()` to toggle the Pico onboard LED — use to confirm connection is live
+- **Pico IP label** (`ip_lbl`): hidden until a `WiFi connected: <ip>` line is received from the Pico; shows `Pico IP: x.x.x.x` in green. Updated in `_on_pico_rx()`.
+- **State persistence**: `save_state() → dict` / `restore(data)` save all panel fields to `arm_config.json` under key `"hardware"`. Fields saved: `wifi_mode`, `wifi_host`, `wifi_port`, `wifi_ssid`, `wifi_password`, `usb_port`, `baud`. Restored on startup and saved on `closeEvent()` and every config save.
+- **WiFi deploy from panel**: Deploy in WiFi mode reads IP directly from the panel — active WiFi connection is NOT required. Disconnects any existing connection before deploying (so the deployer has exclusive TCP access).
+- **`send_raw(text)`** added to both `PicoInterface` and `PicoWifiInterface`: bypasses the angle-change threshold, puts raw bytes directly on the TX queue. Used by LED_TOGGLE, REBOOT, PING, MEM, TEMP, and any terminal command forwarded to hardware.
+
+**Firmware changes (2026-04-12):**
+
+- **LED blink removed**: The random-interval LED blink loop has been removed entirely. LED is only controllable via the `LED_TOGGLE` command.
+- **WiFi IP print via main thread**: `print()` from MicroPython background threads is unreliable in Thonny. IP address (and connection failure) messages are now appended to a shared `_wifi_log` list; the main loop drains this list and prints via `sys.stdout.write()` each iteration.
+- **WiFi firmware upload protocol**: The TCP server recognises `UPLOAD_BEGIN <size>` and handles a full over-the-air firmware deploy:
+  1. `UPLOAD_BEGIN <size>` → `UPLOAD_READY`
+  2. `UPLOAD_CHUNK <hex>` → `UPLOAD_ACK` (repeated)
+  3. `UPLOAD_END` → `UPLOAD_DONE` → `machine.reset()`
+  Firmware written to `main_upload.py`, then renamed to `main.py` before reset.
+- **REBOOT command**: `_handle_line` now recognises `REBOOT` and calls `machine.reset()` with a short delay, working over both USB and WiFi.
+- **First WiFi deploy must be USB**: The upload protocol only works once the new firmware is already running. The bootstrap path is: (1) deploy via USB to get new firmware onto the Pico, (2) all subsequent deploys can be WiFi.
 
 ### MainWindow Changes
 
@@ -1281,6 +1398,8 @@ pyserial>=3.5    # pip install pyserial   (for hardware mode)
 Six issues diagnosed and fixed in one session. **(1) mpremote reset silently failing** — mpremote's `reset` sub-command had a bare `except: pass`, so Pico never rebooted into new firmware even though copy succeeded. Fix: removed mpremote entirely; always use raw serial REPL with 4-step verbose progress (`[1/4]`–`[4/4]`) shown in the Hardware panel label. **(2) Deploy label never updating past "Starting deploy..."** — `QTimer.singleShot(0, fn)` called from a background thread does NOT fire in PyQt6 (timer created in thread context with no event loop). Fix: `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` chain for all background→GUI updates (deploy progress, deploy done, connect result, Pico RX). **(3) Race condition in serial reads** — `_rx_worker` thread started before `connect()`'s boot-wait loop caused both to read the same port, consuming "firmware ready" before `connect()` saw it. Fix: start `_rx_worker` only after boot-wait loop exits. **(4) RX monitoring added** — `_rx_loop()` thread reads Pico response lines ("OK", "ERR:..."), delivers via `rx_callback` → `_pico_rx_queue` (thread-safe) → drained in `_try_send_hardware_update()` → `_on_pico_rx()` shows green "Pico RX: OK" in Hardware panel, confirming commands arrive. **(5) Random LED blink rate** — firmware now uses `random.randint(100_000, 900_000)` µs per toggle (regenerated each toggle) so irregular blink rate visually proves new firmware was deployed vs. the fixed 1 Hz heartbeat. **(6) Jerky/vibrating motor movement (two-iteration fix)**: First tried reducing loop period and adding step accumulator; still jerky because `time.sleep_us(500)` was still inside `_step()`. Real fix: remove ALL sleep from `_step()`, put a single `time.sleep_us(remaining)` at the END of each loop iteration to hit exactly `STEP_US=800` µs/loop. `dt = STEP_US * 1e-6` (constant). Step accumulator (`_accumulator += velocity * dt`; step when `|acc| >= 1.0`) prevents float→int drift. Result: perfectly uniform step rate, smooth trapezoid velocity profile.
 - **2026-03-05 (offsets, table collision, JSON v2.0)**: Implemented `joint_plane_offsets` and `base_vertical_offset` in `forward_kinematics()` and `solve_ik_analytical()`. IK adjusts effective target Z by subtracting all offsets before solving; FK reapplies them. Added `check_table_collision()` to constraints.py (checks any joint z < 0). Added `collision_margin` field to `ConstraintSet`. New `JointPlaneOffsetPanel` in sidebar with base offset spinbox, per-joint offset spinboxes, and collision margin spinbox. `StatsPanel` now shows separate Self Collision and Table Collision rows. `WaypointPanel` JSON export upgraded to v2.0 with `arm_config` section; import is backwards compatible with v1.0. Note: distributed tail angles (Feature 6 as described) cannot preserve IK accuracy with the wrist-subtraction algorithm — collinear tail links are retained. All 10 acceptance tests pass.
 - **2026-04-11 (lateral offsets, FK semantics, WiFi support, GUI cleanup)**: Eight changes in one session. **(1) Per-joint lateral offsets** — added `joint_lateral_x[]` and `joint_lateral_y[]` to `ArmConfig` (saved in arm_config.json); new spinboxes in `JointPlaneOffsetPanel`; FK applies them as radial/lateral displacements in 3D before each link. **(2) FK semantics fix** — `offset[i]` now applied at START of link `i` (using parent cumulative angle), not after `nom[i]`. Return format changed from 2N+1 to 2N interleaved `[eff[0], nom[0], eff[1], nom[1], …]`; `positions[-1]` is the EE. `ArmViewport.update_arm()` index fix: `pos_arr[::2]` for joint scatter (was `pos_arr[:-1:2]`). **(3) Jacobian base column fix** — after FK semantics change, `positions[0]` includes offset[0] so it can no longer be used as the base pivot. Replaced with explicit `base_pos = [0, 0, base_vertical_offset]`; planar joint columns still use `positions[2*i]` for eff[i]. **(4) Config save/load bug fix** — `_on_config_changed()` was calling `offset_panel.rebuild(n)` which discarded user-entered offset values. Fix: save and restore all offset panel values (joint offsets, lateral x/y, base offset, collision margin) around the rebuild call. **(5) Link length max raised to 100** — `ArmConfigPanel._rebuild_links()` spinbox range was `(0.1, 20.0)`, raised to `(0.1, 100.0)`. **(6) Save as Default button** — new "Save as Default" `QPushButton` above the toolbox; clicking calls `_on_save_as_default()` which calls `_save_arm_config()` and shows a status bar message. **(7) Toolbox reorganization** — sidebar toolbox restructured into 10 logical groups: "Arm Setup" (ArmConfigPanel + JointPlaneOffsetPanel), "Target & Constraints" (TargetPanel + ConstrainEndEffectorPanel), "Joint State" (InitialJointPanel + JointOutputPanel), plus Animation, Waypoint Path, Custom Math, Motor Configuration, Pico Pinout, Hardware, Status. **(8) Auto-open features removed** — `_show_help_on_start` startup timer and `_load_auto_waypoints` timer removed; methods and `import glob` removed. **(9) WiFi support** — `PicoWifiInterface` (`hardware/pico_wifi_interface.py`) added as drop-in replacement for `PicoInterface`; identical public API using TCP socket instead of serial. Firmware (`firmware/pico_control_script.py`) gains `<<BEGIN_WIFI_CONFIG>>` sentinel block and a `_thread` TCP server that activates when `WIFI_SSID` is non-empty; USB serial still works simultaneously. Deployer (`hardware/micropython_deployer.py`) extended with `_inject_wifi_config()` and new `wifi_ssid`/`wifi_password`/`wifi_port` parameters. `HardwarePanel` rewritten with USB/WiFi radio toggle: USB mode shows existing port/baud; WiFi mode shows IP address, TCP port, SSID, password fields. New `wifi_connect_requested(host, port)` signal; `MainWindow._on_hardware_wifi_connect()` handles it with same background-thread polling pattern as USB. **(10) QRadioButton import fix** — `QRadioButton` was missing from the `PyQt6.QtWidgets` import list, causing `NameError` on startup; added between `QCheckBox` and `QSplitter`.
+
+- **2026-04-12 (terminal panel, WiFi deploy, LED toggle, hardware persistence, 95+ terminal commands)**: Major GUI and firmware session. **(1) PicoTerminal panel** — new `PicoTerminal` QWidget sits below the 3D viewport in a vertical `QSplitter` (8px drag handle, default 200px, open on launch). Dark VS Code-style header, `QPlainTextEdit` readonly output with HTML timestamp + colored prefix symbols per line kind (tx=blue, rx=teal, info=grey, error=red, deploy=orange), `QLineEdit` input row. Disabled when not connected. Max 2000 blocks (auto-trim). **(2) Terminal command dispatcher** — `_on_terminal_command` in `MainWindow` dispatches 95+ commands case-insensitively. Command history capped at 200. Unknown commands checked against `_aliases` dict then forwarded verbatim to hardware. 1 Hz stream loop logs TX commands, joint positions (`_pos_log_enabled`), and EE coords (`_ee_log_enabled`). **(3) WiFi deploy** — `MicroPythonDeployer.deploy_wifi()` uploads firmware over the existing TCP connection using an `UPLOAD_BEGIN / UPLOAD_CHUNK / UPLOAD_END` protocol; Pico renames `main_upload.py` → `main.py` and calls `machine.reset()`. Deploy in WiFi mode reads IP from the panel directly — active connection NOT required. Note: first deploy must be USB to bootstrap the upload protocol. **(4) LED toggle button** — `HardwarePanel.led_btn` enabled on connect; sends `LED_TOGGLE\n` via `send_raw()`. **(5) Pico IP display** — `ip_lbl` in `HardwarePanel` appears (green) when `_on_pico_rx` receives `WiFi connected: <ip>`. **(6) Hardware panel state persistence** — `save_state() / restore()` serialize all hardware panel fields (wifi_mode, host, port, ssid, password, usb_port, baud) into `arm_config.json["hardware"]`; saved on every config save and `closeEvent()`, restored on startup. **(7) LED blink removed** from firmware — random blink loop deleted; LED only togglable via button/command. WiFi IP print routed through `_wifi_log` list (main-thread drain) because `print()` from MicroPython background threads is unreliable. **(8) REBOOT added to firmware** `_handle_line` — works over USB and WiFi. **(9) Bug fixes** — `SETBASE` was referencing `base_spin` (wrong panel); corrected to `base_offset_spin`. `SETOFFSET` was using non-existent `_joint_rows` dict; corrected to `offset_panel.joint_spins[idx].setValue()`. **(10) Full terminal command set** (grouped): Info (HELP, STATUS, HISTORY, JOINTS, LINKS, MOTORS, REACH, DIST, BBOX, NEAREST, STATS, LIMITS, TARGET, FK, LATENCY), Streams (POS, EE/EE ON/OFF), Motion (HOME, PARK, EXTEND, FLIP, ELBOW UP/DOWN, PAUSE, STOP, SPEED, JOG, NUDGE, SETJOINT, GOTO, SWEEP, SOLVE), Waypoints (WAYPOINTS, WP n, ADDWP, CLEARWP, CLEARPATH, LOOP, RUN, PLOTPATH), Poses (SAVEPOSE, LOADPOSE, POSES, DELETEPOSE, DIFFPOSE, COMPARE, STARTPOSE), Config (CONFIG, ZERO, SAVE, RESET, SETLINK, SETBASE, SETOFFSET, MARGIN, ACCEL, CONSTRAINT), Hardware (CONNECT, DISCONNECT, RECONNECT, WIFI, SETPORT, BROADCAST, DEPLOY, REBOOT, PING, LATENCY, LED_TOGGLE, MEM, TEMP, LOG, LOG LEVEL), Scripting (ALIAS, ALIASES, MACRO, MACROS, EXEC, REPEAT, LOAD, WATCH, WATCH STOP), Viewport (ZOOM, CAMERA, SCREENSHOT), Terminal (CLEAR, ECHO, MARK, UPTIME, VERSION, EXPORT, HISTORY). Stub commands (TRAIL, GHOST, GRAVITY, VELOCITY, RESUME) return informative "not implemented" messages.
 
 ---
 
