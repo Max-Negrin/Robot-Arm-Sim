@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QCheckBox, QLineEdit, QRadioButton, QSplitter, QScrollArea,
     QSpinBox, QDoubleSpinBox, QToolBox, QStatusBar, QProgressBar,
     QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
-    QGridLayout,
+    QGridLayout, QPlainTextEdit, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPalette, QColor, QFont
@@ -2225,6 +2225,173 @@ class HelpDialog(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Pico Terminal
+# ═══════════════════════════════════════════════════════════════════════════
+
+class PicoTerminal(QWidget):
+    """VS Code-style terminal panel showing all Pico ↔ laptop communications.
+
+    Sits below the 3D viewport in a vertical splitter.  The header bar
+    has a close button; the panel can be reopened via Ctrl+` or the
+    status-bar toggle button.
+
+    Colour scheme
+    -------------
+    TX  (→ Pico)  : cyan   #4fc1ff
+    RX  (← Pico)  : green  #4ec9b0
+    INFO           : grey   #888888
+    ERROR          : red    #f44747
+    DEPLOY         : orange #ce9178
+    """
+
+    command_entered = pyqtSignal(str)   # user hit Enter in the input line
+    close_requested = pyqtSignal()
+
+    _COLORS = {
+        "tx":     "#4fc1ff",
+        "rx":     "#4ec9b0",
+        "info":   "#888888",
+        "error":  "#f44747",
+        "deploy": "#ce9178",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Header bar ──────────────────────────────────────────────────────
+        header = QWidget()
+        header.setFixedHeight(26)
+        header.setStyleSheet("background: #2d2d30; border-bottom: 1px solid #3f3f46;")
+        hlay = QHBoxLayout(header)
+        hlay.setContentsMargins(8, 0, 4, 0)
+        hlay.setSpacing(6)
+
+        title = QLabel("TERMINAL")
+        title.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        title.setStyleSheet("color: #cccccc; background: transparent;")
+        hlay.addWidget(title)
+        hlay.addStretch()
+
+        self._connected_lbl = QLabel("not connected")
+        self._connected_lbl.setFont(QFont("Consolas", 8))
+        self._connected_lbl.setStyleSheet("color: #666; background: transparent;")
+        hlay.addWidget(self._connected_lbl)
+
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #999; border: none; font-size: 14px; }"
+            "QPushButton:hover { background: #e81123; color: white; }"
+        )
+        close_btn.clicked.connect(self.close_requested.emit)
+        hlay.addWidget(close_btn)
+
+        root.addWidget(header)
+
+        # ── Output area ─────────────────────────────────────────────────────
+        self._output = QPlainTextEdit()
+        self._output.setReadOnly(True)
+        self._output.setFont(QFont("Consolas", 9))
+        self._output.setStyleSheet(
+            "QPlainTextEdit {"
+            "  background: #1e1e1e;"
+            "  color: #d4d4d4;"
+            "  border: none;"
+            "  padding: 4px 6px;"
+            "}"
+        )
+        self._output.setMaximumBlockCount(2000)  # cap at 2000 lines
+        root.addWidget(self._output)
+
+        # ── Input row ───────────────────────────────────────────────────────
+        input_row = QWidget()
+        input_row.setFixedHeight(28)
+        input_row.setStyleSheet("background: #1e1e1e; border-top: 1px solid #3f3f46;")
+        ilay = QHBoxLayout(input_row)
+        ilay.setContentsMargins(6, 2, 6, 2)
+        ilay.setSpacing(4)
+
+        prompt = QLabel(">")
+        prompt.setFont(QFont("Consolas", 9))
+        prompt.setStyleSheet("color: #4fc1ff; background: transparent;")
+        ilay.addWidget(prompt)
+
+        self._input = QLineEdit()
+        self._input.setFont(QFont("Consolas", 9))
+        self._input.setStyleSheet(
+            "QLineEdit {"
+            "  background: transparent;"
+            "  color: #d4d4d4;"
+            "  border: none;"
+            "}"
+        )
+        self._input.setPlaceholderText("type command and press Enter (e.g. PING, LED_TOGGLE)")
+        self._input.returnPressed.connect(self._on_enter)
+        ilay.addWidget(self._input)
+
+        root.addWidget(input_row)
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def log(self, text: str, kind: str = "info") -> None:
+        """Append a line to the terminal output.
+
+        Parameters
+        ----------
+        text : str
+            The message to display.
+        kind : str
+            One of ``"tx"``, ``"rx"``, ``"info"``, ``"error"``, ``"deploy"``.
+        """
+        import time as _time
+        color = self._COLORS.get(kind, "#d4d4d4")
+        prefix = {"tx": "→", "rx": "←", "info": "·", "error": "!", "deploy": "⬆"}.get(kind, " ")
+        ts = _time.strftime("%H:%M:%S")
+        html = (
+            f'<span style="color:#555">[{ts}]</span> '
+            f'<span style="color:{color}">{prefix} {_html_escape(text)}</span>'
+        )
+        self._output.appendHtml(html)
+        # Auto-scroll to bottom
+        sb = self._output.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def set_connected(self, connected: bool, label: str = "") -> None:
+        """Update the connection label in the header."""
+        if connected:
+            self._connected_lbl.setText(label or "connected")
+            self._connected_lbl.setStyleSheet("color: #4ec9b0; background: transparent;")
+            self._input.setEnabled(True)
+        else:
+            self._connected_lbl.setText("not connected")
+            self._connected_lbl.setStyleSheet("color: #666; background: transparent;")
+            self._input.setEnabled(False)
+
+    def clear(self) -> None:
+        self._output.clear()
+
+    # ── Internal ────────────────────────────────────────────────────────────
+
+    def _on_enter(self) -> None:
+        text = self._input.text().strip()
+        if not text:
+            return
+        self._input.clear()
+        self.command_entered.emit(text)
+        self.log(text, "tx")
+
+
+def _html_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Main Window
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -2382,10 +2549,27 @@ class MainWindow(QMainWindow):
         self.viewport = ArmViewport()
         self.viewport.setMinimumWidth(300)
 
-        # ── Resizable splitter ──
+        # ── Terminal panel (below viewport) ──
+        self.terminal = PicoTerminal()
+        self.terminal.setMinimumHeight(80)
+        self.terminal.close_requested.connect(self._hide_terminal)
+        self.terminal.command_entered.connect(self._on_terminal_command)
+
+        # Vertical splitter: viewport on top, terminal below
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.addWidget(self.viewport)
+        self._right_splitter.addWidget(self.terminal)
+        self._right_splitter.setCollapsible(0, False)
+        self._right_splitter.setCollapsible(1, True)
+        self._right_splitter.setHandleWidth(4)
+        # Terminal starts hidden
+        self.terminal.hide()
+        self._terminal_visible = False
+
+        # ── Horizontal splitter: sidebar | right panel ──
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(sidebar_scroll)
-        splitter.addWidget(self.viewport)
+        splitter.addWidget(self._right_splitter)
         splitter.setCollapsible(0, True)  # Allow collapsing sidebar
         splitter.setCollapsible(1, False)  # Keep viewport always visible
         splitter.setSizes([290, 1100])  # Initial sidebar: 290px, viewport: rest
@@ -2397,6 +2581,22 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
+
+        # Terminal toggle button (left side of status bar)
+        self._terminal_btn = QPushButton("Terminal")
+        self._terminal_btn.setCheckable(True)
+        self._terminal_btn.setFixedHeight(18)
+        self._terminal_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: #3c3c3c; color: #ccc; border: none;"
+            "  padding: 0 8px; font-size: 11px;"
+            "}"
+            "QPushButton:checked { background: #007acc; color: white; }"
+            "QPushButton:hover { background: #505050; }"
+        )
+        self._terminal_btn.setToolTip("Toggle terminal panel  (Ctrl+`)")
+        self._terminal_btn.clicked.connect(self._toggle_terminal)
+        self.status_bar.addWidget(self._terminal_btn)
 
         # Permanent hint label on the right side of the status bar
         self._help_hint_label = QLabel("H — help")
@@ -2461,6 +2661,8 @@ class MainWindow(QMainWindow):
             self._on_update_clicked()
         elif event.key() in (Qt.Key.Key_H, Qt.Key.Key_F1, Qt.Key.Key_Question):
             self._toggle_help()
+        elif event.key() == Qt.Key.Key_QuoteLeft and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._toggle_terminal()
         else:
             super().keyPressEvent(event)
 
@@ -3087,17 +3289,21 @@ class MainWindow(QMainWindow):
             ip = text.split(":", 1)[1].strip()
             self.hardware_panel.ip_lbl.setText(f"Pico IP: {ip}")
             self.hardware_panel.ip_lbl.setVisible(True)
+            self.terminal.log(text, "info")
         elif text.startswith("OK"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text} — commands are arriving")
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.terminal.log(text, "rx")
         elif text.startswith("ERR"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text}")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.terminal.log(text, "error")
         elif text in ("firmware ready", "Robot Arm Pico Controller ready"):
-            pass  # already shown in connect status
+            self.terminal.log(text, "info")
         else:
             self.hardware_panel.log_lbl.setText(f"Pico: {text}")
             self.hardware_panel.log_lbl.setStyleSheet("color: #aaa;")
+            self.terminal.log(text, "rx")
 
     def _try_send_hardware_update(self) -> None:
         """Send current joint angles to the Pico if connected (non-blocking)."""
@@ -3173,10 +3379,13 @@ class MainWindow(QMainWindow):
                 # use a queue+poll to safely update the GUI label.
                 iface.rx_callback = self._on_pico_rx_threadsafe
                 self.hardware_panel.set_connected(True, msg)
+                self.terminal.set_connected(True, f"USB {port}")
+                self.terminal.log(f"Connected via USB ({port})", "info")
                 self.status_bar.showMessage(msg.split("\n")[0])
                 logger.info("Hardware connected: %s", msg)
             else:
                 self.hardware_panel.set_connected(False, msg)
+                self.terminal.log(f"Connection failed: {msg.splitlines()[0]}", "error")
                 self.status_bar.showMessage("Pico connection failed — see Hardware panel")
                 logger.error("Hardware connect failed: %s", msg)
 
@@ -3223,10 +3432,13 @@ class MainWindow(QMainWindow):
                 self._hardware = iface
                 iface.rx_callback = self._on_pico_rx_threadsafe
                 self.hardware_panel.set_connected(True, msg)
+                self.terminal.set_connected(True, f"WiFi {host}:{port}")
+                self.terminal.log(f"Connected via WiFi ({host}:{port})", "info")
                 self.status_bar.showMessage(msg.split("\n")[0])
                 logger.info("Hardware WiFi connected: %s", msg)
             else:
                 self.hardware_panel.set_connected(False, msg)
+                self.terminal.log(f"WiFi connection failed: {msg.splitlines()[0]}", "error")
                 self.status_bar.showMessage("Pico WiFi connection failed — see Hardware panel")
                 logger.error("Hardware WiFi connect failed: %s", msg)
 
@@ -3238,12 +3450,52 @@ class MainWindow(QMainWindow):
             self._hardware.disconnect()
             self._hardware = None
         self.hardware_panel.set_connected(False, "Disconnected by user")
+        self.terminal.set_connected(False)
+        self.terminal.log("Disconnected", "info")
         self.status_bar.showMessage("Hardware disconnected")
 
     def _on_led_toggle(self) -> None:
         """Send LED_TOGGLE command to Pico to confirm the connection is live."""
         if self._hardware is not None:
             self._hardware.send_raw("LED_TOGGLE\n")
+            self.terminal.log("LED_TOGGLE", "tx")
+
+    # ── Terminal ──────────────────────────────────────────────────────────
+
+    def terminal_log(self, text: str, kind: str = "info") -> None:
+        """Append a message to the terminal (safe to call from any context)."""
+        self.terminal.log(text, kind)
+
+    def _toggle_terminal(self) -> None:
+        if self._terminal_visible:
+            self._hide_terminal()
+        else:
+            self._show_terminal()
+
+    def _show_terminal(self) -> None:
+        self.terminal.show()
+        self._terminal_visible = True
+        self._terminal_btn.setChecked(True)
+        # Give terminal ~200px if it was collapsed
+        sizes = self._right_splitter.sizes()
+        if sizes[1] < 80:
+            total = sum(sizes)
+            self._right_splitter.setSizes([max(100, total - 200), 200])
+
+    def _hide_terminal(self) -> None:
+        self.terminal.hide()
+        self._terminal_visible = False
+        self._terminal_btn.setChecked(False)
+
+    def _on_terminal_command(self, text: str) -> None:
+        """User typed a command in the terminal input line."""
+        if self._hardware is not None:
+            cmd = text.strip()
+            if not cmd.endswith("\n"):
+                cmd += "\n"
+            self._hardware.send_raw(cmd)
+        else:
+            self.terminal.log("Not connected — command not sent", "error")
 
     def _on_hardware_deploy(self, port: str) -> None:
         """Handle Deploy Firmware button: upload pico_control_script.py.
@@ -3389,6 +3641,7 @@ class MainWindow(QMainWindow):
         """Called in the main thread with a progress update during deployment."""
         self.hardware_panel.log_lbl.setText(msg)
         self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
+        self.terminal.log(msg, "deploy")
         self.status_bar.showMessage(f"Deploying: {msg}")
 
     def _on_deploy_finished(self, ok: bool, msg: str,
@@ -3401,6 +3654,7 @@ class MainWindow(QMainWindow):
                 "(LED blink = motor firmware heartbeat, this is normal)"
             )
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.terminal.log(f"Deploy OK — reconnecting to {port}", "info")
             self.status_bar.showMessage("Firmware deployed — reconnecting…")
             logger.info("Deploy succeeded: %s", msg)
             # Always reconnect after a successful deploy so motors are ready
@@ -3409,6 +3663,7 @@ class MainWindow(QMainWindow):
             # Show full error — truncate only if very long
             self.hardware_panel.log_lbl.setText(msg[:500])
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.terminal.log(f"Deploy FAILED: {msg.splitlines()[0]}", "error")
             self.status_bar.showMessage("Firmware deployment failed — see Hardware panel")
             logger.error("Deploy failed: %s", msg)
 
@@ -3422,6 +3677,7 @@ class MainWindow(QMainWindow):
                 "(Pico is rebooting, may take a few seconds)"
             )
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.terminal.log(f"WiFi deploy OK — Pico rebooting, reconnecting in 4s", "info")
             self.status_bar.showMessage("Firmware deployed over WiFi — reconnecting…")
             logger.info("WiFi deploy succeeded: %s", msg)
             # Reconnect after a short delay to give the Pico time to reboot
@@ -3429,6 +3685,7 @@ class MainWindow(QMainWindow):
         else:
             self.hardware_panel.log_lbl.setText(msg[:500])
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.terminal.log(f"WiFi deploy FAILED: {msg.splitlines()[0]}", "error")
             self.status_bar.showMessage("WiFi firmware deployment failed — see Hardware panel")
             logger.error("WiFi deploy failed: %s", msg)
 
