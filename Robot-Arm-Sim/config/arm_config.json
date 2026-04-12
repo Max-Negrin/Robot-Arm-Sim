@@ -21,7 +21,7 @@
     "base_vertical_offset": 2.0,
     "starting_angles": [
       0.0,
-      180.0,
+      0.0,
       0.0
     ],
     "elbow": 0,
@@ -107,8 +107,8 @@
     }
   },
   "hardware": {
-    "wifi_mode": true,
-    "wifi_host": "192.168.86.31",
+    "wifi_mode": false,
+    "wifi_host": "",
     "wifi_port": 8888,
     "wifi_ssid": "",
     "wifi_password": "",

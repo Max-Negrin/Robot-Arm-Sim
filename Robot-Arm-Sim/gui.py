@@ -1715,7 +1715,7 @@ class HardwarePanel(QGroupBox):
 
         layout.addWidget(self._usb_widget)
 
-        # ── WiFi fields ────────────────────────────────────────────────────
+        # ── WiFi connect fields (IP + port — only needed when connecting via WiFi)
         self._wifi_widget = QWidget()
         wifi_layout = QVBoxLayout(self._wifi_widget)
         wifi_layout.setContentsMargins(0, 0, 0, 0)
@@ -1726,9 +1726,8 @@ class HardwarePanel(QGroupBox):
         self.ip_edit.setPlaceholderText("192.168.1.xxx")
         self.ip_edit.setToolTip(
             "IP address of the Pico on your home network.\n"
-            "Find it by checking your router's DHCP table or by viewing the\n"
-            "serial output in Thonny right after the Pico boots\n"
-            "(it prints 'WiFi connected: x.x.x.x')."
+            "After a USB deploy the Pico prints its IP in the terminal\n"
+            "('WiFi connected: x.x.x.x') — copy it here."
         )
         ip_row.addWidget(self.ip_edit)
         wifi_layout.addLayout(ip_row)
@@ -1741,14 +1740,26 @@ class HardwarePanel(QGroupBox):
         tcp_row.addWidget(self.tcp_port_spin)
         wifi_layout.addLayout(tcp_row)
 
-        # SSID/password used only for Deploy — not needed to Connect
-        wifi_layout.addWidget(QLabel("WiFi credentials (for Deploy only):"))
+        self._wifi_widget.setVisible(False)
+        layout.addWidget(self._wifi_widget)
+
+        # ── WiFi credentials (always visible — embedded in firmware at deploy time)
+        # These are required whether deploying via USB or re-deploying via WiFi.
+        creds_lbl = QLabel("WiFi credentials (embedded at deploy time):")
+        creds_lbl.setStyleSheet("color: #aaa; font-size: 9px;")
+        layout.addWidget(creds_lbl)
+
         ssid_row = QHBoxLayout()
         ssid_row.addWidget(QLabel("SSID:"))
         self.ssid_edit = QLineEdit()
         self.ssid_edit.setPlaceholderText("Your network name")
+        self.ssid_edit.setToolTip(
+            "Your home WiFi network name.\n"
+            "This is written into the Pico firmware when you click Deploy.\n"
+            "Required for both USB first-deploy AND WiFi re-deploy."
+        )
         ssid_row.addWidget(self.ssid_edit)
-        wifi_layout.addLayout(ssid_row)
+        layout.addLayout(ssid_row)
 
         pw_row = QHBoxLayout()
         pw_row.addWidget(QLabel("Password:"))
@@ -1756,10 +1767,7 @@ class HardwarePanel(QGroupBox):
         self.wifi_pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.wifi_pw_edit.setPlaceholderText("Network password")
         pw_row.addWidget(self.wifi_pw_edit)
-        wifi_layout.addLayout(pw_row)
-
-        self._wifi_widget.setVisible(False)
-        layout.addWidget(self._wifi_widget)
+        layout.addLayout(pw_row)
 
         # ── Connect / Deploy buttons ────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -1773,9 +1781,13 @@ class HardwarePanel(QGroupBox):
 
         self.deploy_btn = QPushButton("Deploy Firmware")
         self.deploy_btn.setToolTip(
-            "Upload pico_control_script.py to the Pico as main.py.\n"
-            "USB mode: uses serial REPL.  WiFi mode: requires USB port on\n"
-            "another machine — enter SSID + password above before deploying."
+            "Upload pico_control_script.py to the Pico as main.py.\n\n"
+            "First deploy: enter SSID + Password above, select USB mode,\n"
+            "  plug in USB, click Deploy. The Pico will print its IP in\n"
+            "  the terminal (~10 s after reboot). Copy that IP into\n"
+            "  the IP Address field, then switch to WiFi mode.\n\n"
+            "Subsequent deploys: WiFi mode + IP filled in → Deploy sends\n"
+            "  firmware over the air without needing USB."
         )
         self.deploy_btn.clicked.connect(self._on_deploy_clicked)
         btn_row.addWidget(self.deploy_btn)
@@ -4809,9 +4821,11 @@ class MainWindow(QMainWindow):
             return
 
         joints_config = self._get_full_joint_configs()
-        wifi_ssid = self.hardware_panel.get_wifi_ssid() if self.hardware_panel.is_wifi_mode() else ""
-        wifi_pw   = self.hardware_panel.get_wifi_password() if self.hardware_panel.is_wifi_mode() else ""
-        wifi_port = self.hardware_panel.get_wifi_port() if self.hardware_panel.is_wifi_mode() else 8888
+        # Always read credentials — they're embedded at deploy time regardless of
+        # whether the current connection mode is USB or WiFi.
+        wifi_ssid = self.hardware_panel.get_wifi_ssid()
+        wifi_pw   = self.hardware_panel.get_wifi_password()
+        wifi_port = self.hardware_panel.get_wifi_port()
 
         # ── WiFi deploy: use IP from panel (connection not required) ────────
         from hardware.pico_wifi_interface import PicoWifiInterface
@@ -4953,14 +4967,21 @@ class MainWindow(QMainWindow):
         self.hardware_panel.deploy_btn.setEnabled(True)
         if ok:
             self.hardware_panel.log_lbl.setText(
-                f"Deploy OK — auto-connecting to {port}…\n"
-                "(LED blink = motor firmware heartbeat, this is normal)"
+                f"Deploy OK — reconnecting to {port}…"
             )
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log(f"Deploy OK — reconnecting to {port}", "info")
+            self.terminal.log(f"Deploy OK — reconnecting via USB to {port}", "deploy")
+            if self.hardware_panel.get_wifi_ssid():
+                self.terminal.log(
+                    "WiFi credentials embedded — Pico will join your network on boot.", "info"
+                )
+                self.terminal.log(
+                    "Watch for 'WiFi connected: x.x.x.x' below (~10 s). "
+                    "Copy that IP into the WiFi IP field, then switch to WiFi mode.", "info"
+                )
             self.status_bar.showMessage("Firmware deployed — reconnecting…")
             logger.info("Deploy succeeded: %s", msg)
-            # Always reconnect after a successful deploy so motors are ready
+            # Always reconnect via USB so we can read the WiFi IP from boot output
             self._on_hardware_connect(port, 115200)
         else:
             # Show full error — truncate only if very long
