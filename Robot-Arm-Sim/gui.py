@@ -3347,12 +3347,20 @@ class MainWindow(QMainWindow):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text} — commands are arriving")
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
             self.terminal.log(text, "rx")
+            if hasattr(self, "_latency_t0") and self._latency_t0 is not None:
+                rtt = (time.monotonic() - self._latency_t0) * 1000
+                self.terminal.log(f"RTT: {rtt:.1f} ms", "info")
+                self._latency_t0 = None
         elif text.startswith("ERR"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text}")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
             self.terminal.log(text, "error")
         elif text in ("firmware ready", "Robot Arm Pico Controller ready"):
             self.terminal.log(text, "info")
+            if hasattr(self, "_latency_t0") and self._latency_t0 is not None:
+                rtt = (time.monotonic() - self._latency_t0) * 1000
+                self.terminal.log(f"RTT: {rtt:.1f} ms", "info")
+                self._latency_t0 = None
         else:
             self.hardware_panel.log_lbl.setText(f"Pico: {text}")
             self.hardware_panel.log_lbl.setStyleSheet("color: #aaa;")
@@ -3570,46 +3578,108 @@ class MainWindow(QMainWindow):
 
     _HELP_TEXT = [
         "Available commands:",
-        "─── Info ───────────────────────────────────────────────────",
+        "─── Info & diagnostics ─────────────────────────────────────",
         "  HELP                     — show this list",
         "  STATUS                   — full system snapshot",
-        "  HISTORY                  — show recent command history",
+        "  HISTORY                  — recent command history",
+        "  JOINTS                   — all joint angles (deg + rad)",
         "  LINKS                    — list link lengths",
         "  MOTORS                   — motor config table",
         "  REACH                    — current reach vs max reach",
         "  DIST                     — EE distance to current target",
+        "  BBOX                     — approximate workspace bounding box",
+        "  NEAREST                  — closest reachable point to target",
+        "  STATS                    — collision / singularity check",
+        "  LIMITS                   — joint angle limits",
+        "  TARGET                   — print current IK target",
+        "  FK                       — forward kinematics dump",
+        "  LATENCY                  — measure Pico round-trip time",
         "─── Display streams ────────────────────────────────────────",
         "  POS                      — toggle 1 Hz joint-angle stream",
         "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
         "─── Motion ─────────────────────────────────────────────────",
-        "  JOG J<n> <deg>           — jog joint n by ±deg   (JOG J0 5)",
-        "  JOG X|Y|Z <dist>         — jog target by ±mm     (JOG Z -10)",
-        "  SETJOINT J<n> <deg>      — set joint to absolute angle",
-        "  GOTO <x> <y> <z>         — set absolute IK target",
         "  HOME                     — animate to vertical (all joints 0)",
+        "  PARK                     — fold arm to compact stowed pose",
+        "  EXTEND                   — fully extend all joints (max reach)",
         "  FLIP                     — toggle elbow up/down",
         "  ELBOW UP|DOWN            — set elbow configuration",
-        "  SPEED <0.1-5.0>          — animation speed multiplier",
+        "  PAUSE                    — pause running animation",
+        "  RESUME                   — resume paused animation",
         "  STOP                     — stop animation / sequence",
+        "  SPEED <0.1-5.0>          — animation speed multiplier",
+        "  JOG J<n> <deg>           — jog joint n by ±deg   (JOG J0 5)",
+        "  JOG X|Y|Z <dist>         — jog IK target          (JOG Z -10)",
+        "  NUDGE <axis> <val>       — alias for JOG (smaller increments)",
+        "  SETJOINT J<n> <deg>      — set joint to absolute angle",
+        "  GOTO <x> <y> <z>         — set absolute IK target",
+        "  SWEEP J<n> <s> <e> [n]   — sweep joint s°→e° in n steps",
+        "  SOLVE                    — re-run IK for current target",
         "─── Waypoints ──────────────────────────────────────────────",
         "  WAYPOINTS                — list loaded waypoints",
-        "  ADDWP                    — add current EE position as waypoint",
+        "  WP <n>                   — jump to waypoint n (1-based)",
+        "  ADDWP                    — add current EE as waypoint",
         "  CLEARWP                  — clear all waypoints",
+        "  CLEARPATH                — alias for CLEARWP",
         "  LOOP / LOOP ON / OFF     — toggle waypoint loop",
         "  RUN                      — start waypoint sequence",
+        "  PLOTPATH                 — 2D matplotlib chart of waypoints",
+        "─── Named poses ────────────────────────────────────────────",
+        "  SAVEPOSE <name>          — save current joint angles",
+        "  LOADPOSE <name>          — restore saved pose",
+        "  POSES                    — list all saved poses",
+        "  DELETEPOSE <name>        — remove a saved pose",
+        "  DIFFPOSE <name>          — angle delta: current vs saved",
+        "  COMPARE <a> <b>          — angle delta between two saved poses",
+        "  STARTPOSE                — apply configured starting angles",
         "─── Config ─────────────────────────────────────────────────",
+        "  CONFIG                   — dump full arm config as JSON",
         "  ZERO                     — capture current pose as zero offsets",
-        "  CONSTRAINT / ON / OFF    — toggle EE orientation constraint",
         "  SAVE                     — save all configs immediately",
+        "  RESET                    — prompt to reset all to defaults",
+        "  SETLINK <i> <len>        — change link i length",
+        "  SETBASE <height>         — set base vertical offset",
+        "  SETOFFSET <j> <mm>       — set joint j plane offset",
+        "  MARGIN <val>             — set collision margin",
+        "  ACCEL <sps²>             — set motor acceleration (all joints)",
+        "  CONSTRAINT / ON / OFF    — toggle EE orientation constraint",
         "─── Hardware ───────────────────────────────────────────────",
-        "  CONNECT                  — connect to hardware (uses panel settings)",
+        "  CONNECT                  — connect (uses panel settings)",
         "  DISCONNECT               — disconnect from hardware",
-        "  LOG [n]                  — show last n lines of hardware_log.txt",
+        "  RECONNECT                — disconnect then reconnect",
+        "  WIFI                     — show WiFi config / forward to Pico",
+        "  SETPORT <n>              — change TCP port",
+        "  BROADCAST                — scan subnet for Pico on port 8888",
+        "  DEPLOY                   — trigger firmware deploy",
+        "  REBOOT                   — soft-reset the Pico",
         "  PING                     — check Pico is alive",
+        "  LATENCY                  — measure round-trip ping time",
         "  LED_TOGGLE               — toggle onboard LED",
+        "  MEM                      — Pico free memory",
+        "  TEMP                     — Pico CPU temperature",
+        "  LOG [n]                  — last n lines of hardware_log.txt",
+        "  LOG LEVEL <lvl>          — set log verbosity (DEBUG/INFO/WARN)",
+        "─── Scripting ──────────────────────────────────────────────",
+        "  ALIAS <name> <cmd>       — define a command shorthand",
+        "  ALIASES                  — list defined aliases",
+        "  MACRO <name> <c1;c2;…>   — define a named sequence",
+        "  MACROS                   — list defined macros",
+        "  EXEC <name>              — run a macro",
+        "  REPEAT <n> <cmd>         — repeat command n times (≤50)",
+        "  LOAD <file>              — run commands from a .txt file",
+        "  WATCH <s> <cmd>          — auto-repeat cmd every s seconds",
+        "  WATCH STOP               — stop WATCH",
+        "─── Viewport ───────────────────────────────────────────────",
+        "  ZOOM <val>               — set camera distance",
+        "  CAMERA <preset>          — ISO / TOP / FRONT / SIDE / BACK",
+        "  SCREENSHOT               — save viewport as PNG",
         "─── Terminal ───────────────────────────────────────────────",
         "  CLEAR                    — clear terminal output",
         "  ECHO <text>              — print text to terminal",
+        "  MARK [label]             — timestamp divider",
+        "  UPTIME                   — session duration HH:MM:SS",
+        "  VERSION                  — Python / PyQt6 version info",
+        "  EXPORT [filename]        — save terminal log to file",
+        "  HISTORY                  — recent command history",
         "  <any other text>         — sent verbatim to hardware",
     ]
 
@@ -4156,8 +4226,558 @@ class MainWindow(QMainWindow):
             ee = positions[-1]
             self.terminal.log(f"  EE:    ({ee[0]:.3f}, {ee[1]:.3f}, {ee[2]:.3f})", "info")
 
+        # ── PARK ──────────────────────────────────────────────────────────
+        elif upper == "PARK":
+            n = self.arm_config.num_planar_joints
+            self.arm_state.base_angle = 0.0
+            for i in range(n):
+                # Fold joints upward alternately to tuck arm compact
+                self.arm_state.planar_angles[i] = math.radians(90.0 if i % 2 == 0 else -90.0)
+            self.viewport.update_arm(self.arm_config, self.arm_state)
+            self.terminal.log("Arm parked (folded compact)", "info")
+
+        # ── EXTEND ────────────────────────────────────────────────────────
+        elif upper == "EXTEND":
+            n = self.arm_config.num_planar_joints
+            self.arm_state.base_angle = 0.0
+            for i in range(n):
+                self.arm_state.planar_angles[i] = 0.0
+            self.viewport.update_arm(self.arm_config, self.arm_state)
+            max_reach = sum(self.arm_config.link_lengths)
+            self.terminal.log(f"Arm fully extended — max reach {max_reach:.3f}", "info")
+
+        # ── SWEEP ─────────────────────────────────────────────────────────
+        elif upper.startswith("SWEEP"):
+            # SWEEP J<n> <start> <end> [steps]
+            if len(parts) < 4:
+                self.terminal.log("SWEEP: usage  SWEEP J<n> <start_deg> <end_deg> [steps]", "error")
+            else:
+                try:
+                    j_str = parts[1].upper()
+                    start_deg = float(parts[2])
+                    end_deg   = float(parts[3])
+                    steps     = int(parts[4]) if len(parts) > 4 else 20
+                    if not j_str.startswith("J"):
+                        raise ValueError
+                    idx = int(j_str[1:])
+                except (ValueError, IndexError):
+                    self.terminal.log("SWEEP: usage  SWEEP J<n> <start_deg> <end_deg> [steps]", "error")
+                else:
+                    steps = max(2, min(steps, 100))
+                    n = self.arm_config.num_planar_joints
+                    angles = [start_deg + (end_deg - start_deg) * i / (steps - 1) for i in range(steps)]
+                    self.terminal.log(
+                        f"Sweeping J{idx}: {start_deg:.1f}° → {end_deg:.1f}° in {steps} steps", "info"
+                    )
+                    import itertools
+                    self._sweep_iter = iter(angles)
+                    self._sweep_idx  = idx
+                    self._sweep_n    = n
+
+                    def _do_sweep_step():
+                        try:
+                            deg = next(self._sweep_iter)
+                        except StopIteration:
+                            self.terminal.log("Sweep complete", "info")
+                            return
+                        if self._sweep_idx == 0:
+                            self.arm_state.base_angle = math.radians(deg)
+                        elif 1 <= self._sweep_idx <= self._sweep_n:
+                            self.arm_state.planar_angles[self._sweep_idx - 1] = math.radians(deg)
+                        self.viewport.update_arm(self.arm_config, self.arm_state)
+                        QTimer.singleShot(80, _do_sweep_step)
+
+                    _do_sweep_step()
+
+        # ── NUDGE ─────────────────────────────────────────────────────────
+        elif upper.startswith("NUDGE") and len(parts) == 3:
+            # Same as JOG but default mental model is "tiny move"
+            self._on_terminal_command(f"JOG {parts[1]} {parts[2]}")
+
+        # ── WP ────────────────────────────────────────────────────────────
+        elif upper.startswith("WP") and len(parts) == 2:
+            try:
+                wp_idx = int(parts[1]) - 1   # 1-based input
+            except ValueError:
+                self.terminal.log("WP: usage  WP <n>  (1-based index)", "error")
+            else:
+                wps = self.waypoint_panel.get_waypoints()
+                if not wps:
+                    self.terminal.log("No waypoints loaded", "error")
+                elif not (0 <= wp_idx < len(wps)):
+                    self.terminal.log(f"WP: index {wp_idx+1} out of range (1–{len(wps)})", "error")
+                else:
+                    wp = wps[wp_idx]
+                    t = wp["target"]
+                    self.target = np.array(t, dtype=float)
+                    self.target_panel.x_spin.setValue(float(t[0]))
+                    self.target_panel.y_spin.setValue(float(t[1]))
+                    self.target_panel.z_spin.setValue(float(t[2]))
+                    self._on_update_clicked()
+                    self.terminal.log(
+                        f"Moved to waypoint {wp_idx+1}: X={t[0]:.3f} Y={t[1]:.3f} Z={t[2]:.3f}", "info"
+                    )
+
+        # ── WATCH / WATCH STOP ────────────────────────────────────────────
+        elif upper in ("WATCH STOP", "WATCH OFF"):
+            t = getattr(self, "_watch_timer", None)
+            if t is not None:
+                t.stop()
+                self._watch_timer = None
+                self.terminal.log("WATCH stopped", "info")
+            else:
+                self.terminal.log("No WATCH running", "info")
+
+        elif upper.startswith("WATCH") and len(parts) >= 3:
+            try:
+                interval_s = float(parts[1])
+            except ValueError:
+                self.terminal.log("WATCH: usage  WATCH <seconds> <command>   |  WATCH STOP", "error")
+            else:
+                sub = " ".join(parts[2:])
+                t = getattr(self, "_watch_timer", None)
+                if t is not None:
+                    t.stop()
+                self._watch_timer = QTimer(self)
+                self._watch_timer.timeout.connect(lambda cmd=sub: self._on_terminal_command(cmd))
+                self._watch_timer.start(max(200, int(interval_s * 1000)))
+                self.terminal.log(
+                    f"Watching '{sub}' every {interval_s:.1f}s — WATCH STOP to cancel", "info"
+                )
+
+        # ── LATENCY ───────────────────────────────────────────────────────
+        elif upper == "LATENCY":
+            if self._hardware is None or not self._hardware.is_connected:
+                self.terminal.log("LATENCY: not connected", "error")
+            else:
+                self._latency_t0 = time.monotonic()
+                self._hardware.send_raw("PING\n")
+                self.terminal.log("PING sent — waiting for Pico response…", "tx")
+                # RTT is logged in _on_pico_rx when it sees the PING response
+
+        # ── JOINTS ────────────────────────────────────────────────────────
+        elif upper == "JOINTS":
+            deg_list = [math.degrees(self.arm_state.base_angle)] + [
+                math.degrees(a) for a in self.arm_state.planar_angles
+            ]
+            rad_list = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+            self.terminal.log("Joint angles:", "info")
+            for i, (d, r) in enumerate(zip(deg_list, rad_list)):
+                self.terminal.log(f"  J{i}: {d:+8.2f}°   {r:+.4f} rad", "info")
+
+        # ── CONFIG ────────────────────────────────────────────────────────
+        elif upper == "CONFIG":
+            import json as _json
+            cfg = self._get_arm_config_dict()
+            lines = _json.dumps(cfg, indent=2).splitlines()
+            self.terminal.log(f"arm_config ({len(lines)} lines):", "info")
+            for line in lines:
+                self.terminal.log(line, "info")
+
+        # ── RESET / RESET CONFIRM ─────────────────────────────────────────
+        elif upper == "RESET":
+            self.terminal.log("Warning: RESET will zero all link lengths and offsets.", "error")
+            self.terminal.log("Type  RESET CONFIRM  to proceed, or anything else to cancel.", "info")
+        elif upper == "RESET CONFIRM":
+            for spin in self.config_panel.link_spins:
+                spin.setValue(1.0)
+            self.offset_panel.base_offset_spin.setValue(0.0)
+            for spin in self.offset_panel.joint_spins:
+                spin.setValue(0.0)
+            self._on_config_changed()
+            self._on_offsets_changed()
+            self.terminal.log("Reset complete — all links = 1.0, all offsets = 0", "info")
+
+        # ── ALIAS ─────────────────────────────────────────────────────────
+        elif upper.startswith("ALIAS") and len(parts) >= 3:
+            name = parts[1].upper()
+            cmd  = " ".join(parts[2:])
+            if not hasattr(self, "_aliases"):
+                self._aliases = {}
+            self._aliases[name] = cmd
+            self.terminal.log(f"Alias '{name}' → '{cmd}'", "info")
+        elif upper == "ALIASES":
+            aliases = getattr(self, "_aliases", {})
+            if not aliases:
+                self.terminal.log("No aliases defined", "info")
+            else:
+                for k, v in aliases.items():
+                    self.terminal.log(f"  {k:<12} → {v}", "info")
+
+        # ── MACRO / EXEC ──────────────────────────────────────────────────
+        elif upper.startswith("MACRO") and len(parts) >= 3:
+            name = parts[1].upper()
+            body = raw[len("MACRO") + 1 + len(parts[1]) + 1:].strip()
+            if not hasattr(self, "_macros"):
+                self._macros = {}
+            self._macros[name] = body
+            n_steps = len([s for s in body.split(";") if s.strip()])
+            self.terminal.log(f"Macro '{name}' defined ({n_steps} step(s))", "info")
+        elif upper == "MACROS":
+            macros = getattr(self, "_macros", {})
+            if not macros:
+                self.terminal.log("No macros defined", "info")
+            else:
+                for k, v in macros.items():
+                    self.terminal.log(f"  {k}: {v}", "info")
+        elif upper.startswith("EXEC") and len(parts) == 2:
+            name = parts[1].upper()
+            macros = getattr(self, "_macros", {})
+            if name not in macros:
+                self.terminal.log(f"EXEC: no macro named '{name}'", "error")
+            else:
+                steps = [s.strip() for s in macros[name].split(";") if s.strip()]
+                self.terminal.log(f"Running macro '{name}' ({len(steps)} step(s))", "info")
+                for step in steps:
+                    self._on_terminal_command(step)
+
+        # ── EXPORT ────────────────────────────────────────────────────────
+        elif upper.startswith("EXPORT"):
+            filename = parts[1] if len(parts) > 1 else f"terminal_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+            text = self.terminal.output.toPlainText()
+            try:
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(text)
+                self.terminal.log(f"Terminal exported to '{filename}'", "info")
+            except Exception as exc:
+                self.terminal.log(f"EXPORT failed: {exc}", "error")
+
+        # ── SCREENSHOT ────────────────────────────────────────────────────
+        elif upper == "SCREENSHOT":
+            filename = f"screenshot_{time.strftime('%Y%m%d_%H%M%S')}.png"
+            pixmap = self.viewport.grab()
+            if pixmap.save(filename):
+                self.terminal.log(f"Screenshot saved → '{filename}'", "info")
+            else:
+                self.terminal.log("Screenshot failed", "error")
+
+        # ── BBOX ──────────────────────────────────────────────────────────
+        elif upper == "BBOX":
+            links = self.arm_config.link_lengths
+            max_r = sum(links)
+            base_z = self.offset_panel.get_base_offset()
+            self.terminal.log("Approximate reachable workspace:", "info")
+            self.terminal.log(f"  X: [{-max_r:.2f}, {max_r:.2f}]", "info")
+            self.terminal.log(f"  Y: [{-max_r:.2f}, {max_r:.2f}]", "info")
+            self.terminal.log(f"  Z: [{base_z:.2f}, {base_z + max_r:.2f}]", "info")
+            self.terminal.log(f"  Max reach: {max_r:.3f}", "info")
+
+        # ── NEAREST ───────────────────────────────────────────────────────
+        elif upper == "NEAREST":
+            t    = self.target
+            dist = float(np.linalg.norm(t))
+            max_r = sum(self.arm_config.link_lengths)
+            if dist <= max_r:
+                self.terminal.log(
+                    f"Target is reachable ({dist:.3f} ≤ max {max_r:.3f})", "info"
+                )
+            else:
+                nearest = t / dist * max_r
+                self.terminal.log(
+                    f"Out of reach — nearest reachable point:", "info"
+                )
+                self.terminal.log(
+                    f"  X={nearest[0]:.3f}  Y={nearest[1]:.3f}  Z={nearest[2]:.3f}", "info"
+                )
+                self.terminal.log(
+                    f"  Use: GOTO {nearest[0]:.3f} {nearest[1]:.3f} {nearest[2]:.3f}", "info"
+                )
+
+        # ── CLEARPATH ─────────────────────────────────────────────────────
+        elif upper == "CLEARPATH":
+            count = len(self.waypoint_panel._waypoints)
+            self.waypoint_panel._clear_all()
+            self.terminal.log(f"Path cleared ({count} waypoint(s) removed)", "info")
+
+        # ── SAVEPOSE / LOADPOSE / POSES / DELETEPOSE / DIFFPOSE ───────────
+        elif upper.startswith("SAVEPOSE") and len(parts) == 2:
+            name = parts[1].upper()
+            if not hasattr(self, "_saved_poses"):
+                self._saved_poses = {}
+            angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+            self._saved_poses[name] = angles
+            self.terminal.log(f"Pose '{name}' saved ({len(angles)} joints)", "info")
+
+        elif upper.startswith("LOADPOSE") and len(parts) == 2:
+            name = parts[1].upper()
+            poses = getattr(self, "_saved_poses", {})
+            if name not in poses:
+                self.terminal.log(f"LOADPOSE: no pose named '{name}'", "error")
+            else:
+                angles = poses[name]
+                self.arm_state.base_angle = angles[0]
+                for i, a in enumerate(angles[1:]):
+                    if i < len(self.arm_state.planar_angles):
+                        self.arm_state.planar_angles[i] = a
+                self.viewport.update_arm(self.arm_config, self.arm_state)
+                self.terminal.log(f"Pose '{name}' loaded", "info")
+
+        elif upper == "POSES":
+            poses = getattr(self, "_saved_poses", {})
+            if not poses:
+                self.terminal.log("No saved poses — use SAVEPOSE <name>", "info")
+            else:
+                for name, angles in poses.items():
+                    deg_str = "  ".join(f"J{i}={math.degrees(a):+.1f}°" for i, a in enumerate(angles))
+                    self.terminal.log(f"  {name:<12}  {deg_str}", "info")
+
+        elif upper.startswith("DELETEPOSE") and len(parts) == 2:
+            name = parts[1].upper()
+            poses = getattr(self, "_saved_poses", {})
+            if name in poses:
+                del poses[name]
+                self.terminal.log(f"Pose '{name}' deleted", "info")
+            else:
+                self.terminal.log(f"DELETEPOSE: no pose named '{name}'", "error")
+
+        elif upper.startswith("DIFFPOSE") and len(parts) == 2:
+            name = parts[1].upper()
+            poses = getattr(self, "_saved_poses", {})
+            if name not in poses:
+                self.terminal.log(f"DIFFPOSE: no pose named '{name}'", "error")
+            else:
+                saved   = poses[name]
+                current = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+                self.terminal.log(f"Δ angles (current − '{name}'):", "info")
+                for i, (s, c) in enumerate(zip(saved, current)):
+                    delta = math.degrees(c - s)
+                    bar   = "█" * min(20, int(abs(delta) / 5))
+                    self.terminal.log(f"  J{i}: {delta:+8.2f}°  {bar}", "info")
+
+        # ── LOAD (script file) ────────────────────────────────────────────
+        elif upper.startswith("LOAD") and len(parts) == 2:
+            filepath = parts[1]
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    cmds = [
+                        ln.strip() for ln in f
+                        if ln.strip() and not ln.strip().startswith("#")
+                    ]
+                self.terminal.log(f"Loaded {len(cmds)} commands from '{filepath}'", "info")
+                for cmd in cmds:
+                    self._on_terminal_command(cmd)
+            except FileNotFoundError:
+                self.terminal.log(f"LOAD: file not found — '{filepath}'", "error")
+            except Exception as exc:
+                self.terminal.log(f"LOAD: error — {exc}", "error")
+
+        # ── RECONNECT ─────────────────────────────────────────────────────
+        elif upper == "RECONNECT":
+            self._on_hardware_disconnect()
+            self.terminal.log("Disconnected — reconnecting in 0.5 s…", "info")
+            QTimer.singleShot(500, lambda: self._on_terminal_command("CONNECT"))
+
+        # ── SETPORT ───────────────────────────────────────────────────────
+        elif upper.startswith("SETPORT") and len(parts) == 2:
+            try:
+                port_num = int(parts[1])
+                if not (1024 <= port_num <= 65535):
+                    raise ValueError
+                self.hardware_panel.tcp_port_spin.setValue(port_num)
+                self.terminal.log(f"TCP port set to {port_num}", "info")
+            except ValueError:
+                self.terminal.log("SETPORT: usage  SETPORT <1024-65535>", "error")
+
+        # ── BROADCAST ─────────────────────────────────────────────────────
+        elif upper == "BROADCAST":
+            import ipaddress, socket as _sock, threading as _thr, queue as _bq
+            self.terminal.log("Scanning local subnet for Pico (port 8888)… (~5 s)", "info")
+            found_q: _bq.Queue = _bq.Queue()
+
+            def _check(ip: str) -> None:
+                try:
+                    s = _sock.create_connection((ip, 8888), timeout=0.25)
+                    s.close()
+                    found_q.put(ip)
+                except Exception:
+                    pass
+
+            def _scan() -> None:
+                try:
+                    local_ip = _sock.gethostbyname(_sock.gethostname())
+                    net = ipaddress.ip_network(f"{local_ip}/24", strict=False)
+                except Exception:
+                    found_q.put(None)
+                    return
+                threads = [_thr.Thread(target=_check, args=(str(h),), daemon=True) for h in net.hosts()]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=0.5)
+                found_q.put(None)   # sentinel
+
+            _thr.Thread(target=_scan, daemon=True, name="pico-broadcast").start()
+
+            hits: list[str] = []
+            def _poll_broadcast():
+                while not found_q.empty():
+                    item = found_q.get_nowait()
+                    if item is not None:
+                        hits.append(item)
+                        self.terminal.log(f"  Found: {item}:8888", "info")
+                    else:
+                        if hits:
+                            self.terminal.log(f"Broadcast complete — {len(hits)} device(s) found", "info")
+                        else:
+                            self.terminal.log("Broadcast complete — no devices found on port 8888", "info")
+                        return
+                QTimer.singleShot(100, _poll_broadcast)
+
+            QTimer.singleShot(100, _poll_broadcast)
+
+        # ── LOG LEVEL ─────────────────────────────────────────────────────
+        elif upper.startswith("LOG LEVEL") and len(parts) == 3:
+            level_map = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARN": logging.WARNING,
+                         "WARNING": logging.WARNING, "ERROR": logging.ERROR}
+            lvl_str = parts[2].upper()
+            if lvl_str not in level_map:
+                self.terminal.log("LOG LEVEL: use  DEBUG / INFO / WARN / ERROR", "error")
+            else:
+                logging.getLogger().setLevel(level_map[lvl_str])
+                self.terminal.log(f"Log level set to {lvl_str}", "info")
+
+        # ── ZOOM ──────────────────────────────────────────────────────────
+        elif upper.startswith("ZOOM") and len(parts) == 2:
+            try:
+                val = float(parts[1])
+                self.viewport.opts["distance"] = val
+                self.viewport.update()
+                self.terminal.log(f"Viewport zoom (distance) → {val:.1f}", "info")
+            except ValueError:
+                self.terminal.log("ZOOM: usage  ZOOM <distance>  (e.g. ZOOM 10)", "error")
+
+        # ── CAMERA ────────────────────────────────────────────────────────
+        elif upper.startswith("CAMERA") and len(parts) == 2:
+            presets = {
+                "ISO":   {"elevation": 30,  "azimuth": 45},
+                "TOP":   {"elevation": 90,  "azimuth": 0},
+                "FRONT": {"elevation": 0,   "azimuth": 0},
+                "SIDE":  {"elevation": 0,   "azimuth": 90},
+                "BACK":  {"elevation": 0,   "azimuth": 180},
+            }
+            preset = parts[1].upper()
+            if preset not in presets:
+                self.terminal.log(f"CAMERA: presets are  {', '.join(presets)}", "error")
+            else:
+                p = presets[preset]
+                self.viewport.setCameraParams(**p)
+                self.viewport.update()
+                self.terminal.log(f"Camera → {preset}", "info")
+
+        # ── TRAIL ─────────────────────────────────────────────────────────
+        elif upper in ("TRAIL ON", "TRAIL OFF", "TRAIL"):
+            self.terminal.log("Trail rendering is not yet implemented in the viewport", "info")
+
+        # ── PAUSE / RESUME / STEP ─────────────────────────────────────────
+        elif upper == "PAUSE":
+            if self.animator.is_running:
+                self.animator.cancel()
+                self.terminal.log("Animation stopped (RESUME not supported — use STOP)", "info")
+            else:
+                self.terminal.log("No animation running", "info")
+        elif upper == "RESUME":
+            self.terminal.log("RESUME not supported — restart the sequence with RUN", "info")
+
+        # ── GRAVITY ───────────────────────────────────────────────────────
+        elif upper in ("GRAVITY ON", "GRAVITY OFF"):
+            self.terminal.log("Physics/gravity simulation is not modelled in this simulator", "info")
+
+        # ── GHOST ─────────────────────────────────────────────────────────
+        elif upper == "GHOST":
+            self.terminal.log("Ghost (pose overlay) rendering is not yet implemented", "info")
+
+        # ── COMPARE ───────────────────────────────────────────────────────
+        elif upper.startswith("COMPARE") and len(parts) == 3:
+            poses = getattr(self, "_saved_poses", {})
+            a_name, b_name = parts[1].upper(), parts[2].upper()
+            missing = [n for n in (a_name, b_name) if n not in poses]
+            if missing:
+                self.terminal.log(f"COMPARE: pose(s) not found: {', '.join(missing)}", "error")
+            else:
+                a_angles, b_angles = poses[a_name], poses[b_name]
+                self.terminal.log(f"Δ '{a_name}' → '{b_name}':", "info")
+                for i, (a, b) in enumerate(zip(a_angles, b_angles)):
+                    delta = math.degrees(b - a)
+                    self.terminal.log(f"  J{i}: {delta:+8.2f}°", "info")
+
+        # ── VELOCITY ──────────────────────────────────────────────────────
+        elif upper == "VELOCITY":
+            self.terminal.log("Velocity tracking not implemented — use POS stream to observe changes", "info")
+
+        # ── PLOTPATH ──────────────────────────────────────────────────────
+        elif upper == "PLOTPATH":
+            wps = self.waypoint_panel.get_waypoints()
+            if not wps:
+                self.terminal.log("No waypoints to plot", "error")
+            else:
+                try:
+                    import matplotlib.pyplot as _plt
+                    xs = [wp["target"][0] for wp in wps]
+                    ys = [wp["target"][1] for wp in wps]
+                    zs = [wp["target"][2] for wp in wps]
+                    fig, (ax1, ax2) = _plt.subplots(1, 2, figsize=(10, 4))
+                    ax1.plot(xs, ys, "o-", color="#4fc1ff")
+                    ax1.set_xlabel("X"); ax1.set_ylabel("Y"); ax1.set_title("Path XY")
+                    ax1.set_aspect("equal"); ax1.grid(True, alpha=0.3)
+                    ax2.plot(xs, zs, "o-", color="#4ec9b0")
+                    ax2.set_xlabel("X"); ax2.set_ylabel("Z"); ax2.set_title("Path XZ")
+                    ax2.set_aspect("equal"); ax2.grid(True, alpha=0.3)
+                    _plt.tight_layout()
+                    _plt.show()
+                    self.terminal.log(f"Path plot opened ({len(wps)} waypoints)", "info")
+                except ImportError:
+                    self.terminal.log("PLOTPATH requires matplotlib — pip install matplotlib", "error")
+
+        # ── ACCEL ─────────────────────────────────────────────────────────
+        elif upper.startswith("ACCEL") and len(parts) == 2:
+            try:
+                val = float(parts[1])
+                # Update accel spinbox for all joints
+                for row in self.motor_config_panel._rows:
+                    accel_spin = row.get("accel")
+                    if accel_spin is not None:
+                        accel_spin.setValue(val)
+                self.motor_config_panel.config_changed.emit()
+                self.terminal.log(f"Motor accel → {val:.0f} steps/s² (all joints)", "info")
+            except ValueError:
+                self.terminal.log("ACCEL: usage  ACCEL <steps/s²>", "error")
+
+        # ── MEM ───────────────────────────────────────────────────────────
+        elif upper == "MEM":
+            if self._hardware is not None:
+                self._hardware.send_raw("MEM\n")
+                self.terminal.log("MEM", "tx")
+            else:
+                self.terminal.log("MEM: not connected", "error")
+
+        # ── TEMP ──────────────────────────────────────────────────────────
+        elif upper == "TEMP":
+            if self._hardware is not None:
+                self._hardware.send_raw("TEMP\n")
+                self.terminal.log("TEMP", "tx")
+            else:
+                self.terminal.log("TEMP: not connected", "error")
+
+        # ── WIFI (show panel info / forward to hardware) ───────────────────
+        elif upper == "WIFI":
+            if self.hardware_panel.is_wifi_mode():
+                host = self.hardware_panel.get_wifi_host()
+                port = self.hardware_panel.get_wifi_port()
+                ssid = self.hardware_panel.get_wifi_ssid()
+                self.terminal.log(f"WiFi mode  —  IP {host}:{port}  SSID: {ssid or '(not set)'}", "info")
+            else:
+                self.terminal.log("USB mode — switch to WiFi in Hardware panel for WiFi info", "info")
+            if self._hardware is not None:
+                self._hardware.send_raw("WIFI\n")
+                self.terminal.log("WIFI (forwarded to Pico)", "tx")
+
         # ── Forward to hardware ───────────────────────────────────────────
         else:
+            # Check aliases first
+            aliases = getattr(self, "_aliases", {})
+            if upper in aliases:
+                self._on_terminal_command(aliases[upper])
+                return
             if self._hardware is not None:
                 self._hardware.send_raw(raw + "\n")
                 self.terminal.log(raw, "tx")
