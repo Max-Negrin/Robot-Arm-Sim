@@ -3562,17 +3562,26 @@ class MainWindow(QMainWindow):
         wifi_pw   = self.hardware_panel.get_wifi_password() if self.hardware_panel.is_wifi_mode() else ""
         wifi_port = self.hardware_panel.get_wifi_port() if self.hardware_panel.is_wifi_mode() else 8888
 
-        # ── WiFi deploy: already connected via TCP ───────────────────────────
+        # ── WiFi deploy: use IP from panel (connection not required) ────────
         from hardware.pico_wifi_interface import PicoWifiInterface
-        if self.hardware_panel.is_wifi_mode() and isinstance(self._hardware, PicoWifiInterface):
-            wifi_host = self._hardware.host
+        if self.hardware_panel.is_wifi_mode():
+            wifi_host = self.hardware_panel.get_wifi_host()
+            if not wifi_host:
+                msg = (
+                    "ERROR: No IP address entered\n"
+                    "FIX:   Enter the Pico's IP address in the WiFi IP field"
+                )
+                self.hardware_panel.log_lbl.setText(msg)
+                self.hardware_panel.deploy_btn.setEnabled(True)
+                return
             self.hardware_panel.log_lbl.setText(f"Deploying over WiFi to {wifi_host}:{wifi_port}...")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
 
-            # Disconnect so the deployer can use the TCP port exclusively
-            self._hardware.disconnect()
-            self._hardware = None
-            self.hardware_panel.set_connected(False, "Disconnected for WiFi deploy…")
+            # Disconnect any active connection so the deployer has exclusive TCP access
+            if self._hardware is not None:
+                self._hardware.disconnect()
+                self._hardware = None
+                self.hardware_panel.set_connected(False, "Disconnected for WiFi deploy…")
             self.hardware_panel.deploy_btn.setEnabled(True)
 
             import threading, queue as _queue
