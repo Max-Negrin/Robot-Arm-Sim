@@ -3571,10 +3571,21 @@ class MainWindow(QMainWindow):
     _HELP_TEXT = [
         "Available commands:",
         "  HELP                     — show this list",
+        "  STATUS                   — full system snapshot (connection, arm, target)",
+        "  CLEAR                    — clear terminal output",
         "  POS                      — toggle 1 Hz joint-position readout",
         "  EE / EE ON / EE OFF      — toggle 1 Hz end-effector coordinate stream",
         "  JOG J<n> <deg>           — jog joint n by ±degrees  (e.g. JOG J0 5)",
         "  JOG X|Y|Z <dist>         — jog IK target by ±mm     (e.g. JOG Z -10)",
+        "  GOTO <x> <y> <z>         — move IK target to absolute position",
+        "  HOME                     — animate arm to vertical (all joints zero)",
+        "  ELBOW UP|DOWN            — switch elbow configuration",
+        "  SPEED <0.1-5.0>          — set animation speed multiplier (1 = normal)",
+        "  LINKS                    — list link lengths",
+        "  MOTORS                   — show motor config summary",
+        "  WAYPOINTS                — list loaded waypoints",
+        "  RUN                      — start waypoint sequence",
+        "  STOP                     — stop current animation / sequence",
         "  ZERO                     — set current joint angles as zero offsets",
         "  SAVE                     — save all configs to arm_config.json",
         "  PING                     — check Pico is alive (sent to hardware)",
@@ -3609,6 +3620,126 @@ class MainWindow(QMainWindow):
             else:
                 self._ee_log_enabled = True
                 self.terminal.log("EE coordinate stream: ON", "info")
+
+        # ── STATUS ────────────────────────────────────────────────────────
+        elif upper == "STATUS":
+            conn = "connected" if (self._hardware and self._hardware.is_connected) else "not connected"
+            conn_detail = ""
+            if self._hardware and self._hardware.is_connected:
+                from hardware.pico_wifi_interface import PicoWifiInterface
+                if isinstance(self._hardware, PicoWifiInterface):
+                    conn_detail = f" (WiFi {self._hardware.host})"
+                else:
+                    conn_detail = " (USB)"
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = positions[-1]
+            n = self.arm_config.num_planar_joints
+            deg = [math.degrees(self.arm_state.base_angle)] + [
+                math.degrees(a) for a in self.arm_state.planar_angles
+            ]
+            elbow = "up" if self.config_panel.get_elbow() == ElbowConfig.ELBOW_UP else "down"
+            anim_state = f"{self.animator.progress*100:.0f}% complete" if self.animator.is_running else "idle"
+            self.terminal.log("", "info")
+            self.terminal.log(f"Hardware : {conn}{conn_detail}", "info")
+            self.terminal.log(f"Joints   : {n} planar + base  |  elbow {elbow}", "info")
+            self.terminal.log(f"Links    : {[round(l,2) for l in self.arm_config.link_lengths]}", "info")
+            self.terminal.log("  " + "  ".join(f"J{i}={d:+.1f}°" for i, d in enumerate(deg)), "info")
+            self.terminal.log(f"Target   : X={self.target[0]:.3f}  Y={self.target[1]:.3f}  Z={self.target[2]:.3f}", "info")
+            self.terminal.log(f"EE       : X={ee[0]:.3f}  Y={ee[1]:.3f}  Z={ee[2]:.3f}", "info")
+            self.terminal.log(f"Animation: {anim_state}", "info")
+            self.terminal.log("", "info")
+
+        # ── CLEAR ─────────────────────────────────────────────────────────
+        elif upper == "CLEAR":
+            self.terminal.clear()
+
+        # ── HOME ──────────────────────────────────────────────────────────
+        elif upper == "HOME":
+            self._on_reset_to_vertical()
+            self.terminal.log("Animating to home (all joints zero)", "info")
+
+        # ── ELBOW ─────────────────────────────────────────────────────────
+        elif upper in ("ELBOW UP", "ELBOW DOWN"):
+            idx = 1 if upper == "ELBOW UP" else 0
+            self.config_panel.elbow_combo.setCurrentIndex(idx)
+            self._on_update_clicked()
+            self.terminal.log(f"Elbow set to {parts[1].lower()}", "info")
+
+        # ── SPEED ─────────────────────────────────────────────────────────
+        elif upper.startswith("SPEED") and len(parts) == 2:
+            try:
+                mult = max(0.1, min(5.0, float(parts[1])))
+                # slider range 1-50 maps to 0.1x-5.0x
+                self.anim_panel.speed_slider.setValue(int(round(mult * 10)))
+                self.terminal.log(f"Animation speed set to {mult:.1f}x", "info")
+            except ValueError:
+                self.terminal.log(f"SPEED: usage  SPEED <0.1-5.0>  (e.g. SPEED 2)", "error")
+
+        # ── GOTO ──────────────────────────────────────────────────────────
+        elif upper.startswith("GOTO") and len(parts) == 4:
+            try:
+                x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                self.target = np.array([x, y, z])
+                self.target_panel.x_spin.setValue(x)
+                self.target_panel.y_spin.setValue(y)
+                self.target_panel.z_spin.setValue(z)
+                self.terminal.log(f"Target → X={x:.3f}  Y={y:.3f}  Z={z:.3f}", "info")
+                self._on_update_clicked()
+            except ValueError:
+                self.terminal.log("GOTO: usage  GOTO <x> <y> <z>", "error")
+
+        # ── LINKS ─────────────────────────────────────────────────────────
+        elif upper == "LINKS":
+            links = self.arm_config.link_lengths
+            self.terminal.log("Link lengths:", "info")
+            for i, l in enumerate(links):
+                self.terminal.log(f"  Link {i}: {l:.3f}", "info")
+
+        # ── MOTORS ────────────────────────────────────────────────────────
+        elif upper == "MOTORS":
+            cfgs = self.motor_config_panel.get_joint_configs()
+            self.terminal.log("Motor configuration:", "info")
+            for c in cfgs:
+                driver = c.get("driver", "?")
+                spr    = c.get("steps_per_rev", "?")
+                gear   = c.get("gear_ratio", 1.0)
+                zero   = c.get("zero_offset_deg", 0.0)
+                sps    = c.get("max_sps", "?")
+                self.terminal.log(
+                    f"  J{c.get('idx','?')} {c.get('name',''):<12}"
+                    f"  {driver:<8}  {spr} steps/rev"
+                    f"  gear={gear}  zero={zero:+.1f}°  max={sps}sps",
+                    "info",
+                )
+
+        # ── WAYPOINTS ─────────────────────────────────────────────────────
+        elif upper == "WAYPOINTS":
+            wps = self.waypoint_panel.get_waypoints()
+            if not wps:
+                self.terminal.log("No waypoints loaded", "info")
+            else:
+                self.terminal.log(f"{len(wps)} waypoint(s):", "info")
+                for i, wp in enumerate(wps):
+                    t = wp["target"]
+                    aa = wp.get("approach_angle")
+                    aa_str = f"  approach={math.degrees(aa):.1f}°" if aa is not None else ""
+                    self.terminal.log(
+                        f"  [{i+1}] X={t[0]:.2f}  Y={t[1]:.2f}  Z={t[2]:.2f}{aa_str}", "info"
+                    )
+
+        # ── RUN ───────────────────────────────────────────────────────────
+        elif upper == "RUN":
+            self._on_run_sequence()
+            n_wp = len(self.waypoint_panel.get_waypoints())
+            if n_wp:
+                self.terminal.log(f"Waypoint sequence started ({n_wp} points)", "info")
+            else:
+                self.terminal.log("No waypoints to run", "error")
+
+        # ── STOP ──────────────────────────────────────────────────────────
+        elif upper == "STOP":
+            self._on_stop_sequence()
+            self.terminal.log("Animation / sequence stopped", "info")
 
         # ── JOG ───────────────────────────────────────────────────────────
         elif upper.startswith("JOG") and len(parts) == 3:
