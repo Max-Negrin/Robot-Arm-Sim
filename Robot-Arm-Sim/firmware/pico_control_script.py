@@ -29,7 +29,6 @@ CONFIGURATION — edit JOINTS and WIFI_CONFIG to match your setup
 import sys
 import time
 import math
-import random
 import select
 from machine import Pin, PWM
 
@@ -418,11 +417,6 @@ def main():
     # On Pico 2W, Pin("LED") routes through the CYW43 chip — if you
     # disable WiFi first the LED pin object creation will fail.
     led = Pin("LED", Pin.OUT)
-    led_ext = Pin(28, Pin.OUT)
-    led_last_us = time.ticks_us()
-    # Random blink period so you can visually confirm new firmware is flashed.
-    # Range: 100 ms – 900 ms per half-cycle  (0.55 Hz – 5 Hz blink rate).
-    led_period_us = random.randint(100_000, 900_000)
 
     # ── WiFi / TCP server (station mode) ────────────────────────────────────
     # Commands received over TCP are placed in _wifi_rx; responses to send
@@ -594,15 +588,7 @@ def main():
             if abs(axis.velocity) > 0.1:
                 any_moving = True
 
-        # ── 2. LED blink (random period) ────────────────────────────────────
-        now_us = time.ticks_us()
-        if time.ticks_diff(now_us, led_last_us) >= led_period_us:
-            led.toggle()
-            led_ext.toggle()
-            led_last_us = now_us
-            led_period_us = random.randint(100_000, 900_000)
-
-        # ── 3. Serial + WiFi command processing ─────────────────────────────
+        # ── 2. Serial + WiFi command processing ─────────────────────────────
         # Helper: dispatch one parsed command line, send response to `reply_fn`
         def _handle_line(line, reply_fn):
             nonlocal idle_ticks
