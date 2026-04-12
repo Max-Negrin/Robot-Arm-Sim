@@ -3570,34 +3570,63 @@ class MainWindow(QMainWindow):
 
     _HELP_TEXT = [
         "Available commands:",
+        "─── Info ───────────────────────────────────────────────────",
         "  HELP                     — show this list",
-        "  STATUS                   — full system snapshot (connection, arm, target)",
-        "  CLEAR                    — clear terminal output",
-        "  POS                      — toggle 1 Hz joint-position readout",
-        "  EE / EE ON / EE OFF      — toggle 1 Hz end-effector coordinate stream",
-        "  JOG J<n> <deg>           — jog joint n by ±degrees  (e.g. JOG J0 5)",
-        "  JOG X|Y|Z <dist>         — jog IK target by ±mm     (e.g. JOG Z -10)",
-        "  GOTO <x> <y> <z>         — move IK target to absolute position",
-        "  HOME                     — animate arm to vertical (all joints zero)",
-        "  ELBOW UP|DOWN            — switch elbow configuration",
-        "  SPEED <0.1-5.0>          — set animation speed multiplier (1 = normal)",
+        "  STATUS                   — full system snapshot",
+        "  HISTORY                  — show recent command history",
         "  LINKS                    — list link lengths",
-        "  MOTORS                   — show motor config summary",
+        "  MOTORS                   — motor config table",
+        "  REACH                    — current reach vs max reach",
+        "  DIST                     — EE distance to current target",
+        "─── Display streams ────────────────────────────────────────",
+        "  POS                      — toggle 1 Hz joint-angle stream",
+        "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
+        "─── Motion ─────────────────────────────────────────────────",
+        "  JOG J<n> <deg>           — jog joint n by ±deg   (JOG J0 5)",
+        "  JOG X|Y|Z <dist>         — jog target by ±mm     (JOG Z -10)",
+        "  SETJOINT J<n> <deg>      — set joint to absolute angle",
+        "  GOTO <x> <y> <z>         — set absolute IK target",
+        "  HOME                     — animate to vertical (all joints 0)",
+        "  FLIP                     — toggle elbow up/down",
+        "  ELBOW UP|DOWN            — set elbow configuration",
+        "  SPEED <0.1-5.0>          — animation speed multiplier",
+        "  STOP                     — stop animation / sequence",
+        "─── Waypoints ──────────────────────────────────────────────",
         "  WAYPOINTS                — list loaded waypoints",
+        "  ADDWP                    — add current EE position as waypoint",
+        "  CLEARWP                  — clear all waypoints",
+        "  LOOP / LOOP ON / OFF     — toggle waypoint loop",
         "  RUN                      — start waypoint sequence",
-        "  STOP                     — stop current animation / sequence",
-        "  ZERO                     — set current joint angles as zero offsets",
-        "  SAVE                     — save all configs to arm_config.json",
-        "  PING                     — check Pico is alive (sent to hardware)",
-        "  LED_TOGGLE               — toggle onboard LED       (sent to hardware)",
+        "─── Config ─────────────────────────────────────────────────",
+        "  ZERO                     — capture current pose as zero offsets",
+        "  CONSTRAINT / ON / OFF    — toggle EE orientation constraint",
+        "  SAVE                     — save all configs immediately",
+        "─── Hardware ───────────────────────────────────────────────",
+        "  CONNECT                  — connect to hardware (uses panel settings)",
+        "  DISCONNECT               — disconnect from hardware",
+        "  LOG [n]                  — show last n lines of hardware_log.txt",
+        "  PING                     — check Pico is alive",
+        "  LED_TOGGLE               — toggle onboard LED",
+        "─── Terminal ───────────────────────────────────────────────",
+        "  CLEAR                    — clear terminal output",
+        "  ECHO <text>              — print text to terminal",
         "  <any other text>         — sent verbatim to hardware",
     ]
 
     def _on_terminal_command(self, text: str) -> None:
         """Dispatch a command typed in the terminal input line."""
         raw = text.strip()
+        if not raw:
+            return
         upper = raw.upper()
         parts = raw.split()
+
+        # Track command history (capped at 200 entries)
+        if not hasattr(self, "_cmd_history"):
+            self._cmd_history = []
+        self._cmd_history.append(raw)
+        if len(self._cmd_history) > 200:
+            self._cmd_history = self._cmd_history[-200:]
 
         # ── HELP ──────────────────────────────────────────────────────────
         if upper == "HELP":
@@ -3811,6 +3840,154 @@ class MainWindow(QMainWindow):
             self._save_arm_config()
             self.terminal.log("All configs saved to arm_config.json", "info")
             self.status_bar.showMessage("Saved")
+
+        # ── REACH ─────────────────────────────────────────────────────────
+        elif upper == "REACH":
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = positions[-1]
+            current = float(np.linalg.norm(ee))
+            max_reach = sum(self.arm_config.link_lengths)
+            pct = current / max_reach * 100 if max_reach > 0 else 0
+            self.terminal.log(f"Reach: {current:.3f} / {max_reach:.3f}  ({pct:.1f}% of max)", "info")
+
+        # ── DIST ──────────────────────────────────────────────────────────
+        elif upper == "DIST":
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = positions[-1]
+            d = float(np.linalg.norm(ee - self.target))
+            self.terminal.log(
+                f"EE→target: {d:.4f}  "
+                f"(EE {ee[0]:.2f},{ee[1]:.2f},{ee[2]:.2f}  "
+                f"target {self.target[0]:.2f},{self.target[1]:.2f},{self.target[2]:.2f})",
+                "info",
+            )
+
+        # ── SETJOINT ──────────────────────────────────────────────────────
+        elif upper.startswith("SETJOINT") and len(parts) == 3:
+            axis = parts[1].upper()
+            try:
+                deg = float(parts[2])
+            except ValueError:
+                self.terminal.log(f"SETJOINT: invalid angle '{parts[2]}'", "error")
+                return
+            n = self.arm_config.num_planar_joints
+            if axis.startswith("J"):
+                try:
+                    idx = int(axis[1:])
+                except ValueError:
+                    self.terminal.log(f"SETJOINT: invalid joint '{axis}'", "error")
+                    return
+                if idx == 0:
+                    self.arm_state.base_angle = math.radians(deg)
+                elif 1 <= idx <= n:
+                    self.arm_state.planar_angles[idx - 1] = math.radians(deg)
+                else:
+                    self.terminal.log(f"SETJOINT: index {idx} out of range (0–{n})", "error")
+                    return
+                self.viewport.update_arm(self.arm_config, self.arm_state)
+                self.terminal.log(f"J{idx} → {deg:+.2f}°", "info")
+            else:
+                self.terminal.log("SETJOINT: usage  SETJOINT J<n> <degrees>", "error")
+
+        # ── ADDWP ─────────────────────────────────────────────────────────
+        elif upper == "ADDWP":
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = positions[-1]
+            self.waypoint_panel._waypoints.append({
+                "x": float(ee[0]), "y": float(ee[1]), "z": float(ee[2]),
+                "approach_angle": None, "elbow": None,
+            })
+            self.waypoint_panel._refresh_list()
+            n_wp = len(self.waypoint_panel._waypoints)
+            self.terminal.log(
+                f"Waypoint {n_wp} added: X={ee[0]:.3f} Y={ee[1]:.3f} Z={ee[2]:.3f}", "info"
+            )
+
+        # ── CLEARWP ───────────────────────────────────────────────────────
+        elif upper == "CLEARWP":
+            count = len(self.waypoint_panel._waypoints)
+            self.waypoint_panel._clear_all()
+            self.terminal.log(f"Cleared {count} waypoint(s)", "info")
+
+        # ── LOOP ──────────────────────────────────────────────────────────
+        elif upper in ("LOOP", "LOOP ON", "LOOP OFF"):
+            if upper == "LOOP OFF" or (upper == "LOOP" and self.waypoint_panel.is_looping()):
+                self.waypoint_panel.loop_checkbox.setChecked(False)
+                self.terminal.log("Waypoint loop: OFF", "info")
+            else:
+                self.waypoint_panel.loop_checkbox.setChecked(True)
+                self.terminal.log("Waypoint loop: ON", "info")
+
+        # ── CONNECT / DISCONNECT ──────────────────────────────────────────
+        elif upper == "CONNECT":
+            if self.hardware_panel.is_wifi_mode():
+                host = self.hardware_panel.get_wifi_host()
+                port = self.hardware_panel.get_wifi_port()
+                self.terminal.log(f"Connecting via WiFi to {host}:{port}…", "info")
+                self._on_hardware_wifi_connect(host, port)
+            else:
+                p = self.hardware_panel.get_port()
+                b = self.hardware_panel.get_baud()
+                self.terminal.log(f"Connecting via USB ({p})…", "info")
+                self._on_hardware_connect(p, b)
+
+        elif upper == "DISCONNECT":
+            self._on_hardware_disconnect()
+
+        # ── FLIP ──────────────────────────────────────────────────────────
+        elif upper == "FLIP":
+            cur = self.config_panel.elbow_combo.currentIndex()
+            new_idx = 1 - cur
+            self.config_panel.elbow_combo.setCurrentIndex(new_idx)
+            self._on_update_clicked()
+            label = "up" if new_idx == 1 else "down"
+            self.terminal.log(f"Elbow flipped → {label}", "info")
+
+        # ── CONSTRAINT ────────────────────────────────────────────────────
+        elif upper in ("CONSTRAINT", "CONSTRAINT ON", "CONSTRAINT OFF"):
+            cb = self.ee_constraint_panel.constrain_cb
+            if upper == "CONSTRAINT OFF" or (upper == "CONSTRAINT" and cb.isChecked()):
+                cb.setChecked(False)
+                self.terminal.log("EE constraint: OFF", "info")
+            else:
+                cb.setChecked(True)
+                self.terminal.log("EE constraint: ON", "info")
+            self._on_ee_constraint_toggled(cb.isChecked())
+
+        # ── LOG ───────────────────────────────────────────────────────────
+        elif upper.startswith("LOG"):
+            try:
+                n_lines = int(parts[1]) if len(parts) > 1 else 30
+            except ValueError:
+                n_lines = 30
+            log_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "logs", "hardware_log.txt"
+            )
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                tail = lines[-n_lines:]
+                self.terminal.log(f"Last {len(tail)} lines of hardware_log.txt:", "info")
+                for line in tail:
+                    lvl = "error" if "ERROR" in line else "deploy" if "INFO" in line else "info"
+                    self.terminal.log(line.rstrip(), lvl)
+            except FileNotFoundError:
+                self.terminal.log("hardware_log.txt not found", "error")
+
+        # ── ECHO ──────────────────────────────────────────────────────────
+        elif upper.startswith("ECHO"):
+            msg = raw[5:].strip() if len(raw) > 5 else ""
+            self.terminal.log(msg, "info")
+
+        # ── HISTORY ───────────────────────────────────────────────────────
+        elif upper == "HISTORY":
+            hist = getattr(self, "_cmd_history", [])
+            if not hist:
+                self.terminal.log("No command history", "info")
+            else:
+                self.terminal.log(f"Command history ({len(hist)}):", "info")
+                for i, cmd in enumerate(hist[-20:], start=max(1, len(hist) - 19)):
+                    self.terminal.log(f"  {i:>3}  {cmd}", "info")
 
         # ── Forward to hardware ───────────────────────────────────────────
         else:
