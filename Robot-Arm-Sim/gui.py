@@ -3698,6 +3698,13 @@ class MainWindow(QMainWindow):
         if len(self._cmd_history) > 200:
             self._cmd_history = self._cmd_history[-200:]
 
+        # ── Shorthand: j0 60  or  j1 90  →  SETJOINT J<n> <deg> ──────────
+        import re as _re
+        _jshort = _re.fullmatch(r"[Jj](\d+)\s+([\-\d\.]+)", raw.strip())
+        if _jshort:
+            self._on_terminal_command(f"SETJOINT J{_jshort.group(1)} {_jshort.group(2)}")
+            return
+
         # ── HELP ──────────────────────────────────────────────────────────
         if upper == "HELP":
             self.terminal.log("", "info")
@@ -3872,7 +3879,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.terminal.log(f"JOG: joint index {idx} out of range (0–{n})", "error")
                     return
-                self.viewport.update_arm(self.arm_config, self.arm_state)
+                self._render_arm()
 
             elif axis in ("X", "Y", "Z"):
                 # JOG X|Y|Z <dist> — jog IK target
@@ -3954,7 +3961,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.terminal.log(f"SETJOINT: index {idx} out of range (0–{n})", "error")
                     return
-                self.viewport.update_arm(self.arm_config, self.arm_state)
+                self._render_arm()
                 self.terminal.log(f"J{idx} → {deg:+.2f}°", "info")
             else:
                 self.terminal.log("SETJOINT: usage  SETJOINT J<n> <degrees>", "error")
@@ -4095,7 +4102,7 @@ class MainWindow(QMainWindow):
         # ── STARTPOSE ─────────────────────────────────────────────────────
         elif upper == "STARTPOSE":
             self.arm_state = self.start_pose_panel.get_state()
-            self.viewport.update_arm(self.arm_config, self.arm_state)
+            self._render_arm()
             self.terminal.log("Applied starting pose", "info")
 
         # ── STATS ─────────────────────────────────────────────────────────
@@ -4233,7 +4240,7 @@ class MainWindow(QMainWindow):
             for i in range(n):
                 # Fold joints upward alternately to tuck arm compact
                 self.arm_state.planar_angles[i] = math.radians(90.0 if i % 2 == 0 else -90.0)
-            self.viewport.update_arm(self.arm_config, self.arm_state)
+            self._render_arm()
             self.terminal.log("Arm parked (folded compact)", "info")
 
         # ── EXTEND ────────────────────────────────────────────────────────
@@ -4242,7 +4249,7 @@ class MainWindow(QMainWindow):
             self.arm_state.base_angle = 0.0
             for i in range(n):
                 self.arm_state.planar_angles[i] = 0.0
-            self.viewport.update_arm(self.arm_config, self.arm_state)
+            self._render_arm()
             max_reach = sum(self.arm_config.link_lengths)
             self.terminal.log(f"Arm fully extended — max reach {max_reach:.3f}", "info")
 
@@ -4284,7 +4291,7 @@ class MainWindow(QMainWindow):
                             self.arm_state.base_angle = math.radians(deg)
                         elif 1 <= self._sweep_idx <= self._sweep_n:
                             self.arm_state.planar_angles[self._sweep_idx - 1] = math.radians(deg)
-                        self.viewport.update_arm(self.arm_config, self.arm_state)
+                        self._render_arm()
                         QTimer.singleShot(80, _do_sweep_step)
 
                     _do_sweep_step()
@@ -4509,7 +4516,7 @@ class MainWindow(QMainWindow):
                 for i, a in enumerate(angles[1:]):
                     if i < len(self.arm_state.planar_angles):
                         self.arm_state.planar_angles[i] = a
-                self.viewport.update_arm(self.arm_config, self.arm_state)
+                self._render_arm()
                 self.terminal.log(f"Pose '{name}' loaded", "info")
 
         elif upper == "POSES":
