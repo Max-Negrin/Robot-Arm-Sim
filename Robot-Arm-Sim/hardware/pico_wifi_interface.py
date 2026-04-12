@@ -33,7 +33,7 @@ from .protocol import UPDATE_THRESHOLD_RAD, angles_changed, encode_angles
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8888
-CONNECT_TIMEOUT = 15.0    # seconds — Pico may still be booting / joining WiFi
+CONNECT_TIMEOUT = 30.0    # seconds — Pico may still be booting / joining WiFi
 
 
 class PicoWifiInterface:

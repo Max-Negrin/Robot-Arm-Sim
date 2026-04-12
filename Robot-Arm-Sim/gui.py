@@ -4997,15 +4997,21 @@ class MainWindow(QMainWindow):
         self.hardware_panel.deploy_btn.setEnabled(True)
         if ok:
             self.hardware_panel.log_lbl.setText(
-                f"WiFi deploy OK — reconnecting to {host}:{port}…\n"
-                "(Pico is rebooting, may take a few seconds)"
+                f"WiFi deploy OK — waiting for Pico reboot (~12 s)…"
             )
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log(f"WiFi deploy OK — Pico rebooting, reconnecting in 4s", "info")
-            self.status_bar.showMessage("Firmware deployed over WiFi — reconnecting…")
+            self.terminal.log(
+                "WiFi deploy OK — Pico is rebooting. "
+                "Waiting 12 s for boot + WiFi join before reconnecting…", "info"
+            )
+            self.terminal.log(
+                "Do NOT click Connect manually — auto-reconnect will fire shortly.", "info"
+            )
+            self.status_bar.showMessage("Firmware deployed over WiFi — waiting for Pico reboot…")
             logger.info("WiFi deploy succeeded: %s", msg)
-            # Reconnect after a short delay to give the Pico time to reboot
-            QTimer.singleShot(4000, lambda: self._on_hardware_wifi_connect(host, port))
+            # Wait for Pico to boot MicroPython + join WiFi (~10-12 s typical) before connecting.
+            # CONNECT_TIMEOUT (30 s) then gives a generous window for slow routers.
+            QTimer.singleShot(12000, lambda: self._on_hardware_wifi_connect(host, port))
         else:
             self.hardware_panel.log_lbl.setText(msg[:500])
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
