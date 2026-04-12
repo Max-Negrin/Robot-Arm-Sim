@@ -1820,6 +1820,41 @@ class HardwarePanel(QGroupBox):
     def is_wifi_mode(self) -> bool:
         return self.wifi_radio.isChecked()
 
+    def restore(self, data: dict) -> None:
+        """Restore hardware panel state from a saved dict."""
+        if data.get("wifi_mode"):
+            self.wifi_radio.setChecked(True)
+        else:
+            self.usb_radio.setChecked(True)
+        if "wifi_host" in data:
+            self.ip_edit.setText(data["wifi_host"])
+        if "wifi_port" in data:
+            self.tcp_port_spin.setValue(int(data["wifi_port"]))
+        if "wifi_ssid" in data:
+            self.ssid_edit.setText(data["wifi_ssid"])
+        if "wifi_password" in data:
+            self.wifi_pw_edit.setText(data["wifi_password"])
+        if "usb_port" in data:
+            idx = self.port_combo.findText(data["usb_port"])
+            if idx >= 0:
+                self.port_combo.setCurrentIndex(idx)
+        if "baud" in data:
+            idx = self.baud_combo.findText(str(data["baud"]))
+            if idx >= 0:
+                self.baud_combo.setCurrentIndex(idx)
+
+    def save_state(self) -> dict:
+        """Return current hardware panel state as a JSON-serializable dict."""
+        return {
+            "wifi_mode": self.is_wifi_mode(),
+            "wifi_host": self.get_wifi_host(),
+            "wifi_port": self.get_wifi_port(),
+            "wifi_ssid": self.get_wifi_ssid(),
+            "wifi_password": self.get_wifi_password(),
+            "usb_port": self.get_port(),
+            "baud": self.get_baud(),
+        }
+
     def set_connected(self, connected: bool, message: str = "") -> None:
         self._connected = connected
         self.connect_btn.setEnabled(True)
@@ -2910,6 +2945,7 @@ class MainWindow(QMainWindow):
         data = {
             "_comment": "Auto-saved arm configuration. Loaded on next startup.",
             "arm_config": self._get_arm_config_dict(),
+            "hardware": self.hardware_panel.save_state(),
         }
         try:
             with open(path, "w") as f:
@@ -2937,6 +2973,13 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.warning("Could not restore arm config: %s", e)
                 return
+
+        hw_cfg = data.get("hardware")
+        if hw_cfg:
+            try:
+                self.hardware_panel.restore(hw_cfg)
+            except Exception as e:
+                logger.warning("Could not restore hardware config: %s", e)
 
         # Legacy fallback: old files stored target/elbow at top level
         if "target_panel" not in (arm_cfg or {}):
@@ -3691,6 +3734,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Clean up hardware on window close."""
+        self._save_arm_config()   # persist hardware panel state (IP, SSID, etc.)
         if self._hardware is not None:
             self._hardware.disconnect()
         super().closeEvent(event)
