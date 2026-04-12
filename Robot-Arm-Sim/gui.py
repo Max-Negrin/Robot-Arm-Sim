@@ -3383,7 +3383,7 @@ class MainWindow(QMainWindow):
         angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
         self._hardware.send_joint_angles(angles)
 
-        # Log outgoing angle command to terminal at most once per second
+        # 1 Hz terminal readouts (TX command, joint positions, EE coords)
         now = time.monotonic()
         if not hasattr(self, "_last_tx_log_time"):
             self._last_tx_log_time = 0.0
@@ -3392,6 +3392,20 @@ class MainWindow(QMainWindow):
             from hardware.protocol import encode_angles
             cmd = encode_angles(angles).decode("utf-8", "replace").strip()
             self.terminal.log(cmd, "tx")
+            # Joint position stream
+            if getattr(self, "_pos_log_enabled", True):
+                deg = [math.degrees(self.arm_state.base_angle)] + [
+                    math.degrees(a) for a in self.arm_state.planar_angles
+                ]
+                pos_str = "  ".join(f"J{i}={d:+.1f}°" for i, d in enumerate(deg))
+                self.terminal.log(pos_str, "info")
+            # EE coordinate stream
+            if getattr(self, "_ee_log_enabled", False):
+                positions = forward_kinematics(self.arm_config, self.arm_state)
+                ee = positions[-1]
+                self.terminal.log(
+                    f"EE  X={ee[0]:.3f}  Y={ee[1]:.3f}  Z={ee[2]:.3f}", "info"
+                )
 
     def _on_hardware_connect(self, port: str, baud: int) -> None:
         """Handle Connect button: open serial link to the Pico."""
@@ -3552,15 +3566,128 @@ class MainWindow(QMainWindow):
         self._terminal_visible = False
         self._terminal_btn.setChecked(False)
 
+    # ── Terminal command dispatcher ───────────────────────────────────────
+
+    _HELP_TEXT = [
+        "Available commands:",
+        "  HELP                     — show this list",
+        "  POS                      — toggle 1 Hz joint-position readout",
+        "  EE / EE ON / EE OFF      — toggle 1 Hz end-effector coordinate stream",
+        "  JOG J<n> <deg>           — jog joint n by ±degrees  (e.g. JOG J0 5)",
+        "  JOG X|Y|Z <dist>         — jog IK target by ±mm     (e.g. JOG Z -10)",
+        "  ZERO                     — set current joint angles as zero offsets",
+        "  SAVE                     — save all configs to arm_config.json",
+        "  PING                     — check Pico is alive (sent to hardware)",
+        "  LED_TOGGLE               — toggle onboard LED       (sent to hardware)",
+        "  <any other text>         — sent verbatim to hardware",
+    ]
+
     def _on_terminal_command(self, text: str) -> None:
-        """User typed a command in the terminal input line."""
-        if self._hardware is not None:
-            cmd = text.strip()
-            if not cmd.endswith("\n"):
-                cmd += "\n"
-            self._hardware.send_raw(cmd)
+        """Dispatch a command typed in the terminal input line."""
+        raw = text.strip()
+        upper = raw.upper()
+        parts = raw.split()
+
+        # ── HELP ──────────────────────────────────────────────────────────
+        if upper == "HELP":
+            self.terminal.log("", "info")
+            for line in self._HELP_TEXT:
+                self.terminal.log(line, "info")
+            self.terminal.log("", "info")
+
+        # ── POS ───────────────────────────────────────────────────────────
+        elif upper == "POS":
+            self._pos_log_enabled = not getattr(self, "_pos_log_enabled", True)
+            state = "ON" if self._pos_log_enabled else "OFF"
+            self.terminal.log(f"Joint position readout: {state}", "info")
+
+        # ── EE ────────────────────────────────────────────────────────────
+        elif upper in ("EE", "EE ON", "EE OFF"):
+            if upper == "EE OFF" or (upper == "EE" and getattr(self, "_ee_log_enabled", False)):
+                self._ee_log_enabled = False
+                self.terminal.log("EE coordinate stream: OFF", "info")
+            else:
+                self._ee_log_enabled = True
+                self.terminal.log("EE coordinate stream: ON", "info")
+
+        # ── JOG ───────────────────────────────────────────────────────────
+        elif upper.startswith("JOG") and len(parts) == 3:
+            axis = parts[1].upper()
+            try:
+                delta = float(parts[2])
+            except ValueError:
+                self.terminal.log(f"JOG: invalid delta '{parts[2]}'", "error")
+                return
+
+            if axis.startswith("J"):
+                # JOG J<n> <deg> — jog joint n directly
+                try:
+                    idx = int(axis[1:])
+                except ValueError:
+                    self.terminal.log(f"JOG: invalid joint '{axis}'", "error")
+                    return
+                n = self.arm_config.num_planar_joints
+                if idx == 0:
+                    self.arm_state.base_angle += math.radians(delta)
+                    self.terminal.log(
+                        f"Jogged base by {delta:+.2f}° → {math.degrees(self.arm_state.base_angle):.2f}°",
+                        "info",
+                    )
+                elif 1 <= idx <= n:
+                    self.arm_state.planar_angles[idx - 1] += math.radians(delta)
+                    self.terminal.log(
+                        f"Jogged J{idx} by {delta:+.2f}° → {math.degrees(self.arm_state.planar_angles[idx-1]):.2f}°",
+                        "info",
+                    )
+                else:
+                    self.terminal.log(f"JOG: joint index {idx} out of range (0–{n})", "error")
+                    return
+                self.viewport.update_arm(self.arm_config, self.arm_state)
+
+            elif axis in ("X", "Y", "Z"):
+                # JOG X|Y|Z <dist> — jog IK target
+                i = {"X": 0, "Y": 1, "Z": 2}[axis]
+                self.target[i] += delta
+                self.target_panel.x_spin.setValue(float(self.target[0]))
+                self.target_panel.y_spin.setValue(float(self.target[1]))
+                self.target_panel.z_spin.setValue(float(self.target[2]))
+                self.terminal.log(
+                    f"Target {axis} {delta:+.2f} → X={self.target[0]:.2f} Y={self.target[1]:.2f} Z={self.target[2]:.2f}",
+                    "info",
+                )
+                self._on_update_clicked()
+            else:
+                self.terminal.log(f"JOG: unknown axis '{axis}' — use J0–J5, X, Y, or Z", "error")
+
+        # ── ZERO ──────────────────────────────────────────────────────────
+        elif upper == "ZERO":
+            n = self.arm_config.num_planar_joints
+            angles_deg = [math.degrees(self.arm_state.base_angle)] + [
+                math.degrees(a) for a in self.arm_state.planar_angles
+            ]
+            for row in self.motor_config_panel._rows:
+                idx = row["index"]
+                if 0 <= idx <= n:
+                    current_offset = row["zero"].value()
+                    row["zero"].setValue(current_offset + angles_deg[idx])
+            self.terminal.log(
+                f"Zero offsets updated for {n + 1} joints — current pose is now zero",
+                "info",
+            )
+
+        # ── SAVE ──────────────────────────────────────────────────────────
+        elif upper == "SAVE":
+            self._save_arm_config()
+            self.terminal.log("All configs saved to arm_config.json", "info")
+            self.status_bar.showMessage("Saved")
+
+        # ── Forward to hardware ───────────────────────────────────────────
         else:
-            self.terminal.log("Not connected — command not sent", "error")
+            if self._hardware is not None:
+                self._hardware.send_raw(raw + "\n")
+                self.terminal.log(raw, "tx")
+            else:
+                self.terminal.log(f"Unknown command '{raw}' — type HELP for command list", "error")
 
     def _on_hardware_deploy(self, port: str) -> None:
         """Handle Deploy Firmware button: upload pico_control_script.py.
