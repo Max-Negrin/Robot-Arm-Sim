@@ -2702,6 +2702,8 @@ class MainWindow(QMainWindow):
         self._homing_start_time: Optional[float] = None
         self._homing_limit_status: dict[int, bool] = {}  # joint idx → has hit limit
         self._homing_configs: list[dict] = []  # homing config per joint
+        self._homing_single_joint: bool = False  # flag for single-joint homing
+        self._homing_param_overrides: dict[int, dict] = {}  # permanent parameter overrides per joint
 
         # FPS tracking
         self._last_time = time.perf_counter()
@@ -3658,8 +3660,8 @@ class MainWindow(QMainWindow):
         # Get homing config for all joints
         self._homing_configs = self.homing_panel.get_homing_configs()
 
-        # Count joints that have home switches configured
-        joints_with_home = [cfg for cfg in self._homing_configs if cfg.get("home_pin") is not None]
+        # Count joints that have home switches configured (home_pin >= 0)
+        joints_with_home = [cfg for cfg in self._homing_configs if cfg.get("home_pin", -1) >= 0]
         if not joints_with_home:
             self.hardware_panel.log_lbl.setText("ERROR: No home switches configured")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
@@ -3677,11 +3679,77 @@ class MainWindow(QMainWindow):
         # Enable PIN_STREAM to monitor limit switches
         self._hardware.send_raw("PIN_STREAM_ON\n")
 
-        # Send move command toward home (angle 0.0) for all joints
-        angles_cmd = ",".join(f"J{cfg['idx']}:0.0" for cfg in joints_with_home)
+        # Send move command in homing direction (large angle to keep moving until limit hit)
+        angles_cmd_parts = []
+        for cfg in joints_with_home:
+            direction = cfg["home_direction"]
+            # Move 180 degrees in the homing direction (will stop when limit is hit)
+            target_angle = 180.0 if direction > 0 else -180.0
+            angles_cmd_parts.append(f"J{cfg['idx']}:{target_angle}")
+
+        angles_cmd = ",".join(angles_cmd_parts)
         self._hardware.send_raw(f"{angles_cmd}\n")
 
-        self.terminal.log(f"HOME: {angles_cmd}", "tx")
+        self.terminal.log(f"HOME ALL: {angles_cmd}", "tx")
+
+    def _on_home_joint_requested(self, j_idx: int, direction_override: Optional[int] = None, speed_override: Optional[int] = None, is_permanent: bool = False) -> None:
+        """Start homing sequence for a single joint with optional parameter overrides.
+
+        Examples:
+            J0 HOME         - home joint 0 with default config (or stored overrides)
+            J0 HOME -1      - home joint 0 with inverted direction (one-time)
+            J0 HOME -1 300  - home joint 0 with inverted direction and 300 sps speed (one-time)
+            $J0 HOME -1     - home joint 0 with inverted direction (permanent until changed)
+        """
+        if self._hardware is None or not self._hardware.is_connected:
+            self.terminal.log("ERROR: Not connected to hardware", "error")
+            return
+
+        # Get homing config for this joint
+        self._homing_configs = self.homing_panel.get_homing_configs()
+        cfg = next((c for c in self._homing_configs if c["idx"] == j_idx), None)
+        if cfg is None:
+            self.terminal.log(f"ERROR: Joint {j_idx} not configured", "error")
+            return
+
+        # Check if this joint has a home switch
+        home_pin = cfg.get("home_pin", -1)
+        if home_pin < 0:
+            self.terminal.log(f"ERROR: Joint {j_idx} has no home switch configured", "error")
+            return
+
+        # Handle permanent overrides
+        if is_permanent and (direction_override is not None or speed_override is not None):
+            # Store permanent overrides
+            if j_idx not in self._homing_param_overrides:
+                self._homing_param_overrides[j_idx] = {}
+            if direction_override is not None:
+                self._homing_param_overrides[j_idx]["direction"] = direction_override
+            if speed_override is not None:
+                self._homing_param_overrides[j_idx]["speed"] = speed_override
+            self.terminal.log(f"J{j_idx} HOME: Permanent overrides set", "info")
+
+        # Get stored overrides
+        stored_overrides = self._homing_param_overrides.get(j_idx, {})
+
+        # Apply parameter overrides (command-line > stored permanent > default)
+        direction = direction_override if direction_override is not None else stored_overrides.get("direction", cfg["home_direction"])
+        speed = speed_override if speed_override is not None else stored_overrides.get("speed", cfg["home_speed_sps"])
+
+        # Start homing sequence
+        self._homing_active = True
+        self._homing_start_time = time.monotonic()
+        self._homing_limit_status = {j_idx: False}
+        self._homing_single_joint = True  # flag to know it's single-joint homing
+
+        # Enable PIN_STREAM to monitor limit switch
+        self._hardware.send_raw("PIN_STREAM_ON\n")
+
+        # Send move command in homing direction
+        target_angle = 180.0 if direction > 0 else -180.0
+        self._hardware.send_raw(f"J{j_idx}:{target_angle}\n")
+
+        self.terminal.log(f"J{j_idx} HOME: moving in direction {direction:+d} until limit hit", "tx")
 
     def _parse_pin_stream(self, text: str) -> None:
         """Parse PINS: message to extract limit switch status."""
@@ -3716,20 +3784,29 @@ class MainWindow(QMainWindow):
         self._homing_active = False
         self._hardware.send_raw("PIN_STREAM_OFF\n")
 
+        is_single_joint = getattr(self, "_homing_single_joint", False)
+
         # Stop all motors
         n = self.arm_config.num_planar_joints
         angles_cmd = ",".join(f"J{i}:0.0" for i in range(n + 1))
         self._hardware.send_raw(f"{angles_cmd}\n")
 
         if success:
-            self.hardware_panel.log_lbl.setText("Homing complete - all joints at home")
-            self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log("HOME: Sequence complete", "info")
+            if is_single_joint:
+                self.terminal.log("Homing complete - joint at home", "info")
+            else:
+                self.hardware_panel.log_lbl.setText("Homing complete - all joints at home")
+                self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+                self.terminal.log("HOME ALL: Sequence complete", "info")
         else:
-            self.hardware_panel.log_lbl.setText("Homing timeout or cancelled")
-            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
-            self.terminal.log("HOME: Sequence timeout", "error")
+            if is_single_joint:
+                self.terminal.log("Homing timeout or cancelled", "error")
+            else:
+                self.hardware_panel.log_lbl.setText("Homing timeout or cancelled")
+                self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+                self.terminal.log("HOME ALL: Sequence timeout", "error")
 
+        self._homing_single_joint = False
         self.hardware_panel.home_all_btn.setEnabled(True)
 
     # ── Timer / Animation Loop ────────────────────────────────────────
@@ -4228,6 +4305,17 @@ class MainWindow(QMainWindow):
         _jshort = _re.fullmatch(r"[Jj](\d+)\s+([\-\d\.]+)", raw.strip())
         if _jshort:
             self._on_terminal_command(f"SETJOINT J{_jshort.group(1)} {_jshort.group(2)}")
+            return
+
+        # ── Homing: j0 home  or  j0 home -1  or  j0 home -1 300 ────────────
+        # Also: $j0 home -1  ($ prefix makes the override permanent)
+        _jhome = _re.fullmatch(r"(\$)?[Jj](\d+)\s+home(?:\s+([\-\d]+))?(?:\s+(\d+))?", raw.strip(), _re.IGNORECASE)
+        if _jhome:
+            is_permanent = _jhome.group(1) == "$"
+            j_idx = int(_jhome.group(2))
+            direction_override = int(_jhome.group(3)) if _jhome.group(3) else None
+            speed_override = int(_jhome.group(4)) if _jhome.group(4) else None
+            self._on_home_joint_requested(j_idx, direction_override, speed_override, is_permanent)
             return
 
         # ── HELP ──────────────────────────────────────────────────────────
