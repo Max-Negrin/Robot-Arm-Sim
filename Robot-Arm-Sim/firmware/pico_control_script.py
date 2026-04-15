@@ -204,6 +204,8 @@ class _StepperBase:
         self.home_direction = cfg.get("home_direction", 1)  # +1 or -1 to seek home
         self.home_speed_sps = cfg.get("home_speed_sps", 100)  # slow approach speed
         self.at_home = False  # state flag: True when home switch is active
+        self._homing_mode = False  # flag: currently in homing sequence
+        self._homing_stage = "approach"  # stage: approach, backup, precision
 
     def angle_to_steps(self, angle_deg: float) -> float:
         return (angle_deg - self.zero_offset) / 360.0 * self._steps_out
@@ -232,15 +234,42 @@ class _StepperBase:
             pin_state = self._home_pin.value()
             home_active = (pin_state == 1) if self.home_pin_polarity == "NC" else (pin_state == 0)
 
-            if home_active:
-                self.at_home = True
-                self.velocity = 0.0  # stop immediately
-                self._accumulator = 0.0
-                self._accel_now = 0.0
-                self.current_pos = 0.0  # zero position at home
-                return
+            # Handle homing state machine
+            if hasattr(self, '_homing_mode') and self._homing_mode:
+                if home_active:
+                    stage = getattr(self, '_homing_stage', 'approach')
+                    if stage == "approach":
+                        # First contact - back off for precision
+                        self._homing_stage = "backup"
+                        backup_distance = 5  # steps to back off
+                        self.target_pos = self.current_pos - backup_distance * self.home_direction
+                        self.velocity = -self.home_direction * self.home_speed_sps * 0.5  # half speed backing off
+                    elif stage == "backup":
+                        # Now approach slowly for precision
+                        self._homing_stage = "precision"
+                        self.velocity = self.home_direction * self.home_speed_sps * 0.3  # slow approach
+                    elif stage == "precision":
+                        # Final home - stop and zero position
+                        self.at_home = True
+                        self._homing_mode = False
+                        self.velocity = 0.0
+                        self._accumulator = 0.0
+                        self._accel_now = 0.0
+                        self.current_pos = 0.0
+                        return
+                else:
+                    self.at_home = False
             else:
-                self.at_home = False
+                # Not in homing mode
+                if home_active:
+                    self.at_home = True
+                    self.velocity = 0.0
+                    self._accumulator = 0.0
+                    self._accel_now = 0.0
+                    self.current_pos = 0.0
+                    return
+                else:
+                    self.at_home = False
 
         error = self.target_pos - self.current_pos
         if abs(error) < 0.5:
@@ -718,9 +747,14 @@ def main():
                 _pin_stream_enabled = False
                 reply_fn("OK\n")
             elif line == "HOME":
-                # Initiate homing sequence: move all axes toward home (target angle 0.0)
+                # Initiate two-stage homing: fast approach, backup, slow precision
                 for axis in axes:
-                    axis.set_target_angle(0.0)
+                    if hasattr(axis, '_home_pin') and axis._home_pin is not None:
+                        # Set homing velocity (use home_speed_sps, multiply by direction)
+                        axis._homing_mode = True
+                        axis._homing_stage = "approach"  # stage: approach, backup, precision
+                        axis._homing_start_velocity = axis.home_speed_sps * axis.home_direction * 2  # 2x speed for initial approach
+                        axis.velocity = axis._homing_start_velocity
                 _homing_active = True
                 idle_ticks = 0
                 reply_fn("HOMING\n")

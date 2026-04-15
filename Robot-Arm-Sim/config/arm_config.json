@@ -124,8 +124,8 @@
         "name": "Base",
         "home_pin": 10,
         "home_pin_polarity": "NC",
-        "home_direction": 1,
-        "home_speed_sps": 200
+        "home_direction": -1,
+        "home_speed_sps": 40
       },
       {
         "idx": 1,
