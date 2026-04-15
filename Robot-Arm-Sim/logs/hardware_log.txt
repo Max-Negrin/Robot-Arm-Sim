@@ -1532,3 +1532,607 @@
 2026-04-14 21:12:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
 2026-04-14 21:12:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
 2026-04-14 21:12:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:12:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:04 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:05 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:06 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:07 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:08 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:09 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:10 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:11 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:12 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:13 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:14 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:15 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:16 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:17 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:18 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:19 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:20 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:21 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:22 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:23 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:24 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:25 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:26 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:13:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:04 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:14:04 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:14:04 DEBUG    hardware.pico_interface: RX loop exited
+2026-04-14 21:14:04 DEBUG    hardware.pico_interface: TX loop exited
+2026-04-14 21:14:04 INFO     hardware.pico_interface: Pico disconnected
+2026-04-14 21:14:07 DEBUG    OpenGL.acceleratesupport: OpenGL_accelerate module loaded
+2026-04-14 21:14:07 DEBUG    OpenGL.arrays.arraydatatype: Using accelerated ArrayDatatype
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_ATTACHED_OBJECTS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_DELETE_STATUS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_INFO_LOG_LENGTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_SHADER_SOURCE_LENGTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_SUBTYPE_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_VALIDATE_STATUS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_PROGRAM_OBJECT_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_SHADER_OBJECT_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GLhalfARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glAttachObjectARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glDeleteObjectARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glDetachObjectARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetAttachedObjectsARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetHandleARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetInfoLogARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetObjectParameterfvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetObjectParameterivARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glInitShaderObjectsARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.fragment_shader.GLhalfARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.fragment_shader.glInitFragmentShaderARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GL_OBJECT_ACTIVE_ATTRIBUTES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GL_OBJECT_ACTIVE_ATTRIBUTE_MAX_LENGTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GLhalfARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.glGetObjectParameterivARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.glInitVertexShaderARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_CURRENT_MATRIX_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_CURRENT_MATRIX_STACK_DEPTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX0_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX10_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX11_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX12_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX13_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX14_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX15_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX16_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX17_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX18_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX19_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX1_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX20_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX21_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX22_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX23_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX24_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX25_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX26_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX27_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX28_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX29_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX2_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX30_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX31_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX3_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX4_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX5_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX6_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX7_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX8_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX9_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ADDRESS_REGISTERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ATTRIBS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ENV_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_INSTRUCTIONS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_LOCAL_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_MATRICES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_MATRIX_STACK_DEPTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_ADDRESS_REGISTERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_ATTRIBS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_INSTRUCTIONS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_TEMPORARIES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_TEMPORARIES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ADDRESS_REGISTERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ATTRIBS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_BINDING_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ERROR_POSITION_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ERROR_STRING_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_FORMAT_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_FORMAT_ASCII_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_INSTRUCTIONS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_LENGTH_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_ADDRESS_REGISTERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_ATTRIBS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_INSTRUCTIONS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_TEMPORARIES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_PARAMETERS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_STRING_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_TEMPORARIES_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_UNDER_NATIVE_LIMITS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_TRANSPOSE_CURRENT_MATRIX_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_VERTEX_PROGRAM_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GLhalfARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glBindProgramARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glDeleteProgramsARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGenProgramsARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramEnvParameterdvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramEnvParameterfvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramLocalParameterdvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramLocalParameterfvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramStringARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramivARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glInitVertexProgramARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4dARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4dvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4fARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4fvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4dARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4dvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4fARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4fvARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramStringARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_MAX_GEOMETRY_VARYING_COMPONENTS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_MAX_VERTEX_VARYING_COMPONENTS_ARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GLhalfARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.glFramebufferTextureFaceARB
+2026-04-14 21:14:07 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.glInitGeometryShader4ARB
+2026-04-14 21:14:07 INFO     __main__: Creating QApplication...
+2026-04-14 21:14:07 INFO     __main__: QApplication created successfully
+2026-04-14 21:14:07 INFO     __main__: Creating MainWindow...
+2026-04-14 21:14:07 INFO     __main__: MainWindow created successfully
+2026-04-14 21:14:09 INFO     __main__: Robot Arm Simulator started
+2026-04-14 21:14:09 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:14:09 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:14:09 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:14:09 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:14:09 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:14:09 INFO     gui: Arm config restored from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:14:14 INFO     hardware.pico_interface: Pico firmware ready on COM3
+2026-04-14 21:14:14 INFO     gui: Hardware connected: Connected on COM3 — Pico firmware ready ✓
+2026-04-14 21:14:14 DEBUG    hardware.pico_interface: TX: J0:0.00,J1:0.00,J2:0.00
+2026-04-14 21:14:14 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:14:27 DEBUG    hardware.pico_interface: TX: PIN_STREAM_ON
+2026-04-14 21:14:27 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:14:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:14:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:04 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:05 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:06 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:07 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:08 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:09 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:10 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:11 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:12 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:13 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:14 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:15 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:16 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:17 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:18 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:19 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:20 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:21 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:22 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:23 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:24 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:25 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:26 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:15:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:04 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:05 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:06 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:07 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:08 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:09 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:10 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:none
+2026-04-14 21:16:11 DEBUG    hardware.pico_interface: RX loop exited
+2026-04-14 21:16:11 DEBUG    hardware.pico_interface: TX loop exited
+2026-04-14 21:16:11 INFO     hardware.pico_interface: Pico disconnected
+2026-04-14 21:16:11 INFO     gui: Firmware deployment started on COM3
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: Reading firmware from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\firmware\pico_control_script.py...
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: Deploying firmware to COM3 from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\firmware\pico_control_script.py
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: Injected 3 joint config(s) into firmware
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: Injected 3 joint configs into firmware
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: Deploying via raw serial REPL...
+2026-04-14 21:16:11 INFO     hardware.micropython_deployer: [1/4] Interrupting Pico on COM3...
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [1/4] MicroPython >>> prompt reached
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [2/4] Entering raw REPL mode...
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [2/4] Raw REPL entered
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [3/4] Writing firmware: 33309 bytes in 261 chunks...
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: Writing 33309 bytes in 261 chunks
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [3/4] chunk 10/261...
+2026-04-14 21:16:12 INFO     hardware.micropython_deployer: [3/4] chunk 20/261...
+2026-04-14 21:16:13 INFO     hardware.micropython_deployer: [3/4] chunk 30/261...
+2026-04-14 21:16:13 INFO     hardware.micropython_deployer: [3/4] chunk 40/261...
+2026-04-14 21:16:14 INFO     hardware.micropython_deployer: [3/4] chunk 50/261...
+2026-04-14 21:16:15 INFO     hardware.micropython_deployer: [3/4] chunk 60/261...
+2026-04-14 21:16:15 INFO     hardware.micropython_deployer: [3/4] chunk 70/261...
+2026-04-14 21:16:16 INFO     hardware.micropython_deployer: [3/4] chunk 80/261...
+2026-04-14 21:16:16 INFO     hardware.micropython_deployer: [3/4] chunk 90/261...
+2026-04-14 21:16:17 INFO     hardware.micropython_deployer: [3/4] chunk 100/261...
+2026-04-14 21:16:17 INFO     hardware.micropython_deployer: [3/4] chunk 110/261...
+2026-04-14 21:16:18 INFO     hardware.micropython_deployer: [3/4] chunk 120/261...
+2026-04-14 21:16:18 INFO     hardware.micropython_deployer: [3/4] chunk 130/261...
+2026-04-14 21:16:19 INFO     hardware.micropython_deployer: [3/4] chunk 140/261...
+2026-04-14 21:16:19 INFO     hardware.micropython_deployer: [3/4] chunk 150/261...
+2026-04-14 21:16:20 INFO     hardware.micropython_deployer: [3/4] chunk 160/261...
+2026-04-14 21:16:21 INFO     hardware.micropython_deployer: [3/4] chunk 170/261...
+2026-04-14 21:16:21 INFO     hardware.micropython_deployer: [3/4] chunk 180/261...
+2026-04-14 21:16:22 INFO     hardware.micropython_deployer: [3/4] chunk 190/261...
+2026-04-14 21:16:22 INFO     hardware.micropython_deployer: [3/4] chunk 200/261...
+2026-04-14 21:16:23 INFO     hardware.micropython_deployer: [3/4] chunk 210/261...
+2026-04-14 21:16:23 INFO     hardware.micropython_deployer: [3/4] chunk 220/261...
+2026-04-14 21:16:24 INFO     hardware.micropython_deployer: [3/4] chunk 230/261...
+2026-04-14 21:16:25 INFO     hardware.micropython_deployer: [3/4] chunk 240/261...
+2026-04-14 21:16:25 INFO     hardware.micropython_deployer: [3/4] chunk 250/261...
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: [3/4] chunk 260/261...
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: [3/4] chunk 261/261...
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: [3/4] All 261 chunks written OK
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: File write complete
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: [4/4] Soft resetting board — firmware starting...
+2026-04-14 21:16:26 INFO     hardware.micropython_deployer: Serial REPL deployment succeeded on COM3
+2026-04-14 21:16:26 INFO     gui: Deploy succeeded: Deployed via serial REPL successfully
+2026-04-14 21:16:32 INFO     hardware.pico_interface: Pico firmware ready on COM3
+2026-04-14 21:16:32 INFO     gui: Hardware connected: Connected on COM3 — Pico firmware ready ✓
+2026-04-14 21:16:32 DEBUG    hardware.pico_interface: TX: J0:0.00,J1:0.00,J2:0.00
+2026-04-14 21:16:32 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:16:32 DEBUG    hardware.pico_interface: TX: PIN_STREAM_OFF
+2026-04-14 21:16:32 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:16:36 DEBUG    hardware.pico_interface: TX: PIN_STREAM_ON
+2026-04-14 21:16:36 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:16:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:52 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:16:52 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:16:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:16:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:02 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:17:02 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:17:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:04 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:05 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:06 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:07 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-04-14 21:17:07 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-04-14 21:17:07 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:08 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:09 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:10 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:11 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:12 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:13 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:14 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:15 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:16 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:17 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:18 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:19 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:20 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:21 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:22 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:23 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:24 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:25 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:26 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:17:47 DEBUG    hardware.pico_interface: TX loop exited
+2026-04-14 21:17:47 DEBUG    hardware.pico_interface: RX loop exited
+2026-04-14 21:17:47 INFO     hardware.pico_interface: Pico disconnected
+2026-04-14 21:17:47 INFO     gui: Firmware deployment started on COM3
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: Reading firmware from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\firmware\pico_control_script.py...
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: Deploying firmware to COM3 from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\firmware\pico_control_script.py
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: Injected 3 joint config(s) into firmware
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: Injected 3 joint configs into firmware
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: Deploying via raw serial REPL...
+2026-04-14 21:17:47 INFO     hardware.micropython_deployer: [1/4] Interrupting Pico on COM3...
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [1/4] MicroPython >>> prompt reached
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [2/4] Entering raw REPL mode...
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [2/4] Raw REPL entered
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [3/4] Writing firmware: 33309 bytes in 261 chunks...
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: Writing 33309 bytes in 261 chunks
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [3/4] chunk 10/261...
+2026-04-14 21:17:48 INFO     hardware.micropython_deployer: [3/4] chunk 20/261...
+2026-04-14 21:17:49 INFO     hardware.micropython_deployer: [3/4] chunk 30/261...
+2026-04-14 21:17:49 INFO     hardware.micropython_deployer: [3/4] chunk 40/261...
+2026-04-14 21:17:50 INFO     hardware.micropython_deployer: [3/4] chunk 50/261...
+2026-04-14 21:17:51 INFO     hardware.micropython_deployer: [3/4] chunk 60/261...
+2026-04-14 21:17:51 INFO     hardware.micropython_deployer: [3/4] chunk 70/261...
+2026-04-14 21:17:52 INFO     hardware.micropython_deployer: [3/4] chunk 80/261...
+2026-04-14 21:17:52 INFO     hardware.micropython_deployer: [3/4] chunk 90/261...
+2026-04-14 21:17:53 INFO     hardware.micropython_deployer: [3/4] chunk 100/261...
+2026-04-14 21:17:53 INFO     hardware.micropython_deployer: [3/4] chunk 110/261...
+2026-04-14 21:17:54 INFO     hardware.micropython_deployer: [3/4] chunk 120/261...
+2026-04-14 21:17:54 INFO     hardware.micropython_deployer: [3/4] chunk 130/261...
+2026-04-14 21:17:55 INFO     hardware.micropython_deployer: [3/4] chunk 140/261...
+2026-04-14 21:17:55 INFO     hardware.micropython_deployer: [3/4] chunk 150/261...
+2026-04-14 21:17:56 INFO     hardware.micropython_deployer: [3/4] chunk 160/261...
+2026-04-14 21:17:57 INFO     hardware.micropython_deployer: [3/4] chunk 170/261...
+2026-04-14 21:17:57 INFO     hardware.micropython_deployer: [3/4] chunk 180/261...
+2026-04-14 21:17:58 INFO     hardware.micropython_deployer: [3/4] chunk 190/261...
+2026-04-14 21:17:58 INFO     hardware.micropython_deployer: [3/4] chunk 200/261...
+2026-04-14 21:17:59 INFO     hardware.micropython_deployer: [3/4] chunk 210/261...
+2026-04-14 21:17:59 INFO     hardware.micropython_deployer: [3/4] chunk 220/261...
+2026-04-14 21:18:00 INFO     hardware.micropython_deployer: [3/4] chunk 230/261...
+2026-04-14 21:18:00 INFO     hardware.micropython_deployer: [3/4] chunk 240/261...
+2026-04-14 21:18:01 INFO     hardware.micropython_deployer: [3/4] chunk 250/261...
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: [3/4] chunk 260/261...
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: [3/4] chunk 261/261...
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: [3/4] All 261 chunks written OK
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: File write complete
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: [4/4] Soft resetting board — firmware starting...
+2026-04-14 21:18:02 INFO     hardware.micropython_deployer: Serial REPL deployment succeeded on COM3
+2026-04-14 21:18:02 INFO     gui: Deploy succeeded: Deployed via serial REPL successfully
+2026-04-14 21:18:08 INFO     hardware.pico_interface: Pico firmware ready on COM3
+2026-04-14 21:18:08 INFO     gui: Hardware connected: Connected on COM3 — Pico firmware ready ✓
+2026-04-14 21:18:08 DEBUG    hardware.pico_interface: TX: J0:0.00,J1:0.00,J2:0.00
+2026-04-14 21:18:08 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:18:16 DEBUG    hardware.pico_interface: TX: PIN_STREAM_OFF
+2026-04-14 21:18:16 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:18:19 DEBUG    hardware.pico_interface: TX: PIN_STREAM_ON
+2026-04-14 21:18:19 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:18:19 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:20 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:21 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:home  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:22 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:23 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:24 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:25 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:26 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:home  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:37 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:38 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:39 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:40 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:41 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:42 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:43 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:44 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:45 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:46 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:47 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:48 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:49 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:50 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:51 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:52 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:53 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:54 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:55 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:56 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:57 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:58 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:18:59 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:00 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:01 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:02 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:03 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:04 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:05 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:06 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:07 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:08 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:09 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:10 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:11 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:12 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:13 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:14 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:15 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:16 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:17 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:18 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:19 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:20 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:21 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=0 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:22 DEBUG    hardware.pico_interface: TX: PIN_STREAM_ON
+2026-04-14 21:19:22 DEBUG    hardware.pico_interface: TX: J0:180.0,J1:180.0,J2:180.0
+2026-04-14 21:19:22 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:19:22 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:19:22 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~15 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~6 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:23 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~374 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~470 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:24 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~839 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1154 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:25 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~631 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1256 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:26 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~141 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1250 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:27 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1250 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:28 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1250 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:29 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~1250 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:30 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~114 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:31 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:32 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:33 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:34 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:35 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:36 DEBUG    hardware.pico_interface: RX: PINS: J0: GP0(STEP)=0* GP1(DIR)=0 sps~0 LIMIT:none  |  J1: GP4(STEP)=0* GP5(DIR)=1 sps~0 LIMIT:none  |  J2: GP6(STEP)=0* GP7(DIR)=0 sps~0 LIMIT:home
+2026-04-14 21:19:37 DEBUG    hardware.pico_interface: TX: PIN_STREAM_OFF
+2026-04-14 21:19:37 DEBUG    hardware.pico_interface: TX: J0:0.0,J1:0.0,J2:0.0
+2026-04-14 21:19:37 DEBUG    hardware.pico_interface: RX: OK
+2026-04-14 21:19:37 DEBUG    hardware.pico_interface: RX: OK
