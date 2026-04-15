@@ -1836,6 +1836,8 @@ class HardwarePanel(QGroupBox):
     deploy_requested = pyqtSignal(str)
     # Request to toggle the onboard LED
     led_toggle_requested = pyqtSignal()
+    # Request to start homing sequence
+    home_all_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__("Hardware (Pico 2W)", parent)
@@ -1974,15 +1976,25 @@ class HardwarePanel(QGroupBox):
         btn_row.addWidget(self.deploy_btn)
         layout.addLayout(btn_row)
 
-        # LED toggle — only usable when connected
-        led_row = QHBoxLayout()
+        # LED toggle and Homing — only usable when connected
+        control_row = QHBoxLayout()
         self.led_btn = QPushButton("Toggle LED")
         self.led_btn.setToolTip("Toggle the Pico onboard LED to confirm the connection is live.")
         self.led_btn.setEnabled(False)
         self.led_btn.clicked.connect(self.led_toggle_requested.emit)
-        led_row.addWidget(self.led_btn)
-        led_row.addStretch()
-        layout.addLayout(led_row)
+        control_row.addWidget(self.led_btn)
+
+        self.home_all_btn = QPushButton("HOME ALL")
+        self.home_all_btn.setToolTip(
+            "Automatically move all joints toward their home switches.\n"
+            "Each motor stops when its limit switch is detected."
+        )
+        self.home_all_btn.setEnabled(False)
+        self.home_all_btn.setStyleSheet("QPushButton { background-color: #cc6600; }")
+        self.home_all_btn.clicked.connect(self.home_all_requested.emit)
+        control_row.addWidget(self.home_all_btn)
+        control_row.addStretch()
+        layout.addLayout(control_row)
 
         # Pico IP address (populated when "WiFi connected: x.x.x.x" arrives)
         self.ip_lbl = QLabel("")
@@ -2052,6 +2064,7 @@ class HardwarePanel(QGroupBox):
         self._connected = connected
         self.connect_btn.setEnabled(True)
         self.led_btn.setEnabled(connected)
+        self.home_all_btn.setEnabled(connected)
         if connected:
             self._set_status("connected")
             self.connect_btn.setText("Disconnect")
@@ -2684,6 +2697,12 @@ class MainWindow(QMainWindow):
         self._pos_stream_active: bool = False
         self._pin_stream_active: bool = False
 
+        # Homing state machine
+        self._homing_active: bool = False
+        self._homing_start_time: Optional[float] = None
+        self._homing_limit_status: dict[int, bool] = {}  # joint idx → has hit limit
+        self._homing_configs: list[dict] = []  # homing config per joint
+
         # FPS tracking
         self._last_time = time.perf_counter()
         self._fps = 60.0
@@ -2924,6 +2943,7 @@ class MainWindow(QMainWindow):
         self.hardware_panel.disconnect_requested.connect(self._on_hardware_disconnect)
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
         self.hardware_panel.led_toggle_requested.connect(self._on_led_toggle)
+        self.hardware_panel.home_all_requested.connect(self._on_home_all_requested)
 
         # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
         self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
@@ -3626,6 +3646,92 @@ class MainWindow(QMainWindow):
             ctx[f"L{i + 1}"] = L
         return ctx
 
+    # ── Homing Sequence ────────────────────────────────────────────────
+
+    def _on_home_all_requested(self) -> None:
+        """Start homing sequence: move all joints toward their limit switches."""
+        if self._hardware is None or not self._hardware.is_connected:
+            self.hardware_panel.log_lbl.setText("ERROR: Not connected to hardware")
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            return
+
+        # Get homing config for all joints
+        self._homing_configs = self.homing_panel.get_homing_configs()
+
+        # Count joints that have home switches configured
+        joints_with_home = [cfg for cfg in self._homing_configs if cfg.get("home_pin") is not None]
+        if not joints_with_home:
+            self.hardware_panel.log_lbl.setText("ERROR: No home switches configured")
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            return
+
+        # Start homing sequence
+        self._homing_active = True
+        self._homing_start_time = time.monotonic()
+        self._homing_limit_status = {cfg["idx"]: False for cfg in joints_with_home}
+
+        self.hardware_panel.log_lbl.setText("Homing in progress...")
+        self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
+        self.hardware_panel.home_all_btn.setEnabled(False)
+
+        # Enable PIN_STREAM to monitor limit switches
+        self._hardware.send_raw("PIN_STREAM_ON\n")
+
+        # Send move command toward home (angle 0.0) for all joints
+        angles_cmd = ",".join(f"J{cfg['idx']}:0.0" for cfg in joints_with_home)
+        self._hardware.send_raw(f"{angles_cmd}\n")
+
+        self.terminal.log(f"HOME: {angles_cmd}", "tx")
+
+    def _parse_pin_stream(self, text: str) -> None:
+        """Parse PINS: message to extract limit switch status."""
+        if not text.startswith("PINS:"):
+            return
+
+        # Format: "PINS: J0: ... LIMIT:home  |  J1: ... LIMIT:none  | ..."
+        parts = text[5:].split("|")
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # Extract Jn and LIMIT status
+            try:
+                j_part = part.split(":")[0].strip()  # "J0"
+                j_idx = int(j_part[1:])
+
+                # Check if LIMIT:home is present
+                if "LIMIT:home" in part:
+                    self._homing_limit_status[j_idx] = True
+                elif "LIMIT:none" in part:
+                    self._homing_limit_status[j_idx] = False
+            except (ValueError, IndexError):
+                pass
+
+        # Check if all joints have reached home
+        if all(self._homing_limit_status.values()):
+            self._finish_homing_sequence(success=True)
+
+    def _finish_homing_sequence(self, success: bool) -> None:
+        """Complete the homing sequence."""
+        self._homing_active = False
+        self._hardware.send_raw("PIN_STREAM_OFF\n")
+
+        # Stop all motors
+        n = self.arm_config.num_planar_joints
+        angles_cmd = ",".join(f"J{i}:0.0" for i in range(n + 1))
+        self._hardware.send_raw(f"{angles_cmd}\n")
+
+        if success:
+            self.hardware_panel.log_lbl.setText("Homing complete - all joints at home")
+            self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.terminal.log("HOME: Sequence complete", "info")
+        else:
+            self.hardware_panel.log_lbl.setText("Homing timeout or cancelled")
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.terminal.log("HOME: Sequence timeout", "error")
+
+        self.hardware_panel.home_all_btn.setEnabled(True)
+
     # ── Timer / Animation Loop ────────────────────────────────────────
 
     def _on_timer_tick(self) -> None:
@@ -3646,6 +3752,12 @@ class MainWindow(QMainWindow):
             # Update stats periodically (every ~5 frames)
             if int(now * 12) % 1 == 0:
                 self._update_stats()
+
+            # Check homing timeout (15 second limit)
+            if self._homing_active and self._homing_start_time is not None:
+                elapsed = now - self._homing_start_time
+                if elapsed > 15.0:
+                    self._finish_homing_sequence(success=False)
 
             # Stream joint angles to hardware (non-blocking, threaded)
             self._try_send_hardware_update()
@@ -3703,6 +3815,9 @@ class MainWindow(QMainWindow):
         if text.startswith("PINS:"):
             # Pin debug stream — display directly in terminal
             self.terminal.log(text, "rx")
+            # Parse limit switch status for homing
+            if self._homing_active:
+                self._parse_pin_stream(text)
             return
         if text.startswith("WiFi connected:"):
             ip = text.split(":", 1)[1].strip()

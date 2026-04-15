@@ -51,8 +51,8 @@
         "invert_dir": false,
         "dir_setup_us": 5,
         "pins": [
-          2,
-          3
+          0,
+          1
         ]
       },
       {
@@ -117,7 +117,33 @@
       "z": 3.33,
       "approach_auto": true,
       "approach_angle_deg": 0.0
-    }
+    },
+    "homing_config": [
+      {
+        "idx": 0,
+        "name": "Base",
+        "home_pin": 10,
+        "home_pin_polarity": "NC",
+        "home_direction": 1,
+        "home_speed_sps": 200
+      },
+      {
+        "idx": 1,
+        "name": "Joint 1",
+        "home_pin": 11,
+        "home_pin_polarity": "NC",
+        "home_direction": 1,
+        "home_speed_sps": 200
+      },
+      {
+        "idx": 2,
+        "name": "Joint 2",
+        "home_pin": 20,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_speed_sps": 200
+      }
+    ]
   },
   "hardware": {
     "wifi_mode": false,
@@ -125,7 +151,7 @@
     "wifi_port": 8888,
     "wifi_ssid": "",
     "wifi_password": "",
-    "usb_port": "",
+    "usb_port": "COM3",
     "baud": 115200
   }
 }
