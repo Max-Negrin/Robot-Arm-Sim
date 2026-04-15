@@ -1744,9 +1744,9 @@ class HomingPanel(QGroupBox):
         row["direction"].currentIndexChanged.connect(self._on_changed)
 
         row["speed"].setRange(1, 5000)
-        row["speed"].setValue(200)  # default slow approach speed
+        row["speed"].setValue(30)  # default very slow approach speed for safety
         row["speed"].setSuffix(" sps")
-        row["speed"].setToolTip("Homing approach speed (steps/sec)")
+        row["speed"].setToolTip("Homing approach speed (steps/sec) - use low speeds (20-50 sps)")
         row["speed"].valueChanged.connect(self._on_changed)
 
         # Layout
@@ -1809,7 +1809,7 @@ class HomingPanel(QGroupBox):
             row["direction"].blockSignals(False)
 
             row["speed"].blockSignals(True)
-            row["speed"].setValue(config.get("home_speed_sps", 200))
+            row["speed"].setValue(config.get("home_speed_sps", 30))
             row["speed"].blockSignals(False)
 
 
