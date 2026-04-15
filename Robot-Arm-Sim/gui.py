@@ -3814,14 +3814,16 @@ class MainWindow(QMainWindow):
     def _finish_homing_sequence(self, success: bool) -> None:
         """Complete the homing sequence."""
         self._homing_active = False
-        self._hardware.send_raw("PIN_STREAM_OFF\n")
+        if self._hardware is not None and self._hardware.is_connected:
+            self._hardware.send_raw("PIN_STREAM_OFF\n")
 
         is_single_joint = getattr(self, "_homing_single_joint", False)
 
-        # Stop all motors
-        n = self.arm_config.num_planar_joints
-        angles_cmd = ",".join(f"J{i}:0.0" for i in range(n + 1))
-        self._hardware.send_raw(f"{angles_cmd}\n")
+        # Stop all motors (only if connected)
+        if self._hardware is not None and self._hardware.is_connected:
+            n = self.arm_config.num_planar_joints
+            angles_cmd = ",".join(f"J{i}:0.0" for i in range(n + 1))
+            self._hardware.send_raw(f"{angles_cmd}\n")
 
         if success:
             if is_single_joint:
