@@ -206,6 +206,8 @@ class _StepperBase:
         self.at_home = False  # state flag: True when home switch is active
         self._homing_mode = False  # flag: currently in homing sequence
         self._homing_stage = "approach"  # stage: approach, backup, precision
+        self._homing_backup_start = 0.0  # current_pos when backup began
+        self._homing_backup_distance = 0.0  # how many steps to back off
 
     def angle_to_steps(self, angle_deg: float) -> float:
         return (angle_deg - self.zero_offset) / 360.0 * self._steps_out
@@ -242,22 +244,24 @@ class _StepperBase:
 
                 if stage == "approach":
                     if home_active:
-                        # First contact — start backing off
+                        # First contact — record position and start backing off
                         self._homing_stage = "backup"
-                        self._homing_backup_steps = max(10, int(self.home_speed_sps * 0.3))
-                        self._homing_backup_count = 0
+                        self._homing_backup_start = self.current_pos
+                        # Back off by enough steps to fully clear the switch
+                        self._homing_backup_distance = max(5.0, self.home_speed_sps * 1.0)
                         self.velocity = self.home_speed_sps * -self.home_direction
                     else:
-                        # Moving toward switch at 2x speed
-                        self.velocity = self.home_speed_sps * 2 * self.home_direction
+                        # Still searching — drive at fast approach speed
+                        self.velocity = self.home_speed_sps * 2.0 * self.home_direction
 
                 elif stage == "backup":
-                    self._homing_backup_count += 1
-                    if self._homing_backup_count >= self._homing_backup_steps:
-                        # Done backing off — switch to slow precision approach
+                    backed_off = abs(self.current_pos - self._homing_backup_start)
+                    if backed_off >= self._homing_backup_distance and not home_active:
+                        # Backed off far enough and switch is clear — precision approach
                         self._homing_stage = "precision"
                         self.velocity = self.home_speed_sps * self.home_direction
                     else:
+                        # Keep backing off
                         self.velocity = self.home_speed_sps * -self.home_direction
 
                 elif stage == "precision":
@@ -272,6 +276,7 @@ class _StepperBase:
                         self.current_pos = 0.0
                         return
                     else:
+                        # Slowly approach switch
                         self.velocity = self.home_speed_sps * self.home_direction
 
             else:
