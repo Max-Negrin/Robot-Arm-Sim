@@ -781,11 +781,10 @@ def main():
                 # Initiate two-stage homing: fast approach, backup, slow precision
                 for axis in axes:
                     if hasattr(axis, '_home_pin') and axis._home_pin is not None:
-                        # Set homing velocity (use home_speed_sps, multiply by direction)
                         axis._homing_mode = True
-                        axis._homing_stage = "approach"  # stage: approach, backup, precision
-                        axis._homing_start_velocity = axis.home_speed_sps * axis.home_direction * 2  # 2x speed for initial approach
-                        axis.velocity = axis._homing_start_velocity
+                        axis._homing_stage = "approach"
+                        reply_fn("HOME J{}: pin={} dir={} speed={}\n".format(
+                            axis.idx, axis.home_pin_num, axis.home_direction, axis.home_speed_sps))
                 _homing_active = True
                 idle_ticks = 0
                 reply_fn("HOMING\n")
