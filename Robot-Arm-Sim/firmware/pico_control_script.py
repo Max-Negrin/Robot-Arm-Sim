@@ -228,9 +228,9 @@ class _StepperBase:
         """
         # Check limit/home switches if configured
         if hasattr(self, '_home_pin') and self._home_pin is not None:
-            # Active state depends on polarity: "NO" = active-high, "NC" = active-low
+            # Active state depends on polarity: "NO" = active-low, "NC" = active-high
             pin_state = self._home_pin.value()
-            home_active = (pin_state == 0) if self.home_pin_polarity == "NC" else (pin_state == 1)
+            home_active = (pin_state == 1) if self.home_pin_polarity == "NC" else (pin_state == 0)
 
             if home_active:
                 self.at_home = True
