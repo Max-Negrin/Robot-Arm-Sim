@@ -1165,9 +1165,9 @@ class MotorConfigPanel(QGroupBox):
     Covers every field that goes into the Pico firmware's JOINTS list:
       • Driver type  — 28BYJ-48 (ULN2003) or NEMA 17 (Step/Dir)
       • Pin numbers  — 4 pins (IN1-IN4) for 28BYJ, 2 pins (STEP/DIR) for NEMA 17
-      • Steps / rev  — full steps per motor revolution
+      • Steps / rev  — steps per revolution as set by the driver dip switches
       • Gear ratio   — external reduction beyond the motor's internal gearing
-      • Microstepping— driver factor (NEMA 17 only)
+      • Invert dir   — flip the DIR pin logic (Step/Dir only)
       • Max speed    — steps / second ceiling
       • Acceleration — steps / second² ramp rate
       • Zero offset  — angle correction for mechanical home position
@@ -1179,6 +1179,7 @@ class MotorConfigPanel(QGroupBox):
     """
 
     config_changed = pyqtSignal()
+    pins_loaded    = pyqtSignal(list)   # emitted after _load_config with full joint-config list
 
     # Default pin blocks per joint index (28byj: 4 consecutive pins from GP2)
     _DEFAULT_28BYJ_PINS = [
@@ -1199,6 +1200,7 @@ class MotorConfigPanel(QGroupBox):
 
     def __init__(self, parent=None):
         super().__init__("Motor Configuration", parent)
+        self._pins_callback = None   # set by MainWindow to pinout_panel.get_pins_for_joint
         outer = QVBoxLayout(self)
 
         info = QLabel(
@@ -1272,8 +1274,8 @@ class MotorConfigPanel(QGroupBox):
             spr.setRange(1, 100000)
             spr.setValue(4096)
             spr.setToolTip(
-                "Full steps (or half-steps for 28BYJ) per motor revolution.\n"
-                "28BYJ-48 half-step = 4096  |  NEMA 17 = 200"
+                "Steps per motor revolution as configured on the driver.\n"
+                "28BYJ-48 half-step = 4096  |  Step/Dir dip-switch: read from driver (e.g. 800)"
             )
             stepper_form.addRow("Steps/rev:", spr)
 
@@ -1285,16 +1287,32 @@ class MotorConfigPanel(QGroupBox):
             gear.setToolTip("External gear reduction ratio (1.0 = direct drive)")
             stepper_form.addRow("Gear ratio:", gear)
 
-            micro_widget = QWidget()
-            micro_layout = QHBoxLayout(micro_widget)
-            micro_layout.setContentsMargins(0, 0, 0, 0)
-            micro_combo = QComboBox()
-            micro_combo.addItems(["1", "2", "4", "8", "16", "32"])
-            micro_combo.setCurrentText("16")
-            micro_combo.setToolTip("Microstepping factor configured on the driver board")
-            micro_layout.addWidget(micro_combo)
-            micro_widget.hide()
-            stepper_form.addRow("Microstepping:", micro_widget)
+            invert_dir_widget = QWidget()
+            invert_dir_layout = QHBoxLayout(invert_dir_widget)
+            invert_dir_layout.setContentsMargins(0, 0, 0, 0)
+            invert_dir_check = QCheckBox("Invert DIR pin")
+            invert_dir_check.setToolTip(
+                "Flip the DIR pin logic for this axis.\n"
+                "Check this if the motor moves backwards relative to the simulator."
+            )
+            invert_dir_layout.addWidget(invert_dir_check)
+            invert_dir_widget.hide()
+            stepper_form.addRow("Direction:", invert_dir_widget)
+
+            dir_setup_widget = QWidget()
+            dir_setup_layout = QHBoxLayout(dir_setup_widget)
+            dir_setup_layout.setContentsMargins(0, 0, 0, 0)
+            dir_setup_spin = QSpinBox()
+            dir_setup_spin.setRange(0, 500)
+            dir_setup_spin.setValue(5)
+            dir_setup_spin.setSuffix(" µs")
+            dir_setup_spin.setToolTip(
+                "Minimum time DIR must be stable before the first STEP pulse on a direction change.\n"
+                "Standard open-loop drivers: 0–2 µs.  Closed-loop drivers: 5–20 µs (check datasheet)."
+            )
+            dir_setup_layout.addWidget(dir_setup_spin)
+            dir_setup_widget.hide()
+            stepper_form.addRow("DIR setup:", dir_setup_widget)
 
             max_sps = QSpinBox()
             max_sps.setRange(1, 50000)
@@ -1309,6 +1327,18 @@ class MotorConfigPanel(QGroupBox):
             accel.setSuffix(" sps²")
             accel.setToolTip("Acceleration ramp rate in steps per second²")
             stepper_form.addRow("Accel:", accel)
+
+            jerk = QSpinBox()
+            jerk.setRange(0, 10000000)
+            jerk.setValue(0)
+            jerk.setSuffix(" sps³")
+            jerk.setToolTip(
+                "S-curve jerk limit — rate at which acceleration ramps up/down.\n"
+                "0 = trapezoidal profile (instant accel, original behaviour).\n"
+                "Non-zero = S-curve: smoother starts/stops, less vibration and resonance.\n"
+                "Try accel × 5–10 as a starting point (e.g. accel=400 → jerk=2000–4000)."
+            )
+            stepper_form.addRow("Jerk limit:", jerk)
 
             backlash = QSpinBox()
             backlash.setRange(0, 500)
@@ -1404,10 +1434,13 @@ class MotorConfigPanel(QGroupBox):
                 "servo_grp": servo_grp,
                 "spr": spr,
                 "gear": gear,
-                "micro_widget": micro_widget,
-                "micro_combo": micro_combo,
+                "invert_dir_widget": invert_dir_widget,
+                "invert_dir_check": invert_dir_check,
+                "dir_setup_widget": dir_setup_widget,
+                "dir_setup_spin": dir_setup_spin,
                 "max_sps": max_sps,
                 "accel": accel,
+                "jerk": jerk,
                 "backlash": backlash,
                 "gravity_offset": gravity_offset,
                 "zero": zero,
@@ -1423,7 +1456,8 @@ class MotorConfigPanel(QGroupBox):
                 is_28byj = "28BYJ" in text
                 r["stepper_grp"].setVisible(not is_servo)
                 r["servo_grp"].setVisible(is_servo)
-                r["micro_widget"].setVisible(not is_servo and not is_28byj)
+                r["invert_dir_widget"].setVisible(not is_servo and not is_28byj)
+                r["dir_setup_widget"].setVisible(not is_servo and not is_28byj)
                 # Set sensible defaults when switching driver
                 if is_servo:
                     pass   # servo fields have their own defaults
@@ -1449,15 +1483,13 @@ class MotorConfigPanel(QGroupBox):
                 is_28byj = "28BYJ" in text
                 spr_val = r["spr"].value()
                 gear_val = r["gear"].value()
-                micro_val = 1 if is_28byj else int(r["micro_combo"].currentText())
-                total = spr_val * gear_val * micro_val
-                r["derived"].setText(f"{total:.0f} steps/rev")
+                total = spr_val * gear_val
+                r["derived"].setText(f"{total:.0f} steps/output-rev")
                 self.config_changed.emit()
 
             driver_combo.currentTextChanged.connect(_on_driver_changed)
             spr.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             gear.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
-            micro_combo.currentTextChanged.connect(lambda v, r=row: _update_derived(None, r))
             _update_derived(None, row)
 
         # Restore previously set values for joints that still exist
@@ -1477,18 +1509,20 @@ class MotorConfigPanel(QGroupBox):
                 row["gear"].setValue(float(cfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(cfg.get("max_sps", 500)))
                 row["accel"].setValue(int(cfg.get("accel", 1000)))
+                row["jerk"].setValue(int(cfg.get("jerk", 0)))
                 row["backlash"].setValue(int(cfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(cfg.get("steps_per_rev", 200)))
+                row["spr"].setValue(int(cfg.get("steps_per_rev", 800)))
                 row["gear"].setValue(float(cfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(cfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(cfg.get("accel", 4000)))
+                row["accel"].setValue(int(cfg.get("accel", 1000)))
+                row["jerk"].setValue(int(cfg.get("jerk", 0)))
                 row["backlash"].setValue(int(cfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
-                if "micro" in cfg:
-                    row["micro_combo"].setCurrentText(str(cfg["micro"]))
+                row["invert_dir_check"].setChecked(bool(cfg.get("invert_dir", False)))
+                row["dir_setup_spin"].setValue(int(cfg.get("dir_setup_us", 5)))
             row["zero"].setValue(float(cfg.get("zero_offset_deg", 0.0)))
 
     # ── Data access ────────────────────────────────────────────────────────
@@ -1541,12 +1575,14 @@ class MotorConfigPanel(QGroupBox):
                     "gear_ratio": row["gear"].value(),
                     "max_sps": row["max_sps"].value(),
                     "accel": row["accel"].value(),
+                    "jerk": row["jerk"].value(),
                     "zero_offset_deg": row["zero"].value(),
                     "backlash_steps": row["backlash"].value(),
                     "gravity_offset_deg": row["gravity_offset"].value(),
                 }
                 if not is_28byj:
-                    cfg["micro"] = int(row["micro_combo"].currentText())
+                    cfg["invert_dir"] = row["invert_dir_check"].isChecked()
+                    cfg["dir_setup_us"] = row["dir_setup_spin"].value()
             if pins_callback is not None:
                 cfg["pins"] = pins_callback(row["index"])
             result.append(cfg)
@@ -1566,7 +1602,10 @@ class MotorConfigPanel(QGroupBox):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, "w") as f:
-                json.dump({"joints": self.get_joint_configs()}, f, indent=2)
+                json.dump(
+                    {"joints": self.get_joint_configs(self._pins_callback)},
+                    f, indent=2,
+                )
             logger.info("Motor config saved to %s", path)
         except OSError as e:
             logger.error("Failed to save motor config: %s", e)
@@ -1599,23 +1638,28 @@ class MotorConfigPanel(QGroupBox):
                 row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
+                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
                 row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 200)))
+                row["spr"].setValue(int(jcfg.get("steps_per_rev", 800)))
                 row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(jcfg.get("accel", 4000)))
+                row["accel"].setValue(int(jcfg.get("accel", 1000)))
+                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
                 row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-                micro_str = str(jcfg.get("micro", 16))
-                idx2 = row["micro_combo"].findText(micro_str)
-                if idx2 >= 0:
-                    row["micro_combo"].setCurrentIndex(idx2)
+                row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
+                row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
             row["zero"].setValue(float(jcfg.get("zero_offset_deg", 0.0)))
 
         logger.info("Motor config loaded from %s", path)
+
+        # Emit pin data so MainWindow can restore PinoutPanel spinboxes
+        joints = data.get("joints", [])
+        if any(jcfg.get("pins") for jcfg in joints):
+            self.pins_loaded.emit(joints)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1630,6 +1674,143 @@ def _clear_layout(layout) -> None:
             item.widget().deleteLater()
         elif item.layout():
             _clear_layout(item.layout())
+
+
+class HomingPanel(QGroupBox):
+    """Per-joint homing switch configuration.
+
+    Allows configuration of:
+    - Home switch GPIO pin
+    - Polarity (NO = active-high, NC = active-low)
+    - Homing direction (+1 forward, -1 backward)
+    - Homing approach speed (steps/sec)
+
+    Settings persist via motor_config.json alongside motor parameters.
+    Firmware will poll these pins and zero position when detected.
+    """
+
+    config_changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__("Homing Configuration", parent)
+        self._rows = []
+        outer = QVBoxLayout(self)
+
+        info = QLabel(
+            "Configure limit switches for automatic homing.\n"
+            "Polarity: NO = normally-open (active-high), NC = normally-closed (active-low)"
+        )
+        info.setStyleSheet("color: #888; font-size: 10px;")
+        info.setWordWrap(True)
+        outer.addWidget(info)
+
+        # Scroll area for per-joint controls
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        self._scroll_layout = QVBoxLayout(scroll_widget)
+        scroll.setWidget(scroll_widget)
+        outer.addWidget(scroll)
+
+    def rebuild(self, n: int) -> None:
+        """Rebuild homing config rows for base + n planar joints."""
+        _clear_layout(self._scroll_layout)
+        self._rows = []
+
+        joint_names = ["Base"] + [f"Joint {i}" for i in range(1, n + 1)]
+        for idx in range(len(joint_names)):
+            self._rows.append(self._build_row(idx, joint_names[idx]))
+
+    def _build_row(self, idx: int, name: str) -> dict:
+        """Create one row of controls for a joint."""
+        row = {
+            "idx": idx,
+            "name": name,
+            "home_pin": QSpinBox(),
+            "polarity": QComboBox(),
+            "direction": QComboBox(),
+            "speed": QSpinBox(),
+        }
+
+        row["home_pin"].setRange(0, 28)
+        row["home_pin"].setValue(20 + idx)  # Start from GP20
+        row["home_pin"].setToolTip("GPIO pin for home switch (or -1 to disable)")
+        row["home_pin"].valueChanged.connect(self._on_changed)
+
+        row["polarity"].addItems(["NO (active-high)", "NC (active-low)"])
+        row["polarity"].currentIndexChanged.connect(self._on_changed)
+
+        row["direction"].addItems(["+1 (forward)", "-1 (backward)"])
+        row["direction"].currentIndexChanged.connect(self._on_changed)
+
+        row["speed"].setRange(1, 5000)
+        row["speed"].setValue(200)  # default slow approach speed
+        row["speed"].setSuffix(" sps")
+        row["speed"].setToolTip("Homing approach speed (steps/sec)")
+        row["speed"].valueChanged.connect(self._on_changed)
+
+        # Layout
+        layout = QFormLayout()
+        layout.addRow(f"<b>{name}</b>", QLabel())
+        layout.addRow("Home Pin (GP):", row["home_pin"])
+        layout.addRow("Polarity:", row["polarity"])
+        layout.addRow("Direction:", row["direction"])
+        layout.addRow("Speed (sps):", row["speed"])
+
+        group = QGroupBox()
+        group.setLayout(layout)
+        self._scroll_layout.addWidget(group)
+
+        return row
+
+    def _on_changed(self) -> None:
+        """Signal that homing config changed."""
+        self.config_changed.emit()
+
+    def get_homing_configs(self) -> list[dict]:
+        """Return list of homing configs, one per joint."""
+        configs = []
+        for row in self._rows:
+            # Polarity: index 0 → "NO", 1 → "NC"
+            polarity = "NO" if row["polarity"].currentIndex() == 0 else "NC"
+            # Direction: index 0 → +1, 1 → -1
+            direction = 1 if row["direction"].currentIndex() == 0 else -1
+
+            configs.append({
+                "idx": row["idx"],
+                "name": row["name"],
+                "home_pin": row["home_pin"].value(),
+                "home_pin_polarity": polarity,
+                "home_direction": direction,
+                "home_speed_sps": row["speed"].value(),
+            })
+        return configs
+
+    def set_homing_configs(self, configs: list[dict]) -> None:
+        """Load homing config from a list of dicts (e.g., from motor_config.json)."""
+        for config in configs:
+            idx = config.get("idx")
+            row = next((r for r in self._rows if r["idx"] == idx), None)
+            if row is None:
+                continue
+
+            row["home_pin"].blockSignals(True)
+            row["home_pin"].setValue(config.get("home_pin", 20 + idx))
+            row["home_pin"].blockSignals(False)
+
+            polarity = config.get("home_pin_polarity", "NO")
+            row["polarity"].blockSignals(True)
+            row["polarity"].setCurrentIndex(0 if polarity == "NO" else 1)
+            row["polarity"].blockSignals(False)
+
+            direction = config.get("home_direction", 1)
+            row["direction"].blockSignals(True)
+            row["direction"].setCurrentIndex(0 if direction == 1 else 1)
+            row["direction"].blockSignals(False)
+
+            row["speed"].blockSignals(True)
+            row["speed"].setValue(config.get("home_speed_sps", 200))
+            row["speed"].blockSignals(False)
 
 
 class HardwarePanel(QGroupBox):
@@ -2279,7 +2460,7 @@ class PicoTerminal(QWidget):
     """VS Code-style terminal panel showing all Pico ↔ laptop communications.
 
     Sits below the 3D viewport in a vertical splitter.  The header bar
-    has a close button; the panel can be reopened via Ctrl+` or the
+    has a close button; the panel can be reopened via T, Ctrl+`, or the
     status-bar toggle button.
 
     Colour scheme
@@ -2293,6 +2474,7 @@ class PicoTerminal(QWidget):
 
     command_entered = pyqtSignal(str)   # user hit Enter in the input line
     close_requested = pyqtSignal()
+    _log_signal = pyqtSignal(str, str)  # thread-safe log relay (text, kind)
 
     _COLORS = {
         "tx":     "#4fc1ff",
@@ -2304,6 +2486,7 @@ class PicoTerminal(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._log_signal.connect(self.log)
         self._build()
 
     def _build(self):
@@ -2438,6 +2621,32 @@ def _html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+class TerminalLogHandler(logging.Handler):
+    """Routes Python log records into the PicoTerminal widget (thread-safe)."""
+
+    _KIND_MAP = {
+        logging.DEBUG:    "info",
+        logging.INFO:     "info",
+        logging.WARNING:  "deploy",
+        logging.ERROR:    "error",
+        logging.CRITICAL: "error",
+    }
+
+    def __init__(self, terminal: "PicoTerminal") -> None:
+        super().__init__()
+        self._terminal = terminal
+        self.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            kind = self._KIND_MAP.get(record.levelno, "info")
+            # Emit via Qt signal so it's always delivered on the main thread
+            self._terminal._log_signal.emit(msg, kind)
+        except Exception:
+            self.handleError(record)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main Window
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2463,6 +2672,17 @@ class MainWindow(QMainWindow):
         self.constraints = ConstraintSet()
         self.math_engine = MathEngine()
         self.animator = Animator()
+
+        # Per-joint custom limits (overrides _DEFAULT_LIMIT); keyed by joint index
+        self._custom_limits: dict[int, tuple[float, float]] = {}
+
+        # True while restoring saved config on startup — suppresses animation triggers
+        self._loading: bool = False
+
+        # Pico-reported real joint angles (joint_idx → degrees); populated by POS: push
+        self._pico_pos: dict[int, float] = {}
+        self._pos_stream_active: bool = False
+        self._pin_stream_active: bool = False
 
         # FPS tracking
         self._last_time = time.perf_counter()
@@ -2551,6 +2771,7 @@ class MainWindow(QMainWindow):
         self.waypoint_panel = WaypointPanel()
         self.stats_panel = StatsPanel()
         self.motor_config_panel = MotorConfigPanel()
+        self.homing_panel = HomingPanel()
         self.pinout_panel = PinoutPanel()
         self.hardware_panel = HardwarePanel()
 
@@ -2585,6 +2806,7 @@ class MainWindow(QMainWindow):
         toolbox.addItem(self.waypoint_panel, "Waypoint Path")
         toolbox.addItem(self.math_panel, "Custom Math")
         toolbox.addItem(self.motor_config_panel, "Motor Configuration")
+        toolbox.addItem(self.homing_panel, "Homing")
         toolbox.addItem(self.pinout_panel, "Pico Pinout")
         toolbox.addItem(self.hardware_panel, "Hardware (Pico 2W)")
         toolbox.addItem(self.stats_panel, "Status")
@@ -2601,6 +2823,11 @@ class MainWindow(QMainWindow):
         self.terminal.setMinimumHeight(80)
         self.terminal.close_requested.connect(self._hide_terminal)
         self.terminal.command_entered.connect(self._on_terminal_command)
+
+        # Mirror Python log output into the terminal widget
+        self._terminal_log_handler = TerminalLogHandler(self.terminal)
+        self._terminal_log_handler.setLevel(logging.INFO)
+        logging.getLogger().addHandler(self._terminal_log_handler)
 
         # Vertical splitter: viewport on top, terminal below
         self._right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -2650,7 +2877,7 @@ class MainWindow(QMainWindow):
             "QPushButton:checked { background: #007acc; color: white; }"
             "QPushButton:hover { background: #505050; }"
         )
-        self._terminal_btn.setToolTip("Toggle terminal panel  (Ctrl+`)")
+        self._terminal_btn.setToolTip("Toggle terminal panel  (T  or  Ctrl+`)")
         self._terminal_btn.setChecked(True)   # terminal starts open
         self._terminal_btn.clicked.connect(self._toggle_terminal)
         self.status_bar.addWidget(self._terminal_btn)
@@ -2701,6 +2928,16 @@ class MainWindow(QMainWindow):
         # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
         self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
 
+        # Give MotorConfigPanel access to pin data so Save/Load include GPIO assignments
+        self.motor_config_panel._pins_callback = self.pinout_panel.get_pins_for_joint
+        self.motor_config_panel.pins_loaded.connect(self._restore_motor_config_pins)
+
+        # Auto-save whenever the user edits a pin number in the Pinout panel
+        self.pinout_panel.pins_changed.connect(self._save_arm_config)
+
+        # Auto-save when homing config changes
+        self.homing_panel.config_changed.connect(self._save_arm_config)
+
         # Initial panel builds
         n = self.arm_config.num_planar_joints
         self.offset_panel.rebuild(n)
@@ -2708,6 +2945,7 @@ class MainWindow(QMainWindow):
         self.joint_panel.rebuild(n)
         self.math_panel.rebuild(n)
         self.motor_config_panel.rebuild(n)
+        self.homing_panel.rebuild(n)
         self._sync_pinout_panel()
 
     # ── Event Handlers ────────────────────────────────────────────────
@@ -2719,6 +2957,8 @@ class MainWindow(QMainWindow):
         elif event.key() in (Qt.Key.Key_H, Qt.Key.Key_F1, Qt.Key.Key_Question):
             self._toggle_help()
         elif event.key() == Qt.Key.Key_QuoteLeft and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._toggle_terminal()
+        elif event.key() == Qt.Key.Key_T:
             self._toggle_terminal()
         else:
             super().keyPressEvent(event)
@@ -2785,19 +3025,65 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Sequence stopped")
 
     def _sync_pinout_panel(self) -> None:
-        """Rebuild PinoutPanel to match current joint names and driver types."""
+        """Rebuild PinoutPanel to match current joint names and driver types,
+        preserving any pin values the user has already set.
+        """
         names = self.motor_config_panel.get_joint_names()
         drivers = self.motor_config_panel.get_driver_types()
-        if names and drivers:
-            self.pinout_panel.rebuild(names, drivers)
+        if not names or not drivers:
+            return
+        # Snapshot current pin values keyed by joint idx before the rebuild
+        # resets them to sequential defaults.
+        saved_pins = {
+            r["idx"]: [sp.value() for sp in r["pin_spins"]]
+            for r in self.pinout_panel._rows
+        }
+        self.pinout_panel.rebuild(names, drivers)
+        # Restore saved pins for joints whose pin count hasn't changed
+        # (if the driver type changed the signal count, keep the new defaults).
+        # Block signals to avoid triggering auto-save during programmatic restore.
+        for row in self.pinout_panel._rows:
+            pins = saved_pins.get(row["idx"])
+            if pins and len(pins) == len(row["pin_spins"]):
+                for sp, val in zip(row["pin_spins"], pins):
+                    sp.blockSignals(True)
+                    sp.setValue(val)
+                    sp.blockSignals(False)
+
+    def _restore_motor_config_pins(self, jcfgs: list) -> None:
+        """Restore GPIO pin spinboxes in PinoutPanel from a joint-config list."""
+        self._sync_pinout_panel()
+        for jcfg in jcfgs:
+            pins = jcfg.get("pins", [])
+            if not pins:
+                continue
+            idx = jcfg.get("idx")
+            pinout_row = next((r for r in self.pinout_panel._rows if r["idx"] == idx), None)
+            if pinout_row is None:
+                continue
+            for sp, pin_val in zip(pinout_row["pin_spins"], pins):
+                sp.blockSignals(True)
+                sp.setValue(int(pin_val))
+                sp.blockSignals(False)
 
     def _get_full_joint_configs(self) -> list[dict]:
-        """Merge motor parameters from MotorConfigPanel with pins from PinoutPanel."""
+        """Merge motor parameters from MotorConfigPanel with pins from PinoutPanel and homing config from HomingPanel."""
         # Ensure the pinout panel is built before reading pins
         self._sync_pinout_panel()
-        return self.motor_config_panel.get_joint_configs(
+        motor_configs = self.motor_config_panel.get_joint_configs(
             pins_callback=self.pinout_panel.get_pins_for_joint
         )
+        # Merge homing config from HomingPanel into each motor config
+        homing_configs = self.homing_panel.get_homing_configs()
+        for motor_cfg in motor_configs:
+            idx = motor_cfg["idx"]
+            homing_cfg = next((h for h in homing_configs if h["idx"] == idx), None)
+            if homing_cfg and homing_cfg.get("home_pin") is not None:
+                motor_cfg["home_pin"] = homing_cfg["home_pin"]
+                motor_cfg["home_pin_polarity"] = homing_cfg["home_pin_polarity"]
+                motor_cfg["home_direction"] = homing_cfg["home_direction"]
+                motor_cfg["home_speed_sps"] = homing_cfg["home_speed_sps"]
+        return motor_configs
 
     def _on_reset_to_vertical(self) -> None:
         """Animate all joints back to the zero (vertical) position."""
@@ -2908,9 +3194,15 @@ class MainWindow(QMainWindow):
             lateral_y=(old_y + [0.0] * n)[:n],
         )
 
+        # Apply custom per-joint limits over the panel defaults
+        limits = list(base_cfg.joint_limits)
+        for i, lim in self._custom_limits.items():
+            if i < len(limits):
+                limits[i] = lim
+
         self.arm_config = ArmConfig(
             link_lengths=base_cfg.link_lengths,
-            joint_limits=base_cfg.joint_limits,
+            joint_limits=limits,
             joint_plane_offsets=self.offset_panel.get_joint_offsets(),
             base_vertical_offset=self.offset_panel.get_base_offset(),
             joint_lateral_x=self.offset_panel.get_lateral_x(),
@@ -2925,6 +3217,7 @@ class MainWindow(QMainWindow):
         self.joint_panel.rebuild(n)
         self.math_panel.rebuild(n)
         self.motor_config_panel.rebuild(n)
+        self.homing_panel.rebuild(n)
         self._sync_pinout_panel()
         self.ee_constraint_panel.reset()
         self.animator.cancel()
@@ -2961,7 +3254,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Saved as default — will load automatically on next startup", 4000)
 
     def _save_arm_config(self) -> None:
-        """Save current arm config (joints, lengths, offsets) to config/arm_config.json."""
+        """Save current arm config (joints, lengths, offsets) to config/arm_config.json.
+        Also keeps motor_config.json in sync so pins are always included.
+        """
         path = self._arm_config_save_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         data = {
@@ -2975,6 +3270,8 @@ class MainWindow(QMainWindow):
             logger.info("Arm config auto-saved to %s", path)
         except OSError as e:
             logger.warning("Could not save arm config: %s", e)
+        # Keep motor_config.json in sync (includes GPIO pins from PinoutPanel)
+        self.motor_config_panel._save_config()
 
     def _load_arm_config_on_startup(self) -> None:
         """Load config/arm_config.json if it exists, restoring the last session."""
@@ -2991,10 +3288,13 @@ class MainWindow(QMainWindow):
         arm_cfg = data.get("arm_config")
         if arm_cfg:
             try:
+                self._loading = True
                 self._apply_arm_config_dict(arm_cfg)
             except Exception as e:
                 logger.warning("Could not restore arm config: %s", e)
                 return
+            finally:
+                self._loading = False
 
         hw_cfg = data.get("hardware")
         if hw_cfg:
@@ -3062,9 +3362,16 @@ class MainWindow(QMainWindow):
             "approach_angle_deg": tp.approach_spin.value(),
         }
 
+        # Homing config
+        homing_config = self.homing_panel.get_homing_configs()
+
         return {
             "num_links": len(self.arm_config.link_lengths),
             "link_lengths": list(self.arm_config.link_lengths),
+            "joint_limits": [
+                [round(math.degrees(lo), 4), round(math.degrees(hi), 4)]
+                for lo, hi in self.arm_config.joint_limits
+            ],
             "joint_plane_offsets": list(self.arm_config.joint_plane_offsets),
             "joint_lateral_x": list(self.arm_config.joint_lateral_x),
             "joint_lateral_y": list(self.arm_config.joint_lateral_y),
@@ -3075,6 +3382,7 @@ class MainWindow(QMainWindow):
             "math_expressions": math_expressions,
             "ee_constraint": ee_constraint,
             "target_panel": target_panel,
+            "homing_config": homing_config,
         }
 
     def _apply_arm_config_dict(self, d: dict) -> None:
@@ -3090,6 +3398,17 @@ class MainWindow(QMainWindow):
         for spin, val in zip(self.config_panel.link_spins, link_lengths):
             spin.setValue(float(val))
 
+        # Restore joint limits (overrides panel defaults)
+        saved_limits = d.get("joint_limits")
+        if saved_limits:
+            self._custom_limits = {}
+            for i, pair in enumerate(saved_limits[:n]):
+                try:
+                    lo_deg, hi_deg = float(pair[0]), float(pair[1])
+                    self._custom_limits[i] = (math.radians(lo_deg), math.radians(hi_deg))
+                except (TypeError, IndexError, ValueError):
+                    pass
+
         # Update JointPlaneOffsetPanel
         offsets = d.get("joint_plane_offsets", [0.0] * n)
         lat_x = d.get("joint_lateral_x", [0.0] * n)
@@ -3102,6 +3421,9 @@ class MainWindow(QMainWindow):
             lateral_x=[float(v) for v in lat_x],
             lateral_y=[float(v) for v in lat_y],
         )
+
+        # Rebuild homing config for current joint count
+        self.homing_panel.rebuild(n)
 
         # Apply starting angles if present
         starting = d.get("starting_angles")
@@ -3137,18 +3459,20 @@ class MainWindow(QMainWindow):
                 row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
+                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
                 row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 200)))
+                row["spr"].setValue(int(jcfg.get("steps_per_rev", 800)))
                 row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(jcfg.get("accel", 4000)))
+                row["accel"].setValue(int(jcfg.get("accel", 1000)))
+                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
                 row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-                if "micro" in jcfg:
-                    row["micro_combo"].setCurrentText(str(jcfg["micro"]))
+                row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
+                row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
             row["zero"].setValue(float(jcfg.get("zero_offset_deg", 0.0)))
 
         # Restore GPIO pin assignments from motor_configs[].pins
@@ -3162,7 +3486,14 @@ class MainWindow(QMainWindow):
             if pinout_row is None:
                 continue
             for sp, pin_val in zip(pinout_row["pin_spins"], pins):
+                sp.blockSignals(True)
                 sp.setValue(int(pin_val))
+                sp.blockSignals(False)
+
+        # Restore homing configs
+        homing_configs = d.get("homing_config", [])
+        if homing_configs:
+            self.homing_panel.set_homing_configs(homing_configs)
 
         # Restore math expressions
         for expr_data in d.get("math_expressions", []):
@@ -3197,8 +3528,15 @@ class MainWindow(QMainWindow):
         if elbow is not None:
             self.config_panel.elbow_combo.setCurrentIndex(int(elbow))
 
+        # Save motor_config.json now that pins are fully restored.
+        # (_on_config_changed called earlier saves arm_config.json before pins are
+        # loaded, so motor_config.json would lack them without this explicit call.)
+        self.motor_config_panel._save_config()
+
     def _on_update_clicked(self) -> None:
         """Handle the Update button / Space key: validate, solve IK, start animation."""
+        if self._loading:
+            return
         try:
             self.target = self.target_panel.get_target()
 
@@ -3350,6 +3688,22 @@ class MainWindow(QMainWindow):
 
     def _on_pico_rx(self, text: str) -> None:
         """Called in the main thread with each line received from the Pico."""
+        if text.startswith("POS:"):
+            # Parse "POS:J0:45.00,J1:32.50,..." into _pico_pos cache (silent)
+            try:
+                for tok in text[4:].split(","):
+                    tok = tok.strip()
+                    if not tok:
+                        continue
+                    k, v = tok.split(":")
+                    self._pico_pos[int(k[1:])] = float(v)
+            except Exception:
+                pass
+            return
+        if text.startswith("PINS:"):
+            # Pin debug stream — display directly in terminal
+            self.terminal.log(text, "rx")
+            return
         if text.startswith("WiFi connected:"):
             ip = text.split(":", 1)[1].strip()
             self.hardware_panel.ip_lbl.setText(f"Pico IP: {ip}")
@@ -3358,7 +3712,11 @@ class MainWindow(QMainWindow):
         elif text.startswith("OK"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text} — commands are arriving")
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log(text, "rx")
+            # Rate-limit OK messages to 1 Hz — Pico echoes every frame at 60 fps
+            _now = time.monotonic()
+            if _now - getattr(self, "_last_ok_log_time", 0.0) >= 1.0:
+                self._last_ok_log_time = _now
+                self.terminal.log(text, "rx")
             if hasattr(self, "_latency_t0") and self._latency_t0 is not None:
                 rtt = (time.monotonic() - self._latency_t0) * 1000
                 self.terminal.log(f"RTT: {rtt:.1f} ms", "info")
@@ -3388,11 +3746,55 @@ class MainWindow(QMainWindow):
         except _q.Empty:
             pass
 
+        # 1 Hz POS / EE streams — run regardless of hardware connection state
+        now = time.monotonic()
+        if not hasattr(self, "_last_stream_log_time"):
+            self._last_stream_log_time = 0.0
+        hw_live = self._hardware is not None and self._hardware.is_connected
+        if now - self._last_stream_log_time >= 1.0:
+            self._last_stream_log_time = now
+            if getattr(self, "_pos_log_enabled", False):
+                if hw_live and self._pico_pos:
+                    # Real angles from Pico
+                    pos_str = "  ".join(
+                        f"J{i}={self._pico_pos[i]:+.1f}°"
+                        for i in sorted(self._pico_pos)
+                    ) + "  [hw]"
+                else:
+                    deg = [math.degrees(self.arm_state.base_angle)] + [
+                        math.degrees(a) for a in self.arm_state.planar_angles
+                    ]
+                    pos_str = "  ".join(f"J{i}={d:+.1f}°" for i, d in enumerate(deg))
+                self.terminal.log(pos_str, "info")
+            if getattr(self, "_ee_log_enabled", False):
+                if hw_live and self._pico_pos:
+                    # FK from real Pico angles
+                    n = self.arm_config.num_planar_joints
+                    pico_base = math.radians(self._pico_pos.get(0, math.degrees(self.arm_state.base_angle)))
+                    pico_planar = [
+                        math.radians(self._pico_pos.get(i + 1, math.degrees(self.arm_state.planar_angles[i])))
+                        for i in range(n)
+                    ]
+                    from kinematics import ArmState as _AS
+                    pico_state = _AS(base_angle=pico_base, planar_angles=pico_planar)
+                    positions = forward_kinematics(self.arm_config, pico_state)
+                    ee_tag = "  [hw]"
+                else:
+                    positions = forward_kinematics(self.arm_config, self.arm_state)
+                    ee_tag = ""
+                ee = positions[-1]
+                self.terminal.log(
+                    f"EE  X={ee[0]:.3f}  Y={ee[1]:.3f}  Z={ee[2]:.3f}{ee_tag}", "info"
+                )
+
         if self._hardware is None or not self._hardware.is_connected:
             # Check for unexpected disconnection and update UI
             if self._hardware is not None and not self._hardware.is_connected:
                 err = self._hardware.last_error
                 if err:
+                    self._pos_stream_active = False
+                    self._pin_stream_active = False
+                    self._pico_pos.clear()
                     self.hardware_panel.set_connected(False, err)
                     self.terminal.set_connected(False)
                     self.terminal.log(f"Unexpected disconnect: {err.splitlines()[0]}", "error")
@@ -3403,29 +3805,19 @@ class MainWindow(QMainWindow):
         angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
         self._hardware.send_joint_angles(angles)
 
-        # 1 Hz terminal readouts (TX command, joint positions, EE coords)
-        now = time.monotonic()
-        if not hasattr(self, "_last_tx_log_time"):
-            self._last_tx_log_time = 0.0
-        if now - self._last_tx_log_time >= 1.0:
-            self._last_tx_log_time = now
-            from hardware.protocol import encode_angles
-            cmd = encode_angles(angles).decode("utf-8", "replace").strip()
-            self.terminal.log(cmd, "tx")
-            # Joint position stream
-            if getattr(self, "_pos_log_enabled", True):
-                deg = [math.degrees(self.arm_state.base_angle)] + [
-                    math.degrees(a) for a in self.arm_state.planar_angles
-                ]
-                pos_str = "  ".join(f"J{i}={d:+.1f}°" for i, d in enumerate(deg))
-                self.terminal.log(pos_str, "info")
-            # EE coordinate stream
-            if getattr(self, "_ee_log_enabled", False):
-                positions = forward_kinematics(self.arm_config, self.arm_state)
-                ee = positions[-1]
-                self.terminal.log(
-                    f"EE  X={ee[0]:.3f}  Y={ee[1]:.3f}  Z={ee[2]:.3f}", "info"
-                )
+        # Keep POS_STREAM on the Pico in sync with what streams are enabled
+        streams_wanted = (
+            getattr(self, "_pos_log_enabled", False) or
+            getattr(self, "_ee_log_enabled", False)
+        )
+        if streams_wanted and not self._pos_stream_active:
+            self._hardware.send_raw("POS_STREAM_ON\n")
+            self._pos_stream_active = True
+        elif not streams_wanted and self._pos_stream_active:
+            self._hardware.send_raw("POS_STREAM_OFF\n")
+            self._pos_stream_active = False
+            self._pico_pos.clear()
+
 
     def _on_hardware_connect(self, port: str, baud: int) -> None:
         """Handle Connect button: open serial link to the Pico."""
@@ -3548,6 +3940,9 @@ class MainWindow(QMainWindow):
         if self._hardware is not None:
             self._hardware.disconnect()
             self._hardware = None
+        self._pos_stream_active = False
+        self._pin_stream_active = False
+        self._pico_pos.clear()
         self.hardware_panel.set_connected(False, "Disconnected by user")
         self.terminal.set_connected(False)
         self.terminal.log("Disconnected", "info")
@@ -3602,13 +3997,16 @@ class MainWindow(QMainWindow):
         "  BBOX                     — approximate workspace bounding box",
         "  NEAREST                  — closest reachable point to target",
         "  STATS                    — collision / singularity check",
-        "  LIMITS                   — joint angle limits",
+        "  LIMITS                   — show joint angle limits (* = custom)",
+        "  SETLIMIT J<n> <min> <max> — set joint n limits in degrees",
+        "  RESETLIMITS              — reset all limits to ±170°",
         "  TARGET                   — print current IK target",
         "  FK                       — forward kinematics dump",
         "  LATENCY                  — measure Pico round-trip time",
         "─── Display streams ────────────────────────────────────────",
         "  POS                      — toggle 1 Hz joint-angle stream",
         "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
+        "  PINS / PINS ON / PINS OFF — toggle 1 Hz GPIO pin debug stream (hw only)",
         "─── Motion ─────────────────────────────────────────────────",
         "  HOME                     — animate to vertical (all joints 0)",
         "  PARK                     — fold arm to compact stowed pose",
@@ -3725,10 +4123,13 @@ class MainWindow(QMainWindow):
             self.terminal.log("", "info")
 
         # ── POS ───────────────────────────────────────────────────────────
-        elif upper == "POS":
-            self._pos_log_enabled = not getattr(self, "_pos_log_enabled", True)
-            state = "ON" if self._pos_log_enabled else "OFF"
-            self.terminal.log(f"Joint position readout: {state}", "info")
+        elif upper in ("POS", "POS ON", "POS OFF"):
+            if upper == "POS OFF" or (upper == "POS" and getattr(self, "_pos_log_enabled", False)):
+                self._pos_log_enabled = False
+                self.terminal.log("Joint position readout: OFF", "info")
+            else:
+                self._pos_log_enabled = True
+                self.terminal.log("Joint position readout: ON", "info")
 
         # ── EE ────────────────────────────────────────────────────────────
         elif upper in ("EE", "EE ON", "EE OFF"):
@@ -3738,6 +4139,26 @@ class MainWindow(QMainWindow):
             else:
                 self._ee_log_enabled = True
                 self.terminal.log("EE coordinate stream: ON", "info")
+
+        # ── PINS ──────────────────────────────────────────────────────────
+        elif upper in ("PINS", "PINS ON", "PINS OFF"):
+            want_on = not (upper == "PINS OFF" or
+                           (upper == "PINS" and getattr(self, "_pin_stream_active", False)))
+            if want_on:
+                if self._hardware is None or not self._hardware.is_connected:
+                    self.terminal.log("PINS: not connected to Pico", "error")
+                else:
+                    self._hardware.send_raw("PIN_STREAM_ON\n")
+                    self._pin_stream_active = True
+                    self.terminal.log(
+                        "Pin debug stream: ON — showing GPIO states + steps/sec for each axis",
+                        "info",
+                    )
+            else:
+                if self._hardware is not None and self._hardware.is_connected:
+                    self._hardware.send_raw("PIN_STREAM_OFF\n")
+                self._pin_stream_active = False
+                self.terminal.log("Pin debug stream: OFF", "info")
 
         # ── STATUS ────────────────────────────────────────────────────────
         elif upper == "STATUS":
@@ -3877,21 +4298,26 @@ class MainWindow(QMainWindow):
                     return
                 n = self.arm_config.num_planar_joints
                 if idx == 0:
-                    self.arm_state.base_angle += math.radians(delta)
+                    target_state = self.arm_state.copy()
+                    target_state.base_angle += math.radians(delta)
+                    target_deg = math.degrees(target_state.base_angle)
+                    self.animator.start(self.arm_state, target_state)
                     self.terminal.log(
-                        f"Jogged base by {delta:+.2f}° → {math.degrees(self.arm_state.base_angle):.2f}°",
+                        f"Jogged base by {delta:+.2f}° → {target_deg:.2f}°",
                         "info",
                     )
                 elif 1 <= idx <= n:
-                    self.arm_state.planar_angles[idx - 1] += math.radians(delta)
+                    target_state = self.arm_state.copy()
+                    target_state.planar_angles[idx - 1] += math.radians(delta)
+                    target_deg = math.degrees(target_state.planar_angles[idx - 1])
+                    self.animator.start(self.arm_state, target_state)
                     self.terminal.log(
-                        f"Jogged J{idx} by {delta:+.2f}° → {math.degrees(self.arm_state.planar_angles[idx-1]):.2f}°",
+                        f"Jogged J{idx} by {delta:+.2f}° → {target_deg:.2f}°",
                         "info",
                     )
                 else:
                     self.terminal.log(f"JOG: joint index {idx} out of range (0–{n})", "error")
                     return
-                self._render_arm()
 
             elif axis in ("X", "Y", "Z"):
                 # JOG X|Y|Z <dist> — jog IK target
@@ -3967,13 +4393,16 @@ class MainWindow(QMainWindow):
                     self.terminal.log(f"SETJOINT: invalid joint '{axis}'", "error")
                     return
                 if idx == 0:
-                    self.arm_state.base_angle = math.radians(deg)
+                    target_state = self.arm_state.copy()
+                    target_state.base_angle = math.radians(deg)
+                    self.animator.start(self.arm_state, target_state)
                 elif 1 <= idx <= n:
-                    self.arm_state.planar_angles[idx - 1] = math.radians(deg)
+                    target_state = self.arm_state.copy()
+                    target_state.planar_angles[idx - 1] = math.radians(deg)
+                    self.animator.start(self.arm_state, target_state)
                 else:
                     self.terminal.log(f"SETJOINT: index {idx} out of range (0–{n})", "error")
                     return
-                self._render_arm()
                 self.terminal.log(f"J{idx} → {deg:+.2f}°", "info")
             else:
                 self.terminal.log("SETJOINT: usage  SETJOINT J<n> <degrees>", "error")
@@ -4137,7 +4566,47 @@ class MainWindow(QMainWindow):
         elif upper == "LIMITS":
             self.terminal.log("Joint limits:", "info")
             for i, (lo, hi) in enumerate(self.arm_config.joint_limits):
-                self.terminal.log(f"  J{i}: [{math.degrees(lo):.1f}°, {math.degrees(hi):.1f}°]", "info")
+                custom = " *" if i in self._custom_limits else ""
+                self.terminal.log(f"  J{i}: [{math.degrees(lo):.1f}°, {math.degrees(hi):.1f}°]{custom}", "info")
+
+        # ── SETLIMIT ──────────────────────────────────────────────────────
+        elif upper.startswith("SETLIMIT") and len(parts) == 4:
+            try:
+                idx = int(parts[1].lstrip("Jj"))
+                lo_deg = float(parts[2])
+                hi_deg = float(parts[3])
+            except ValueError:
+                self.terminal.log("SETLIMIT: usage  SETLIMIT J<n> <min_deg> <max_deg>", "error")
+                return
+            n = len(self.arm_config.joint_limits)
+            if not (0 <= idx < n):
+                self.terminal.log(f"SETLIMIT: joint {idx} out of range (0–{n-1})", "error")
+                return
+            if lo_deg >= hi_deg:
+                self.terminal.log("SETLIMIT: min must be less than max", "error")
+                return
+            lo_rad, hi_rad = math.radians(lo_deg), math.radians(hi_deg)
+            self._custom_limits[idx] = (lo_rad, hi_rad)
+            limits = list(self.arm_config.joint_limits)
+            limits[idx] = (lo_rad, hi_rad)
+            self.arm_config = ArmConfig(
+                link_lengths=self.arm_config.link_lengths,
+                joint_limits=limits,
+                joint_plane_offsets=self.arm_config.joint_plane_offsets,
+                base_vertical_offset=self.arm_config.base_vertical_offset,
+                joint_lateral_x=self.arm_config.joint_lateral_x,
+                joint_lateral_y=self.arm_config.joint_lateral_y,
+            )
+            self._save_arm_config()
+            self.terminal.log(
+                f"J{idx} limits → [{lo_deg:.1f}°, {hi_deg:.1f}°]  (saved)", "info"
+            )
+
+        # ── RESETLIMITS ───────────────────────────────────────────────────
+        elif upper == "RESETLIMITS":
+            self._custom_limits.clear()
+            self._on_config_changed()
+            self.terminal.log("All joint limits reset to ±170°", "info")
 
         # ── TARGET ────────────────────────────────────────────────────────
         elif upper == "TARGET":

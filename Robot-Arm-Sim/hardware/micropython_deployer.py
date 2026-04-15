@@ -261,10 +261,20 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             f'"gear_ratio": {j.get("gear_ratio", 1.0)}',
         ]
         if driver == "stepdir":
-            parts.append(f'"micro": {j.get("micro", 16)}')
+            parts.append(f'"invert_dir": {str(j.get("invert_dir", False)).lower().capitalize()}')
+            parts.append(f'"dir_setup_us": {int(j.get("dir_setup_us", 5))}')
         parts += [
             f'"max_sps": {j.get("max_sps", 500)}',
             f'"accel": {j.get("accel", 1000)}',
+            f'"jerk": {j.get("jerk", 0)}',
+        ]
+        # Optional homing/limit switch config
+        if "home_pin" in j:
+            parts.append(f'"home_pin": {j.get("home_pin")}')
+            parts.append(f'"home_pin_polarity": "{j.get("home_pin_polarity", "NO")}"')
+            parts.append(f'"home_direction": {j.get("home_direction", 1)}')
+            parts.append(f'"home_speed_sps": {j.get("home_speed_sps", 100)}')
+        parts += [
             f'"zero_offset_deg": {j.get("zero_offset_deg", 0.0)}',
         ]
         lines.append("    {" + ", ".join(parts) + "},")

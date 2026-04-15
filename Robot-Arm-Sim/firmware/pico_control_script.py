@@ -7,9 +7,10 @@ Supports three driver types per joint — mix and match as needed:
               Uses 8-step half-stepping sequence.
               Default steps_per_rev = 4096 (includes internal 64:1 gear).
 
-  "stepdir" — NEMA 17 (or any step/dir motor) with A4988 / DRV8825 / TMC2209
+  "stepdir" — NEMA 17/23 (or any step/dir motor) with A4988 / DRV8825 / TMC2209
               (2 pins: STEP DIR)
-              Default steps_per_rev = 200 (1.8° motor).
+              Set steps_per_rev to match your driver dip-switch (e.g. 800).
+              Optional: "invert_dir": true to flip the DIR pin logic.
 
   "servo"   — Standard RC servo via PWM (1 pin: SIG).
               50 Hz PWM.  Angle maps linearly to pulse width (min_pulse_us–max_pulse_us).
@@ -117,17 +118,17 @@ JOINTS = [
         "zero_offset_deg": 0.0,
     },
 
-    # ── Example: NEMA 17 on GP18/19 (uncomment when you switch hardware)
+    # ── Example: NEMA 17/23 on GP18/19
     # {
     #     "idx": 4,
     #     "name": "Gripper",
     #     "driver": "stepdir",
     #     "pins": [18, 19],           # [STEP, DIR]
-    #     "steps_per_rev": 200,       # 1.8° motor = 200 full steps/rev
+    #     "steps_per_rev": 800,       # match your driver dip-switch setting
     #     "gear_ratio": 1.0,
-    #     "micro": 16,                # microstepping factor on the driver
+    #     "invert_dir": False,        # True = flip DIR pin logic for this axis
     #     "max_sps": 2000,
-    #     "accel": 4000,
+    #     "accel": 1000,
     #     "zero_offset_deg": 0.0,
     # },
 
@@ -179,13 +180,30 @@ class _StepperBase:
         # Output steps per one full output revolution
         self._steps_out = self.steps_per_rev * self.gear_ratio
 
+        # S-curve jerk limit (steps/sec³). 0 = trapezoidal profile (original).
+        # Non-zero smoothly ramps acceleration up/down, reducing resonance and vibration.
+        self.jerk: float = float(cfg.get("jerk", 0))
+
         # Motion state
         self.current_pos: float = 0.0   # steps (logical position — not counting backlash)
         self.target_pos:  float = 0.0
         self.velocity:    float = 0.0   # steps/sec (signed)
+        self._accel_now:  float = 0.0   # current acceleration (S-curve only)
         self._accumulator: float = 0.0  # fractional step accumulator
         self._last_dir: int = 0         # last physical step direction (+1 fwd, -1 bwd)
         self._backlash_debt: int = 0    # physical steps still owed before logical pos resumes
+        self._steps_since_report: int = 0  # physical steps taken since last pin_debug call
+
+        # Home/limit switch support (optional, can be used by both 28BYJ and StepDir)
+        home_pin_num = cfg.get("home_pin")
+        if home_pin_num is not None:
+            self._home_pin = Pin(home_pin_num, Pin.IN, pull=Pin.PULL_UP)
+            self.home_pin_polarity = cfg.get("home_pin_polarity", "NO")  # "NO"=active-high, "NC"=active-low
+        else:
+            self._home_pin = None
+        self.home_direction = cfg.get("home_direction", 1)  # +1 or -1 to seek home
+        self.home_speed_sps = cfg.get("home_speed_sps", 100)  # slow approach speed
+        self.at_home = False  # state flag: True when home switch is active
 
     def angle_to_steps(self, angle_deg: float) -> float:
         return (angle_deg - self.zero_offset) / 360.0 * self._steps_out
@@ -196,34 +214,75 @@ class _StepperBase:
         self.target_pos = self.angle_to_steps(angle_deg + self.gravity_offset)
 
     def update(self, dt: float) -> None:
-        """Advance trapezoidal velocity profile and emit at most 1 step per call.
+        """Advance velocity profile and emit at most 1 step per call.
+
+        When jerk == 0: trapezoidal profile (instant accel change — original behaviour).
+        When jerk  > 0: S-curve profile — acceleration itself ramps up/down at the
+        configured jerk rate (steps/sec³), eliminating the sharp kick at move start/end
+        that causes resonance and vibration in open-loop stepper motors.
 
         Backlash compensation: when direction reverses, the first backlash_steps
-        physical steps are taken without advancing the logical position.  This
-        accounts for the gear mesh dead-zone where the output shaft does not move
-        while the motor reverses through the backlash gap.
+        physical steps are taken without advancing the logical position.
 
-        Gravity offset: set_target_angle() adds gravity_offset_deg to the target,
-        so the motor always aims slightly past the commanded angle to counteract
-        the load that gravity applies once the coils are de-energised.
+        Gravity offset: set_target_angle() adds gravity_offset_deg to the target.
         """
+        # Check limit/home switches if configured
+        if hasattr(self, '_home_pin') and self._home_pin is not None:
+            # Active state depends on polarity: "NO" = active-high, "NC" = active-low
+            pin_state = self._home_pin.value()
+            home_active = (pin_state == 0) if self.home_pin_polarity == "NC" else (pin_state == 1)
+
+            if home_active:
+                self.at_home = True
+                self.velocity = 0.0  # stop immediately
+                self._accumulator = 0.0
+                self._accel_now = 0.0
+                self.current_pos = 0.0  # zero position at home
+                return
+            else:
+                self.at_home = False
+
         error = self.target_pos - self.current_pos
         if abs(error) < 0.5:
             self.velocity = 0.0
             self._accumulator = 0.0
+            self._accel_now = 0.0
             return
 
         direction = 1 if error > 0 else -1
-        brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
 
-        if direction * self.velocity < 0:
-            self.velocity = self.velocity + direction * self.accel * dt
-        elif abs(error) <= brake_steps:
-            new_v = self.velocity - direction * self.accel * dt
-            self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
-        else:
-            new_v = self.velocity + direction * self.accel * dt
+        if self.jerk > 0:
+            # ── S-curve profile ───────────────────────────────────────────────
+            # Braking distance: trapezoidal component + extra ramp-down margin.
+            # Extra ≈ v * (accel / jerk) — time needed to bleed off acceleration.
+            spd = abs(self.velocity)
+            extra = spd * (self.accel / (self.jerk + 1e-9))
+            brake_steps = spd * spd / (2.0 * self.accel + 1e-9) + extra
+
+            if direction * self.velocity < 0:
+                target_a = direction * self.accel       # wrong way — brake hard
+            elif abs(error) <= brake_steps:
+                target_a = -direction * self.accel      # braking zone
+            else:
+                target_a = direction * self.accel       # free acceleration
+
+            # Smoothly ramp current acceleration toward target at jerk rate
+            max_da = self.jerk * dt
+            diff = target_a - self._accel_now
+            self._accel_now += max(-max_da, min(max_da, diff))
+            new_v = self.velocity + self._accel_now * dt
             self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+        else:
+            # ── Trapezoidal profile (original) ────────────────────────────────
+            brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
+            if direction * self.velocity < 0:
+                self.velocity = self.velocity + direction * self.accel * dt
+            elif abs(error) <= brake_steps:
+                new_v = self.velocity - direction * self.accel * dt
+                self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
+            else:
+                new_v = self.velocity + direction * self.accel * dt
+                self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
 
         # Accumulate fractional steps; take at most 1 physical step per call
         self._accumulator += self.velocity * dt
@@ -238,6 +297,7 @@ class _StepperBase:
             else:
                 self.current_pos += 1.0
             self._step(1, forward=True)
+            self._steps_since_report += 1
             self._last_dir = 1
         elif self._accumulator <= -1.0:
             self._accumulator += 1.0
@@ -248,6 +308,7 @@ class _StepperBase:
             else:
                 self.current_pos -= 1.0
             self._step(1, forward=False)
+            self._steps_since_report += 1
             self._last_dir = -1
 
     def _step(self, count: int, forward: bool) -> None:
@@ -266,6 +327,7 @@ class StepperAxis28BYJ(_StepperBase):
         pins = cfg["pins"]   # [IN1, IN2, IN3, IN4]
         if len(pins) != 4:
             raise ValueError(f"28byj driver needs 4 pins, got {pins}")
+        self._pin_nums = pins
         self._pins = [Pin(p, Pin.OUT, value=0) for p in pins]
         self._seq_idx = 0    # current position in _HALFSTEP table
 
@@ -284,6 +346,14 @@ class StepperAxis28BYJ(_StepperBase):
         for pin in self._pins:
             pin.value(0)
 
+    def get_pin_debug(self) -> str:
+        coils = "".join(str(p.value()) for p in self._pins)
+        labels = ["IN1", "IN2", "IN3", "IN4"]
+        pairs = " ".join("GP{}({})={}".format(n, lbl, p.value())
+                         for n, lbl, p in zip(self._pin_nums, labels, self._pins))
+        n = self._steps_since_report; self._steps_since_report = 0
+        return "{} sps~{}".format(pairs, n)
+
 
 # ---------------------------------------------------------------------------
 # NEMA 17 (step/dir) axis
@@ -297,19 +367,35 @@ class StepperAxisStepDir(_StepperBase):
         pins = cfg["pins"]   # [STEP, DIR]
         if len(pins) < 2:
             raise ValueError(f"stepdir driver needs 2 pins, got {pins}")
+        self._step_pin_num = pins[0]
+        self._dir_pin_num  = pins[1]
         self._step_pin = Pin(pins[0], Pin.OUT, value=0)
         self._dir_pin  = Pin(pins[1], Pin.OUT, value=0)
-        self.micro = cfg.get("micro", 1)
-        # Re-compute steps_out with microstepping factor
-        self._steps_out = self.steps_per_rev * self.gear_ratio * self.micro
+        # steps_per_rev already encodes the driver dip-switch resolution (e.g. 800)
+        # no microstepping multiplier needed — set steps_per_rev to match the driver
+        self.invert_dir    = cfg.get("invert_dir", False)
+        self.dir_setup_us  = int(cfg.get("dir_setup_us", 5))
+        self._last_phys_dir: int = -1   # sentinel — unknown until first step
 
     def _step(self, count: int, forward: bool) -> None:
-        self._dir_pin.value(1 if forward else 0)
+        physical_forward = (not forward) if self.invert_dir else forward
+        phys_dir = 1 if physical_forward else 0
+        self._dir_pin.value(phys_dir)
+        if phys_dir != self._last_phys_dir and self.dir_setup_us > 0:
+            time.sleep_us(self.dir_setup_us)
+        self._last_phys_dir = phys_dir
         for _ in range(count):
             self._step_pin.value(1)
             time.sleep_us(2)
             self._step_pin.value(0)
             time.sleep_us(2)
+
+    def get_pin_debug(self) -> str:
+        n = self._steps_since_report; self._steps_since_report = 0
+        return "GP{}(STEP)=0* GP{}(DIR)={} sps~{}".format(
+            self._step_pin_num, self._dir_pin_num,
+            self._dir_pin.value(), n
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +424,8 @@ class ServoAxis:
         pins = cfg.get("pins", [])
         if not pins:
             raise ValueError(f"servo joint {cfg.get('idx')} needs at least 1 pin")
-        self._pwm = PWM(Pin(pins[0]))
+        self._pin_num = pins[0]
+        self._pwm = PWM(Pin(self._pin_num))
         self._pwm.freq(50)   # standard 50 Hz servo signal
 
     def set_target_angle(self, angle_deg: float) -> None:
@@ -369,6 +456,9 @@ class ServoAxis:
 
     def deenergise(self) -> None:
         pass   # servos hold position without coil heating — nothing to cut
+
+    def get_pin_debug(self) -> str:
+        return "GP{}(SIG)=PWM".format(self._pin_num if hasattr(self, "_pin_num") else "?")
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +661,18 @@ def main():
     idle_ticks = 0
     dt = STEP_US * 1e-6   # fixed dt — loop runs at exactly STEP_US period
 
+    # Position stream state
+    _pos_stream_enabled = False
+    _last_reply_fn = sys.stdout.write   # track which transport to push POS data to
+    _pos_stream_last_ms = time.ticks_ms()
+
+    # Pin debug stream state
+    _pin_stream_enabled = False
+    _pin_stream_last_ms = time.ticks_ms()
+
+    # Homing state
+    _homing_active = False
+
     # Non-blocking poll — avoids sys.stdin.read(1) blocking the whole loop
     _poller = select.poll()
     _poller.register(sys.stdin, select.POLLIN)
@@ -591,7 +693,8 @@ def main():
         # ── 2. Serial + WiFi command processing ─────────────────────────────
         # Helper: dispatch one parsed command line, send response to `reply_fn`
         def _handle_line(line, reply_fn):
-            nonlocal idle_ticks
+            nonlocal idle_ticks, _pos_stream_enabled, _last_reply_fn, _pin_stream_enabled, _homing_active
+            _last_reply_fn = reply_fn   # track active transport for position push
             if line == "PING":
                 reply_fn("Robot Arm Pico Controller ready\n")
                 reply_fn("firmware ready\n")
@@ -602,6 +705,25 @@ def main():
                 reply_fn("Rebooting...\n")
                 time.sleep(0.1)
                 import machine as _m; _m.reset()
+            elif line == "POS_STREAM_ON":
+                _pos_stream_enabled = True
+                reply_fn("OK\n")
+            elif line == "POS_STREAM_OFF":
+                _pos_stream_enabled = False
+                reply_fn("OK\n")
+            elif line == "PIN_STREAM_ON":
+                _pin_stream_enabled = True
+                reply_fn("OK\n")
+            elif line == "PIN_STREAM_OFF":
+                _pin_stream_enabled = False
+                reply_fn("OK\n")
+            elif line == "HOME":
+                # Initiate homing sequence: move all axes toward home (target angle 0.0)
+                for axis in axes:
+                    axis.set_target_angle(0.0)
+                _homing_active = True
+                idle_ticks = 0
+                reply_fn("HOMING\n")
             else:
                 cmd = parse_command(line)
                 if cmd is not None:
@@ -639,6 +761,45 @@ def main():
         while _wifi_rx:
             line = _wifi_rx.pop(0)
             _handle_line(line, _wifi_tx.append)
+
+        # ── 3. 1 Hz position push (only when POS_STREAM_ON received) ───────────
+        now_ms = time.ticks_ms()
+        if _pos_stream_enabled and time.ticks_diff(now_ms, _pos_stream_last_ms) >= 1000:
+            _pos_stream_last_ms = now_ms
+            parts = []
+            for ax in axes:
+                if hasattr(ax, "current_pos") and hasattr(ax, "_steps_out") and ax._steps_out > 0:
+                    angle_deg = ax.current_pos / ax._steps_out * 360.0 + ax.zero_offset
+                else:
+                    angle_deg = 0.0
+                parts.append("J{}:{:.2f}".format(ax.idx, angle_deg))
+            _last_reply_fn("POS:" + ",".join(parts) + "\n")
+
+        # ── 3b. 1 Hz pin debug stream ────────────────────────────────────────
+        if _pin_stream_enabled and time.ticks_diff(now_ms, _pin_stream_last_ms) >= 1000:
+            _pin_stream_last_ms = now_ms
+            parts = []
+            for ax in axes:
+                # Include limit switch status if homing is configured
+                limit_status = ""
+                if hasattr(ax, '_home_pin') and ax._home_pin is not None:
+                    limit_status = " LIMIT:{}".format("home" if ax.at_home else "none")
+                if hasattr(ax, "get_pin_debug"):
+                    parts.append("J{}: {}{}".format(ax.idx, ax.get_pin_debug(), limit_status))
+            _last_reply_fn("PINS: " + "  |  ".join(parts) + "\n")
+
+        # ── 3c. Check homing completion ──────────────────────────────────────
+        if _homing_active:
+            # Check if all axes with home switches have reached home
+            all_at_home = True
+            for ax in axes:
+                if hasattr(ax, '_home_pin') and ax._home_pin is not None:
+                    if not ax.at_home:
+                        all_at_home = False
+                        break
+            if all_at_home:
+                _homing_active = False
+                _last_reply_fn("HOMING_COMPLETE\n")
 
         # ── 4. De-energise coils after ~2 s of idleness ─────────────────────
         if not any_moving:

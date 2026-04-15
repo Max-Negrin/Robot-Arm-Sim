@@ -27,14 +27,21 @@ class AnimationStatus(Enum):
 
 def smoothstep(t: float) -> float:
     """
-    Cubic smoothstep: s = 3t² − 2t³
+    Asymmetric ease: fast acceleration, extended deceleration tail.
 
-    Properties:
+    Achieved by applying a power warp (t^0.8) before quintic smootherstep.
+    At t=0.5 (halfway through time), the arm is ~63% done; the last 37%
+    of displacement is spread over the remaining 50% of time, giving a
+    long, gradual deceleration that matches the perceived ease-in.
+
+    Properties (preserved by the warp):
     - s(0) = 0, s(1) = 1
-    - s'(0) = 0, s'(1) = 0  (zero velocity at endpoints)
+    - s'(0) = 0, s'(1) = 0   (zero velocity at endpoints)
+    - s''(0) = 0, s''(1) = 0  (zero acceleration at endpoints)
     """
     t = max(0.0, min(1.0, t))
-    return t * t * (3.0 - 2.0 * t)
+    t = t ** 0.8  # bias: fast ease-in, long ease-out
+    return t * t * t * (t * (6.0 * t - 15.0) + 10.0)
 
 
 def lerp_angle(a: float, b: float, t: float) -> float:
@@ -79,9 +86,9 @@ class Animator:
     """
 
     # Seconds of animation per radian of maximum joint displacement
-    SECONDS_PER_RADIAN = 1.5
-    MIN_DURATION = 0.5
-    MAX_DURATION = 5.0
+    SECONDS_PER_RADIAN = 2.0
+    MIN_DURATION = 1.0
+    MAX_DURATION = 6.0
 
     def __init__(self) -> None:
         self._start: Optional[ArmState] = None
