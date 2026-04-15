@@ -229,38 +229,53 @@ class _StepperBase:
         Gravity offset: set_target_angle() adds gravity_offset_deg to the target.
         """
         # Check limit/home switches if configured
+        _run_profiler = True  # set False to bypass velocity profiler (homing mode)
         if hasattr(self, '_home_pin') and self._home_pin is not None:
             # Active state depends on polarity: "NO" = active-low, "NC" = active-high
             pin_state = self._home_pin.value()
             home_active = (pin_state == 1) if self.home_pin_polarity == "NC" else (pin_state == 0)
 
-            # Handle homing state machine
-            if hasattr(self, '_homing_mode') and self._homing_mode:
-                if home_active:
-                    stage = getattr(self, '_homing_stage', 'approach')
-                    if stage == "approach":
-                        # First contact - back off for precision
+            if self._homing_mode:
+                # Homing state machine — sets velocity directly, profiler is bypassed
+                _run_profiler = False
+                stage = self._homing_stage
+
+                if stage == "approach":
+                    if home_active:
+                        # First contact — start backing off
                         self._homing_stage = "backup"
-                        backup_distance = 5  # steps to back off
-                        self.target_pos = self.current_pos - backup_distance * self.home_direction
-                        self.velocity = -self.home_direction * self.home_speed_sps * 0.5  # half speed backing off
-                    elif stage == "backup":
-                        # Now approach slowly for precision
+                        self._homing_backup_steps = max(10, int(self.home_speed_sps * 0.3))
+                        self._homing_backup_count = 0
+                        self.velocity = self.home_speed_sps * -self.home_direction
+                    else:
+                        # Moving toward switch at 2x speed
+                        self.velocity = self.home_speed_sps * 2 * self.home_direction
+
+                elif stage == "backup":
+                    self._homing_backup_count += 1
+                    if self._homing_backup_count >= self._homing_backup_steps:
+                        # Done backing off — switch to slow precision approach
                         self._homing_stage = "precision"
-                        self.velocity = self.home_direction * self.home_speed_sps * 0.3  # slow approach
-                    elif stage == "precision":
-                        # Final home - stop and zero position
+                        self.velocity = self.home_speed_sps * self.home_direction
+                    else:
+                        self.velocity = self.home_speed_sps * -self.home_direction
+
+                elif stage == "precision":
+                    if home_active:
+                        # Final contact — zero position and finish
                         self.at_home = True
                         self._homing_mode = False
+                        self._homing_stage = "approach"
                         self.velocity = 0.0
                         self._accumulator = 0.0
                         self._accel_now = 0.0
                         self.current_pos = 0.0
                         return
-                else:
-                    self.at_home = False
+                    else:
+                        self.velocity = self.home_speed_sps * self.home_direction
+
             else:
-                # Not in homing mode
+                # Not in homing mode — safety stop if limit is hit during normal motion
                 if home_active:
                     self.at_home = True
                     self.velocity = 0.0
@@ -271,47 +286,45 @@ class _StepperBase:
                 else:
                     self.at_home = False
 
-        error = self.target_pos - self.current_pos
-        if abs(error) < 0.5:
-            self.velocity = 0.0
-            self._accumulator = 0.0
-            self._accel_now = 0.0
-            return
+        if _run_profiler:
+            error = self.target_pos - self.current_pos
+            if abs(error) < 0.5:
+                self.velocity = 0.0
+                self._accumulator = 0.0
+                self._accel_now = 0.0
+                return
 
-        direction = 1 if error > 0 else -1
+            direction = 1 if error > 0 else -1
 
-        if self.jerk > 0:
-            # ── S-curve profile ───────────────────────────────────────────────
-            # Braking distance: trapezoidal component + extra ramp-down margin.
-            # Extra ≈ v * (accel / jerk) — time needed to bleed off acceleration.
-            spd = abs(self.velocity)
-            extra = spd * (self.accel / (self.jerk + 1e-9))
-            brake_steps = spd * spd / (2.0 * self.accel + 1e-9) + extra
+            if self.jerk > 0:
+                # ── S-curve profile ───────────────────────────────────────────────
+                spd = abs(self.velocity)
+                extra = spd * (self.accel / (self.jerk + 1e-9))
+                brake_steps = spd * spd / (2.0 * self.accel + 1e-9) + extra
 
-            if direction * self.velocity < 0:
-                target_a = direction * self.accel       # wrong way — brake hard
-            elif abs(error) <= brake_steps:
-                target_a = -direction * self.accel      # braking zone
-            else:
-                target_a = direction * self.accel       # free acceleration
+                if direction * self.velocity < 0:
+                    target_a = direction * self.accel
+                elif abs(error) <= brake_steps:
+                    target_a = -direction * self.accel
+                else:
+                    target_a = direction * self.accel
 
-            # Smoothly ramp current acceleration toward target at jerk rate
-            max_da = self.jerk * dt
-            diff = target_a - self._accel_now
-            self._accel_now += max(-max_da, min(max_da, diff))
-            new_v = self.velocity + self._accel_now * dt
-            self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
-        else:
-            # ── Trapezoidal profile (original) ────────────────────────────────
-            brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
-            if direction * self.velocity < 0:
-                self.velocity = self.velocity + direction * self.accel * dt
-            elif abs(error) <= brake_steps:
-                new_v = self.velocity - direction * self.accel * dt
-                self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
-            else:
-                new_v = self.velocity + direction * self.accel * dt
+                max_da = self.jerk * dt
+                diff = target_a - self._accel_now
+                self._accel_now += max(-max_da, min(max_da, diff))
+                new_v = self.velocity + self._accel_now * dt
                 self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+            else:
+                # ── Trapezoidal profile ────────────────────────────────────────
+                brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
+                if direction * self.velocity < 0:
+                    self.velocity = self.velocity + direction * self.accel * dt
+                elif abs(error) <= brake_steps:
+                    new_v = self.velocity - direction * self.accel * dt
+                    self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
+                else:
+                    new_v = self.velocity + direction * self.accel * dt
+                    self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
 
         # Accumulate fractional steps; take at most 1 physical step per call
         self._accumulator += self.velocity * dt
