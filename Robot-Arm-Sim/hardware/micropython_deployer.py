@@ -194,31 +194,41 @@ def _deploy_via_serial_repl_text(port: str, script_text: str,
             )
         _prog("[2/4] Raw REPL entered")
 
-        # --- Step 3: write the file in 128-byte hex chunks ---
-        # Using hex avoids all repr/escape issues with arbitrary byte values.
-        # Each raw REPL exec is small enough to compile without memory pressure.
+        # --- Step 3: write the file in 512-byte hex chunks ---
+        # Larger chunks mean fewer REPL round-trips (each round-trip is ~30ms
+        # at 115200 baud + Pico processing time).  512 bytes = 1024 hex chars
+        # per command — well within MicroPython's raw REPL compile limits.
+        # The file is opened once and kept open across all writes to eliminate
+        # flash filesystem open/close overhead on every chunk.
         script_bytes = script_text.encode("utf-8")
-        CHUNK = 128
+        CHUNK = 512
         total = len(script_bytes)
         n_chunks = (total + CHUNK - 1) // CHUNK
         _prog(f"[3/4] Writing firmware: {total} bytes in {n_chunks} chunks...")
         logger.info("Writing %d bytes in %d chunks", total, n_chunks)
 
+        # Open file once
+        resp = _raw_exec("f = open('main.py', 'wb')")
+        if b"Error" in resp or b"Traceback" in resp:
+            return False, f"ERROR: Could not open main.py for writing\nCAUSE: {resp[:200]!r}"
+
         for i in range(0, total, CHUNK):
             chunk = script_bytes[i : i + CHUNK]
             hex_str = chunk.hex()
-            mode = "wb" if i == 0 else "ab"
-            cmd = f"f=open('main.py','{mode}');f.write(bytes.fromhex('{hex_str}'));f.close()"
+            cmd = f"f.write(bytes.fromhex('{hex_str}'))"
             resp = _raw_exec(cmd)
             if b"Error" in resp or b"Traceback" in resp:
+                _raw_exec("f.close()")   # best-effort cleanup
                 return False, (
                     f"ERROR: Write failed at byte {i}\n"
                     f"CAUSE: {resp[:200]!r}"
                 )
             chunk_num = i // CHUNK + 1
-            if chunk_num % 10 == 0 or chunk_num == n_chunks:
+            if chunk_num % 5 == 0 or chunk_num == n_chunks:
                 _prog(f"[3/4] chunk {chunk_num}/{n_chunks}...")
 
+        # Close file once
+        _raw_exec("f.close()")
         _prog(f"[3/4] All {n_chunks} chunks written OK")
         logger.info("File write complete")
 
@@ -267,6 +277,8 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             f'"max_sps": {j.get("max_sps", 500)}',
             f'"accel": {j.get("accel", 1000)}',
             f'"jerk": {j.get("jerk", 0)}',
+            # gravity_offset_deg is applied by the PC before sending angles;
+            # it is NOT injected into the firmware JOINTS block.
         ]
         # Optional homing/limit switch config
         if "home_pin" in j:
@@ -274,6 +286,12 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             parts.append(f'"home_pin_polarity": "{j.get("home_pin_polarity", "NO")}"')
             parts.append(f'"home_direction": {j.get("home_direction", 1)}')
             parts.append(f'"home_speed_sps": {j.get("home_speed_sps", 100)}')
+            if j.get("home_offset_deg", 0.0) != 0.0:
+                parts.append(f'"home_offset_deg": {j.get("home_offset_deg")}')
+        # Software travel limits
+        if j.get("limits_enabled", False):
+            parts.append(f'"limit_min_deg": {j.get("limit_min_deg", -180.0)}')
+            parts.append(f'"limit_max_deg": {j.get("limit_max_deg", 180.0)}')
         parts += [
             f'"zero_offset_deg": {j.get("zero_offset_deg", 0.0)}',
         ]
@@ -346,7 +364,9 @@ def _deploy_via_wifi(host: str, port: int, firmware_text: str,
             progress_cb(msg)
         logger.info(msg)
 
-    CHUNK = 128
+    # 1024-byte chunks: 8× fewer ACK round-trips than the old 128-byte default.
+    # At LAN WiFi latency (~5 ms), that alone saves ~0.5 s per 15 KB upload.
+    CHUNK = 1024
 
     _prog(f"WiFi deploy: connecting to {host}:{port}...")
     try:
@@ -364,18 +384,23 @@ def _deploy_via_wifi(host: str, port: int, firmware_text: str,
         total = len(script_bytes)
         n_chunks = (total + CHUNK - 1) // CHUNK
 
+        # Buffered line reader — reads up to 4 KB at a time instead of 1 byte,
+        # dramatically reducing syscall overhead for each ACK response.
+        _rx_buf = b""
+
         def _readline(timeout=15.0):
-            """Read one \\n-terminated line from sock."""
-            buf = b""
+            """Read one \\n-terminated line from sock (buffered)."""
+            nonlocal _rx_buf
             import time as _time
             deadline = _time.monotonic() + timeout
             while _time.monotonic() < deadline:
+                if b"\n" in _rx_buf:
+                    line, _rx_buf = _rx_buf.split(b"\n", 1)
+                    return line.decode("utf-8", "replace").strip()
                 try:
-                    b = sock.recv(1)
-                    if b:
-                        buf += b
-                        if buf.endswith(b"\n"):
-                            return buf.decode("utf-8", "replace").strip()
+                    data = sock.recv(4096)
+                    if data:
+                        _rx_buf += data
                 except Exception:
                     break
             return ""
@@ -476,28 +501,11 @@ class MicroPythonDeployer:
             _prog(f"Injected WiFi config: SSID={wifi_ssid!r}, port={wifi_port}")
             logger.info("Injected WiFi config: SSID=%r port=%d", wifi_ssid, wifi_port)
 
-        # Write patched firmware to a temp file for upload
-        import tempfile
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        )
-        tmp.write(firmware_text)
-        tmp.close()
-        patched_path = tmp.name
-
-        try:
-            # Use raw serial REPL — reliable, no external tools needed, same
-            # method that successfully deployed the blink test firmware.
-            _prog("Deploying via raw serial REPL...")
-            ok, msg = _deploy_via_serial_repl_text(port, firmware_text, progress_cb=progress_cb)
-            if ok:
-                return True, msg
-        finally:
-            try:
-                import os as _os
-                _os.unlink(patched_path)
-            except Exception:
-                pass
+        # Deploy via raw serial REPL (no external tools needed)
+        _prog("Deploying via raw serial REPL...")
+        ok, msg = _deploy_via_serial_repl_text(port, firmware_text, progress_cb=progress_cb)
+        if ok:
+            return True, msg
 
         full_msg = (
             f"ERROR: Deployment failed\n"

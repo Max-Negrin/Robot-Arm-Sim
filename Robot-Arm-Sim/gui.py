@@ -1588,6 +1588,15 @@ class MotorConfigPanel(QGroupBox):
             result.append(cfg)
         return result
 
+    def get_gravity_offsets(self) -> dict[int, float]:
+        """Return {joint_idx: gravity_offset_deg} — fast lookup for hardware angle commands."""
+        result = {}
+        for r in self._rows:
+            widget = r.get("gravity_offset")
+            if widget is not None:
+                result[r["index"]] = widget.value()
+        return result
+
     # ── Persistence ────────────────────────────────────────────────────────
 
     def _config_path(self) -> str:
@@ -1730,11 +1739,16 @@ class HomingPanel(QGroupBox):
             "polarity": QComboBox(),
             "direction": QComboBox(),
             "speed": QSpinBox(),
+            "home_offset": QDoubleSpinBox(),
+            "limits_enabled": QCheckBox("Enable software limits"),
+            "limit_min": QDoubleSpinBox(),
+            "limit_max": QDoubleSpinBox(),
+            "post_home_cmds": QLineEdit(),
         }
 
         row["home_pin"].setRange(0, 28)
-        row["home_pin"].setValue(20 + idx)  # Start from GP20
-        row["home_pin"].setToolTip("GPIO pin for home switch (or -1 to disable)")
+        row["home_pin"].setValue(20 + idx)
+        row["home_pin"].setToolTip("GPIO pin for home switch")
         row["home_pin"].valueChanged.connect(self._on_changed)
 
         row["polarity"].addItems(["NO (active-high)", "NC (active-low)"])
@@ -1744,10 +1758,47 @@ class HomingPanel(QGroupBox):
         row["direction"].currentIndexChanged.connect(self._on_changed)
 
         row["speed"].setRange(1, 5000)
-        row["speed"].setValue(5)  # default extremely slow approach speed for safety - prevents damage
+        row["speed"].setValue(5)
         row["speed"].setSuffix(" sps")
-        row["speed"].setToolTip("Homing approach speed (steps/sec) - use very low speeds (5-10 sps)")
+        row["speed"].setToolTip("Homing approach speed — use low values (5-20 sps) to avoid damage")
         row["speed"].valueChanged.connect(self._on_changed)
+
+        row["home_offset"].setRange(-3600.0, 3600.0)
+        row["home_offset"].setValue(0.0)
+        row["home_offset"].setSuffix(" °")
+        row["home_offset"].setSingleStep(1.0)
+        row["home_offset"].setDecimals(1)
+        row["home_offset"].setToolTip("After touching off, move this many degrees away from the switch")
+        row["home_offset"].valueChanged.connect(self._on_changed)
+
+        row["limits_enabled"].setChecked(False)
+        row["limits_enabled"].toggled.connect(self._on_limits_toggled)
+        row["limits_enabled"].toggled.connect(self._on_changed)
+
+        row["limit_min"].setRange(-3600.0, 3600.0)
+        row["limit_min"].setValue(-180.0)
+        row["limit_min"].setSuffix(" °")
+        row["limit_min"].setSingleStep(5.0)
+        row["limit_min"].setDecimals(1)
+        row["limit_min"].setEnabled(False)
+        row["limit_min"].setToolTip("Minimum allowed joint angle (degrees from home)")
+        row["limit_min"].valueChanged.connect(self._on_changed)
+
+        row["limit_max"].setRange(-3600.0, 3600.0)
+        row["limit_max"].setValue(180.0)
+        row["limit_max"].setSuffix(" °")
+        row["limit_max"].setSingleStep(5.0)
+        row["limit_max"].setDecimals(1)
+        row["limit_max"].setEnabled(False)
+        row["limit_max"].setToolTip("Maximum allowed joint angle (degrees from home)")
+        row["limit_max"].valueChanged.connect(self._on_changed)
+
+        row["post_home_cmds"].setPlaceholderText("e.g.  SETJOINT J0 0; JOG J0 5")
+        row["post_home_cmds"].setToolTip(
+            "Semicolon-separated terminal commands to run after this joint homes.\n"
+            "Same syntax as the terminal. Executed in order when HOMING_COMPLETE is received."
+        )
+        row["post_home_cmds"].textChanged.connect(self._on_changed)
 
         # Layout
         layout = QFormLayout()
@@ -1756,12 +1807,25 @@ class HomingPanel(QGroupBox):
         layout.addRow("Polarity:", row["polarity"])
         layout.addRow("Direction:", row["direction"])
         layout.addRow("Speed (sps):", row["speed"])
+        layout.addRow("Return Offset:", row["home_offset"])
+        layout.addRow("", row["limits_enabled"])
+        layout.addRow("Min Limit:", row["limit_min"])
+        layout.addRow("Max Limit:", row["limit_max"])
+        layout.addRow("Post-Home:", row["post_home_cmds"])
 
         group = QGroupBox()
         group.setLayout(layout)
         self._scroll_layout.addWidget(group)
 
         return row
+
+    def _on_limits_toggled(self, enabled: bool) -> None:
+        """Enable/disable min/max spinboxes based on the limits checkbox."""
+        for row in self._rows:
+            if row["limits_enabled"] is self.sender():
+                row["limit_min"].setEnabled(enabled)
+                row["limit_max"].setEnabled(enabled)
+                break
 
     def _on_changed(self) -> None:
         """Signal that homing config changed."""
@@ -1776,6 +1840,7 @@ class HomingPanel(QGroupBox):
             # Direction: index 0 → +1, 1 → -1
             direction = 1 if row["direction"].currentIndex() == 0 else -1
 
+            limits_on = row["limits_enabled"].isChecked()
             configs.append({
                 "idx": row["idx"],
                 "name": row["name"],
@@ -1783,6 +1848,11 @@ class HomingPanel(QGroupBox):
                 "home_pin_polarity": polarity,
                 "home_direction": direction,
                 "home_speed_sps": row["speed"].value(),
+                "home_offset_deg": row["home_offset"].value(),
+                "limits_enabled": limits_on,
+                "limit_min_deg": row["limit_min"].value(),
+                "limit_max_deg": row["limit_max"].value(),
+                "post_home_cmds": row["post_home_cmds"].text().strip(),
             })
         return configs
 
@@ -1811,6 +1881,29 @@ class HomingPanel(QGroupBox):
             row["speed"].blockSignals(True)
             row["speed"].setValue(config.get("home_speed_sps", 5))
             row["speed"].blockSignals(False)
+
+            row["home_offset"].blockSignals(True)
+            row["home_offset"].setValue(config.get("home_offset_deg", 0.0))
+            row["home_offset"].blockSignals(False)
+
+            limits_on = config.get("limits_enabled", False)
+            row["limits_enabled"].blockSignals(True)
+            row["limits_enabled"].setChecked(limits_on)
+            row["limits_enabled"].blockSignals(False)
+            row["limit_min"].setEnabled(limits_on)
+            row["limit_max"].setEnabled(limits_on)
+
+            row["limit_min"].blockSignals(True)
+            row["limit_min"].setValue(config.get("limit_min_deg", -180.0))
+            row["limit_min"].blockSignals(False)
+
+            row["limit_max"].blockSignals(True)
+            row["limit_max"].setValue(config.get("limit_max_deg", 180.0))
+            row["limit_max"].blockSignals(False)
+
+            row["post_home_cmds"].blockSignals(True)
+            row["post_home_cmds"].setText(config.get("post_home_cmds", ""))
+            row["post_home_cmds"].blockSignals(False)
 
 
 class HardwarePanel(QGroupBox):
@@ -2703,6 +2796,7 @@ class MainWindow(QMainWindow):
         self._homing_limit_status: dict[int, bool] = {}  # joint idx → has hit limit
         self._homing_configs: list[dict] = []  # homing config per joint
         self._homing_single_joint: bool = False  # flag for single-joint homing
+        self._homing_joint_indices: list[int] = []  # joints currently being homed
         self._homing_param_overrides: dict[int, dict] = {}  # permanent parameter overrides per joint
 
         # Limit switch monitoring
@@ -3654,46 +3748,32 @@ class MainWindow(QMainWindow):
     # ── Homing Sequence ────────────────────────────────────────────────
 
     def _on_home_all_requested(self) -> None:
-        """Start homing sequence: move all joints toward their limit switches."""
+        """Start firmware homing sequence for all joints that have home switches."""
         if self._hardware is None or not self._hardware.is_connected:
             self.hardware_panel.log_lbl.setText("ERROR: Not connected to hardware")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
             return
 
-        # Get homing config for all joints
         self._homing_configs = self.homing_panel.get_homing_configs()
-
-        # Count joints that have home switches configured (home_pin >= 0)
         joints_with_home = [cfg for cfg in self._homing_configs if cfg.get("home_pin", -1) >= 0]
         if not joints_with_home:
             self.hardware_panel.log_lbl.setText("ERROR: No home switches configured")
             self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
             return
 
-        # Start homing sequence
         self._homing_active = True
         self._homing_start_time = time.monotonic()
         self._homing_limit_status = {cfg["idx"]: False for cfg in joints_with_home}
+        self._homing_single_joint = False
+        self._homing_joint_indices = [cfg["idx"] for cfg in joints_with_home]
 
         self.hardware_panel.log_lbl.setText("Homing in progress...")
         self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
         self.hardware_panel.home_all_btn.setEnabled(False)
 
-        # Enable PIN_STREAM to monitor limit switches
         self._hardware.send_raw("PIN_STREAM_ON\n")
-
-        # Send move command in homing direction (large angle to keep moving until limit hit)
-        angles_cmd_parts = []
-        for cfg in joints_with_home:
-            direction = cfg["home_direction"]
-            # Move 180 degrees in the homing direction (will stop when limit is hit)
-            target_angle = 180.0 if direction > 0 else -180.0
-            angles_cmd_parts.append(f"J{cfg['idx']}:{target_angle}")
-
-        angles_cmd = ",".join(angles_cmd_parts)
-        self._hardware.send_raw(f"{angles_cmd}\n")
-
-        self.terminal.log(f"HOME ALL: {angles_cmd}", "tx")
+        self._hardware.send_raw("HOME\n")
+        self.terminal.log("HOME ALL → firmware HOME", "tx")
 
     def _on_home_joint_requested(self, j_idx: int, direction_override: Optional[int] = None, speed_override: Optional[int] = None, is_permanent: bool = False) -> None:
         """Start homing sequence for a single joint with optional parameter overrides.
@@ -3721,66 +3801,38 @@ class MainWindow(QMainWindow):
             self.terminal.log(f"ERROR: Joint {j_idx} has no home switch configured", "error")
             return
 
-        # Handle permanent overrides
+        # Permanent override: update HomingPanel widget so it persists to config
         if is_permanent and (direction_override is not None or speed_override is not None):
-            # Store permanent overrides
-            if j_idx not in self._homing_param_overrides:
-                self._homing_param_overrides[j_idx] = {}
-            if direction_override is not None:
-                self._homing_param_overrides[j_idx]["direction"] = direction_override
-            if speed_override is not None:
-                self._homing_param_overrides[j_idx]["speed"] = speed_override
-            self.terminal.log(f"J{j_idx} HOME: Permanent overrides set", "info")
+            row = next((r for r in self.homing_panel._rows if r["idx"] == j_idx), None)
+            if row is not None:
+                if direction_override is not None:
+                    d = 1 if direction_override >= 0 else -1
+                    row["direction"].setCurrentIndex(0 if d == 1 else 1)
+                if speed_override is not None:
+                    row["speed"].setValue(int(speed_override))
+            self.terminal.log(f"J{j_idx} HOME: permanent overrides saved to config", "info")
+            # Refresh configs after updating the panel
+            self._homing_configs = self.homing_panel.get_homing_configs()
+            cfg = next((c for c in self._homing_configs if c["idx"] == j_idx), cfg)
 
-        # Get stored overrides
-        stored_overrides = self._homing_param_overrides.get(j_idx, {})
+        # Effective direction/speed for this run (command-line > config default)
+        direction = direction_override if direction_override is not None else cfg["home_direction"]
+        speed = speed_override if speed_override is not None else cfg["home_speed_sps"]
+        direction = 1 if direction >= 0 else -1
 
-        # Apply parameter overrides (command-line > stored permanent > default)
-        direction = direction_override if direction_override is not None else stored_overrides.get("direction", cfg["home_direction"])
-        speed = speed_override if speed_override is not None else stored_overrides.get("speed", cfg["home_speed_sps"])
-
-        # Start homing sequence
         self._homing_active = True
         self._homing_start_time = time.monotonic()
         self._homing_limit_status = {j_idx: False}
-        self._homing_single_joint = True  # flag to know it's single-joint homing
+        self._homing_single_joint = True
+        self._homing_joint_indices = [j_idx]
 
-        # Enable PIN_STREAM to monitor limit switch
         self._hardware.send_raw("PIN_STREAM_ON\n")
-
-        # Send move command in homing direction
-        target_angle = 180.0 if direction > 0 else -180.0
-        self._hardware.send_raw(f"J{j_idx}:{target_angle}\n")
-
-        self.terminal.log(f"J{j_idx} HOME: moving in direction {direction:+d} until limit hit", "tx")
-
-    def _parse_pin_stream(self, text: str) -> None:
-        """Parse PINS: message to extract limit switch status."""
-        if not text.startswith("PINS:"):
-            return
-
-        # Format: "PINS: J0: ... LIMIT:home  |  J1: ... LIMIT:none  | ..."
-        parts = text[5:].split("|")
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            # Extract Jn and LIMIT status
-            try:
-                j_part = part.split(":")[0].strip()  # "J0"
-                j_idx = int(j_part[1:])
-
-                # Check if LIMIT:home is present
-                if "LIMIT:home" in part:
-                    self._homing_limit_status[j_idx] = True
-                elif "LIMIT:none" in part:
-                    self._homing_limit_status[j_idx] = False
-            except (ValueError, IndexError):
-                pass
-
-        # Check if all joints have reached home
-        if all(self._homing_limit_status.values()):
-            self._finish_homing_sequence(success=True)
+        # Send firmware HOMEJ<n> [dir] [speed] — triggers the per-joint state machine
+        self._hardware.send_raw(f"HOMEJ{j_idx} {direction} {int(speed)}\n")
+        self.terminal.log(
+            f"J{j_idx} HOME → HOMEJ{j_idx} dir={direction:+d} speed={int(speed)}",
+            "tx",
+        )
 
     def _extract_and_display_limits(self, text: str) -> None:
         """Extract and display just the limit switch status from PINS message."""
@@ -3818,12 +3870,8 @@ class MainWindow(QMainWindow):
             self._hardware.send_raw("PIN_STREAM_OFF\n")
 
         is_single_joint = getattr(self, "_homing_single_joint", False)
-
-        # Stop all motors (only if connected)
-        if self._hardware is not None and self._hardware.is_connected:
-            n = self.arm_config.num_planar_joints
-            angles_cmd = ",".join(f"J{i}:0.0" for i in range(n + 1))
-            self._hardware.send_raw(f"{angles_cmd}\n")
+        # Firmware's state machine already zeros position on contact and stops motion.
+        # Do not send follow-up target angles here — they would re-command the motors.
 
         if success:
             if is_single_joint:
@@ -3842,6 +3890,25 @@ class MainWindow(QMainWindow):
 
         self._homing_single_joint = False
         self.hardware_panel.home_all_btn.setEnabled(True)
+
+        if success:
+            self._run_post_home_commands(self._homing_joint_indices)
+        self._homing_joint_indices = []
+
+    def _run_post_home_commands(self, joint_indices: list[int]) -> None:
+        """Execute post-home terminal commands for each homed joint."""
+        configs = self.homing_panel.get_homing_configs()
+        for j_idx in joint_indices:
+            cfg = next((c for c in configs if c["idx"] == j_idx), None)
+            if cfg is None:
+                continue
+            cmds_str = cfg.get("post_home_cmds", "").strip()
+            if not cmds_str:
+                continue
+            steps = [s.strip() for s in cmds_str.split(";") if s.strip()]
+            for step in steps:
+                self.terminal.log(f"POST-HOME J{j_idx}: {step}", "tx")
+                self._on_terminal_command(step)
 
     # ── Timer / Animation Loop ────────────────────────────────────────
 
@@ -3929,9 +3996,14 @@ class MainWindow(QMainWindow):
             # Extract and display limit switch status if limits stream is enabled
             if self._limit_stream_enabled:
                 self._extract_and_display_limits(text)
-            # Parse limit switch status for homing
+            return
+        if text.startswith("HOMING_COMPLETE"):
+            self.terminal.log(text, "info")
             if self._homing_active:
-                self._parse_pin_stream(text)
+                self._finish_homing_sequence(success=True)
+            return
+        if text.startswith("HOMING") or text.startswith("HOME J") or text.startswith("STOPPED"):
+            self.terminal.log(text, "info")
             return
         if text.startswith("WiFi connected:"):
             ip = text.split(":", 1)[1].strip()
@@ -4032,6 +4104,13 @@ class MainWindow(QMainWindow):
             return
 
         angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+        # Apply per-joint gravity offset on the PC side before sending.
+        # The firmware no longer adds gravity_offset internally, so the PC
+        # compensates here — keeps firmware lean and offset tunable without redeployment.
+        gravity_offsets = self.motor_config_panel.get_gravity_offsets()
+        for i, grav_deg in gravity_offsets.items():
+            if grav_deg and i < len(angles):
+                angles[i] += math.radians(grav_deg)
         self._hardware.send_joint_angles(angles)
 
         # Keep POS_STREAM on the Pico in sync with what streams are enabled

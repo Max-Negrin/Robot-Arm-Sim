@@ -175,8 +175,6 @@ class _StepperBase:
         self.accel          = cfg["accel"]
         self.zero_offset    = cfg.get("zero_offset_deg", 0.0)
         self.backlash_steps = int(cfg.get("backlash_steps", 0))
-        self.gravity_offset = cfg.get("gravity_offset_deg", 0.0)
-
         # Output steps per one full output revolution
         self._steps_out = self.steps_per_rev * self.gear_ratio
 
@@ -196,26 +194,44 @@ class _StepperBase:
 
         # Home/limit switch support (optional, can be used by both 28BYJ and StepDir)
         home_pin_num = cfg.get("home_pin")
+        self.home_pin_num = home_pin_num   # stored for diagnostics / HOMEJ reply
         if home_pin_num is not None:
             self._home_pin = Pin(home_pin_num, Pin.IN, pull=Pin.PULL_UP)
             self.home_pin_polarity = cfg.get("home_pin_polarity", "NO")  # "NO"=active-high, "NC"=active-low
         else:
             self._home_pin = None
+            self.home_pin_polarity = "NO"
         self.home_direction = cfg.get("home_direction", 1)  # +1 or -1 to seek home
         self.home_speed_sps = cfg.get("home_speed_sps", 100)  # slow approach speed
+        self.home_offset_deg = cfg.get("home_offset_deg", 0.0)  # move this far after touching off
         self.at_home = False  # state flag: True when home switch is active
         self._homing_mode = False  # flag: currently in homing sequence
         self._homing_stage = "approach"  # stage: approach, backup, precision
         self._homing_backup_start = 0.0  # current_pos when backup began
         self._homing_backup_distance = 0.0  # how many steps to back off
 
+        # Software travel limits (None = disabled)
+        _lmin = cfg.get("limit_min_deg")
+        _lmax = cfg.get("limit_max_deg")
+        self._limit_min = (_lmin / 360.0 * self._steps_out) if _lmin is not None else None
+        self._limit_max = (_lmax / 360.0 * self._steps_out) if _lmax is not None else None
+
     def angle_to_steps(self, angle_deg: float) -> float:
         return (angle_deg - self.zero_offset) / 360.0 * self._steps_out
 
     def set_target_angle(self, angle_deg: float) -> None:
-        # gravity_offset pre-compensates for gravitational sag:
-        # positive = motor aims slightly further to counteract slip in negative direction.
-        self.target_pos = self.angle_to_steps(angle_deg + self.gravity_offset)
+        # During homing the state machine sets target_pos directly — ignore
+        # incoming PC commands so they don't overwrite the homing target.
+        if self._homing_mode:
+            return
+        new_pos = self.angle_to_steps(angle_deg)
+        # Enforce software travel limits at the command level so the profiler
+        # never receives a target outside the allowed range and can't fight them.
+        if self._limit_min is not None:
+            new_pos = max(new_pos, self._limit_min)
+        if self._limit_max is not None:
+            new_pos = min(new_pos, self._limit_max)
+        self.target_pos = new_pos
 
     def update(self, dt: float) -> None:
         """Advance velocity profile and emit at most 1 step per call.
@@ -227,8 +243,6 @@ class _StepperBase:
 
         Backlash compensation: when direction reverses, the first backlash_steps
         physical steps are taken without advancing the logical position.
-
-        Gravity offset: set_target_angle() adds gravity_offset_deg to the target.
         """
         # Check limit/home switches if configured
         _run_profiler = True  # set False to bypass velocity profiler (homing mode)
@@ -266,27 +280,56 @@ class _StepperBase:
 
                 elif stage == "precision":
                     if home_active:
-                        # Final contact — zero position and finish
-                        self.at_home = True
-                        self._homing_mode = False
-                        self._homing_stage = "approach"
+                        # 1. Zero at switch
+                        self.current_pos = 0.0
                         self.velocity = 0.0
                         self._accumulator = 0.0
                         self._accel_now = 0.0
-                        self.current_pos = 0.0
+                        offset_steps = self.home_offset_deg / 360.0 * self._steps_out
+                        if abs(offset_steps) > 0.5:
+                            # 2. Move offset distance, then re-zero
+                            # Drive away from switch (opposite to home_direction)
+                            self.target_pos = -self.home_direction * abs(offset_steps)
+                            self._homing_stage = "offset"
+                            _run_profiler = True   # hand off to normal profiler
+                        else:
+                            # No offset — done immediately
+                            self.at_home = True
+                            self._homing_mode = False
+                            self._homing_stage = "approach"
                         return
                     else:
                         # Slowly approach switch
                         self.velocity = self.home_speed_sps * self.home_direction
 
+                elif stage == "offset":
+                    # Normal profiler drives to target; bypass homing velocity control
+                    _run_profiler = True
+                    if abs(self.current_pos - self.target_pos) < 0.5 and abs(self.velocity) < 0.5:
+                        # 3. Arrived — re-zero here, this is the true 0° position
+                        self.current_pos = 0.0
+                        self.target_pos = 0.0
+                        self.velocity = 0.0
+                        self._accumulator = 0.0
+                        self._accel_now = 0.0
+                        self.at_home = True
+                        self._homing_mode = False
+                        self._homing_stage = "approach"
+                        return
+
             else:
-                # Not in homing mode — safety stop if limit is hit during normal motion
+                # Not in homing mode — enforce limit switch as a hard stop.
                 if home_active:
                     self.at_home = True
+                    # Re-clamp target every tick so the PC's 60 Hz stream can't push
+                    # the motor back into the active switch.  Only block motion in the
+                    # home_direction (into the switch); commands moving AWAY from the
+                    # switch are left unchanged so the motor can escape.
+                    if (self.target_pos - self.current_pos) * self.home_direction > 0:
+                        self.target_pos = self.current_pos
                     self.velocity = 0.0
                     self._accumulator = 0.0
                     self._accel_now = 0.0
-                    self.current_pos = 0.0
                     return
                 else:
                     self.at_home = False
@@ -330,6 +373,21 @@ class _StepperBase:
                 else:
                     new_v = self.velocity + direction * self.accel * dt
                     self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+
+        # Software travel limits — belt-and-suspenders after the profiler.
+        # set_target_angle() already clamps targets on the way in, so the
+        # profiler should never overshoot; this catches any edge cases.
+        if not self._homing_mode:
+            if self._limit_min is not None and self.current_pos <= self._limit_min and self.velocity < 0:
+                self.target_pos = max(self.target_pos, self._limit_min)
+                self.velocity = 0.0
+                self._accumulator = 0.0
+                self._accel_now = 0.0
+            if self._limit_max is not None and self.current_pos >= self._limit_max and self.velocity > 0:
+                self.target_pos = min(self.target_pos, self._limit_max)
+                self.velocity = 0.0
+                self._accumulator = 0.0
+                self._accel_now = 0.0
 
         # Accumulate fractional steps; take at most 1 physical step per call
         self._accumulator += self.velocity * dt
@@ -467,6 +525,14 @@ class ServoAxis:
         self.max_pulse_us   = cfg.get("max_pulse_us", 2000)
         self.angle_range    = cfg.get("angle_range_deg", 180)
         self.velocity       = 0.0   # always 0 — servo has built-in position control
+        # Shared interface required by the main loop (STOP command, etc.)
+        self.current_pos    = 0.0
+        self.target_pos     = 0.0
+        self._homing_mode   = False
+        self._homing_stage  = "approach"
+        self._accumulator   = 0.0
+        self._accel_now     = 0.0
+        self._home_pin      = None  # servos don't have limit switches
 
         pins = cfg.get("pins", [])
         if not pins:
@@ -487,6 +553,7 @@ class ServoAxis:
             sim +90° → servo 180° → 2000 µs (max)
             sim -90° → servo   0° → 1000 µs (min)
         """
+        self.target_pos = angle_deg - self.zero_offset
         angle = angle_deg - self.zero_offset
         # Shift so simulator 0° maps to the servo's midpoint
         servo_angle = angle + self.angle_range / 2.0
@@ -729,6 +796,102 @@ def main():
 
     tick_us = time.ticks_us()
 
+    # ── Command dispatcher ──────────────────────────────────────────────────
+    # Defined once here (not inside the loop) so MicroPython does not
+    # allocate and GC a new function object on every 800 µs iteration.
+    def _handle_line(line, reply_fn):
+        nonlocal idle_ticks, _pos_stream_enabled, _last_reply_fn, _pin_stream_enabled, _homing_active
+        _last_reply_fn = reply_fn   # track active transport for position push
+        if line == "PING":
+            reply_fn("Robot Arm Pico Controller ready\n")
+            reply_fn("firmware ready\n")
+        elif line == "LED_TOGGLE":
+            led.toggle()
+            reply_fn("OK\n")
+        elif line == "REBOOT":
+            reply_fn("Rebooting...\n")
+            time.sleep(0.1)
+            import machine as _m; _m.reset()
+        elif line == "POS_STREAM_ON":
+            _pos_stream_enabled = True
+            reply_fn("OK\n")
+        elif line == "POS_STREAM_OFF":
+            _pos_stream_enabled = False
+            reply_fn("OK\n")
+        elif line == "PIN_STREAM_ON":
+            _pin_stream_enabled = True
+            reply_fn("OK\n")
+        elif line == "PIN_STREAM_OFF":
+            _pin_stream_enabled = False
+            reply_fn("OK\n")
+        elif line == "STOP":
+            # Cancel all active sequences and stop all motors immediately
+            _homing_active = False
+            _pos_stream_enabled = False
+            _pin_stream_enabled = False
+            for axis in axes:
+                axis._homing_mode = False
+                axis._homing_stage = "approach"
+                axis.velocity = 0.0
+                axis._accumulator = 0.0
+                axis._accel_now = 0.0
+                axis.target_pos = axis.current_pos  # cancel any pending move
+            reply_fn("STOPPED\n")
+        elif line == "HOME":
+            # Initiate homing on all axes that have a home switch
+            for axis in axes:
+                if axis._home_pin is not None:
+                    axis._homing_mode = True
+                    axis._homing_stage = "approach"
+                    axis.at_home = False
+                    reply_fn("HOME J{}: pin={} dir={} speed={}\n".format(
+                        axis.idx, axis.home_pin_num, axis.home_direction, axis.home_speed_sps))
+            _homing_active = True
+            idle_ticks = 0
+            reply_fn("HOMING\n")
+        elif line.startswith("HOMEJ"):
+            # Per-joint homing: HOMEJ<n> [dir] [speed]
+            # e.g. HOMEJ0, HOMEJ0 -1, HOMEJ0 -1 10
+            try:
+                rest = line[5:].strip()
+                parts = rest.split()
+                jn = int(parts[0])
+                target_axis = None
+                for axis in axes:
+                    if axis.idx == jn:
+                        target_axis = axis
+                        break
+                if target_axis is None:
+                    reply_fn("ERR:no axis J{}\n".format(jn))
+                elif target_axis._home_pin is None:
+                    reply_fn("ERR:J{} has no home switch\n".format(jn))
+                else:
+                    if len(parts) >= 2:
+                        d = int(parts[1])
+                        target_axis.home_direction = 1 if d >= 0 else -1
+                    if len(parts) >= 3:
+                        target_axis.home_speed_sps = float(parts[2])
+                    target_axis._homing_mode = True
+                    target_axis._homing_stage = "approach"
+                    target_axis.at_home = False
+                    _homing_active = True
+                    idle_ticks = 0
+                    reply_fn("HOMING J{}: pin={} dir={} speed={}\n".format(
+                        target_axis.idx, target_axis.home_pin_num,
+                        target_axis.home_direction, target_axis.home_speed_sps))
+            except (ValueError, IndexError) as e:
+                reply_fn("ERR:bad HOMEJ: {}\n".format(e))
+        else:
+            cmd = parse_command(line)
+            if cmd is not None:
+                for axis in axes:
+                    if axis.idx in cmd:
+                        axis.set_target_angle(cmd[axis.idx])
+                idle_ticks = 0
+                reply_fn("OK\n")
+            else:
+                reply_fn("ERR:bad command\n")
+
     while True:
         # ── 1. Advance all motor axes (GPIO writes only, no sleep) ──────────
         any_moving = False
@@ -738,67 +901,6 @@ def main():
                 any_moving = True
 
         # ── 2. Serial + WiFi command processing ─────────────────────────────
-        # Helper: dispatch one parsed command line, send response to `reply_fn`
-        def _handle_line(line, reply_fn):
-            nonlocal idle_ticks, _pos_stream_enabled, _last_reply_fn, _pin_stream_enabled, _homing_active
-            _last_reply_fn = reply_fn   # track active transport for position push
-            if line == "PING":
-                reply_fn("Robot Arm Pico Controller ready\n")
-                reply_fn("firmware ready\n")
-            elif line == "LED_TOGGLE":
-                led.toggle()
-                reply_fn("OK\n")
-            elif line == "REBOOT":
-                reply_fn("Rebooting...\n")
-                time.sleep(0.1)
-                import machine as _m; _m.reset()
-            elif line == "POS_STREAM_ON":
-                _pos_stream_enabled = True
-                reply_fn("OK\n")
-            elif line == "POS_STREAM_OFF":
-                _pos_stream_enabled = False
-                reply_fn("OK\n")
-            elif line == "PIN_STREAM_ON":
-                _pin_stream_enabled = True
-                reply_fn("OK\n")
-            elif line == "PIN_STREAM_OFF":
-                _pin_stream_enabled = False
-                reply_fn("OK\n")
-            elif line == "STOP":
-                # Cancel all active sequences and stop all motors immediately
-                _homing_active = False
-                _pos_stream_enabled = False
-                _pin_stream_enabled = False
-                for axis in axes:
-                    axis._homing_mode = False
-                    axis._homing_stage = "approach"
-                    axis.velocity = 0.0
-                    axis._accumulator = 0.0
-                    axis._accel_now = 0.0
-                    axis.target_pos = axis.current_pos  # cancel any pending move
-                reply_fn("STOPPED\n")
-            elif line == "HOME":
-                # Initiate two-stage homing: fast approach, backup, slow precision
-                for axis in axes:
-                    if hasattr(axis, '_home_pin') and axis._home_pin is not None:
-                        axis._homing_mode = True
-                        axis._homing_stage = "approach"
-                        reply_fn("HOME J{}: pin={} dir={} speed={}\n".format(
-                            axis.idx, axis.home_pin_num, axis.home_direction, axis.home_speed_sps))
-                _homing_active = True
-                idle_ticks = 0
-                reply_fn("HOMING\n")
-            else:
-                cmd = parse_command(line)
-                if cmd is not None:
-                    for axis in axes:
-                        if axis.idx in cmd:
-                            axis.set_target_angle(cmd[axis.idx])
-                    idle_ticks = 0
-                    reply_fn("OK\n")
-                else:
-                    reply_fn("ERR:bad command\n")
-
         # USB serial (non-blocking)
         try:
             while _poller.poll(0):
@@ -844,24 +946,32 @@ def main():
             _pin_stream_last_ms = now_ms
             parts = []
             for ax in axes:
-                # Include limit switch status if homing is configured
+                # Live limit-switch reading (not the stale at_home flag)
                 limit_status = ""
                 if hasattr(ax, '_home_pin') and ax._home_pin is not None:
-                    limit_status = " LIMIT:{}".format("home" if ax.at_home else "none")
+                    pin_val = ax._home_pin.value()
+                    live_active = (pin_val == 1) if ax.home_pin_polarity == "NC" else (pin_val == 0)
+                    limit_status = " LIMIT:{}".format("HOME" if live_active else "none")
+                # Velocity and homing stage
+                homing_status = ""
+                if getattr(ax, '_homing_mode', False):
+                    homing_status = " HOMING:{} vel={:.0f}".format(
+                        ax._homing_stage, ax.velocity)
                 if hasattr(ax, "get_pin_debug"):
-                    parts.append("J{}: {}{}".format(ax.idx, ax.get_pin_debug(), limit_status))
+                    parts.append("J{}: {}{}{}".format(
+                        ax.idx, ax.get_pin_debug(), limit_status, homing_status))
             _last_reply_fn("PINS: " + "  |  ".join(parts) + "\n")
 
         # ── 3c. Check homing completion ──────────────────────────────────────
+        # Homing is done when no axis is still in _homing_mode.
+        # The state machine clears _homing_mode when the precision stage contacts home.
         if _homing_active:
-            # Check if all axes with home switches have reached home
-            all_at_home = True
+            still_homing = False
             for ax in axes:
-                if hasattr(ax, '_home_pin') and ax._home_pin is not None:
-                    if not ax.at_home:
-                        all_at_home = False
-                        break
-            if all_at_home:
+                if getattr(ax, '_homing_mode', False):
+                    still_homing = True
+                    break
+            if not still_homing:
                 _homing_active = False
                 _last_reply_fn("HOMING_COMPLETE\n")
 
@@ -870,8 +980,7 @@ def main():
             idle_ticks += 1
             if idle_ticks > 2500:   # 2500 × 800 µs ≈ 2 s
                 for axis in axes:
-                    if isinstance(axis, StepperAxis28BYJ):
-                        axis.deenergise()
+                    axis.deenergise()
                 idle_ticks = 0
         else:
             idle_ticks = 0
