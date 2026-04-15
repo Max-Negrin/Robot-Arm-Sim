@@ -2705,6 +2705,9 @@ class MainWindow(QMainWindow):
         self._homing_single_joint: bool = False  # flag for single-joint homing
         self._homing_param_overrides: dict[int, dict] = {}  # permanent parameter overrides per joint
 
+        # Limit switch monitoring
+        self._limit_stream_enabled: bool = False
+
         # FPS tracking
         self._last_time = time.perf_counter()
         self._fps = 60.0
@@ -3779,6 +3782,35 @@ class MainWindow(QMainWindow):
         if all(self._homing_limit_status.values()):
             self._finish_homing_sequence(success=True)
 
+    def _extract_and_display_limits(self, text: str) -> None:
+        """Extract and display just the limit switch status from PINS message."""
+        if not text.startswith("PINS:"):
+            return
+
+        # Format: "PINS: J0: ... LIMIT:home  |  J1: ... LIMIT:none  | ..."
+        limits = []
+        parts = text[5:].split("|")
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                j_part = part.split(":")[0].strip()  # "J0"
+                j_idx = int(j_part[1:])
+
+                # Extract LIMIT status
+                if "LIMIT:home" in part:
+                    limits.append(f"J{j_idx}:HOME")
+                elif "LIMIT:none" in part:
+                    limits.append(f"J{j_idx}:---")
+            except (ValueError, IndexError):
+                pass
+
+        if limits:
+            # Display compact limit status (e.g., "J0:HOME  J1:---  J2:HOME")
+            display = "  ".join(limits)
+            self.terminal.log(f"LIMITS: {display}", "info")
+
     def _finish_homing_sequence(self, success: bool) -> None:
         """Complete the homing sequence."""
         self._homing_active = False
@@ -3892,6 +3924,9 @@ class MainWindow(QMainWindow):
         if text.startswith("PINS:"):
             # Pin debug stream — display directly in terminal
             self.terminal.log(text, "rx")
+            # Extract and display limit switch status if limits stream is enabled
+            if self._limit_stream_enabled:
+                self._extract_and_display_limits(text)
             # Parse limit switch status for homing
             if self._homing_active:
                 self._parse_pin_stream(text)
@@ -4199,6 +4234,7 @@ class MainWindow(QMainWindow):
         "  POS                      — toggle 1 Hz joint-angle stream",
         "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
         "  PINS / PINS ON / PINS OFF — toggle 1 Hz GPIO pin debug stream (hw only)",
+        "  LIMITS / LIMITS ON / OFF — toggle limit switch status stream (debug homing)",
         "─── Motion ─────────────────────────────────────────────────",
         "  HOME                     — animate to vertical (all joints 0)",
         "  PARK                     — fold arm to compact stowed pose",
@@ -4362,6 +4398,23 @@ class MainWindow(QMainWindow):
                     self._hardware.send_raw("PIN_STREAM_OFF\n")
                 self._pin_stream_active = False
                 self.terminal.log("Pin debug stream: OFF", "info")
+
+        # ── LIMITS ────────────────────────────────────────────────────────
+        elif upper in ("LIMITS", "LIMITS ON", "LIMITS OFF"):
+            want_on = not (upper == "LIMITS OFF" or
+                           (upper == "LIMITS" and getattr(self, "_limit_stream_enabled", False)))
+            if want_on:
+                if self._hardware is None or not self._hardware.is_connected:
+                    self.terminal.log("LIMITS: not connected to Pico", "error")
+                else:
+                    self._hardware.send_raw("PIN_STREAM_ON\n")
+                    self._limit_stream_enabled = True
+                    self.terminal.log("Limit switch stream: ON", "info")
+            else:
+                if self._hardware is not None and self._hardware.is_connected:
+                    self._hardware.send_raw("PIN_STREAM_OFF\n")
+                self._limit_stream_enabled = False
+                self.terminal.log("Limit switch stream: OFF", "info")
 
         # ── STATUS ────────────────────────────────────────────────────────
         elif upper == "STATUS":
