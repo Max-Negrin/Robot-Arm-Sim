@@ -4237,6 +4237,7 @@ class MainWindow(QMainWindow):
         "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
         "  PINS / PINS ON / PINS OFF — toggle 1 Hz GPIO pin debug stream (hw only)",
         "  LIMITS / LIMITS ON / OFF — toggle limit switch status stream (debug homing)",
+        "  STOP                     — cancel homing, stop all motors and streams",
         "─── Motion ─────────────────────────────────────────────────",
         "  HOME                     — animate to vertical (all joints 0)",
         "  PARK                     — fold arm to compact stowed pose",
@@ -4449,6 +4450,25 @@ class MainWindow(QMainWindow):
         # ── CLEAR ─────────────────────────────────────────────────────────
         elif upper == "CLEAR":
             self.terminal.clear()
+
+        # ── STOP ──────────────────────────────────────────────────────────
+        elif upper == "STOP":
+            # Cancel PC-side homing, clear all streams
+            if self._homing_active:
+                self._homing_active = False
+                self._homing_single_joint = False
+                self.hardware_panel.home_all_btn.setEnabled(
+                    self._hardware is not None and self._hardware.is_connected
+                )
+            self._limit_stream_enabled = False
+            self._pos_log_enabled = False
+            self._ee_log_enabled = False
+            if self._pin_stream_active and self._hardware is not None and self._hardware.is_connected:
+                self._pin_stream_active = False
+            self.terminal.log("Stopped — all sequences and streams cancelled", "info")
+            # Forward STOP to firmware to halt motors and streams on the Pico too
+            if self._hardware is not None and self._hardware.is_connected:
+                self._hardware.send_raw("STOP\n")
 
         # ── HOME ──────────────────────────────────────────────────────────
         elif upper == "HOME":

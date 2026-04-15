@@ -759,6 +759,19 @@ def main():
             elif line == "PIN_STREAM_OFF":
                 _pin_stream_enabled = False
                 reply_fn("OK\n")
+            elif line == "STOP":
+                # Cancel all active sequences and stop all motors immediately
+                _homing_active = False
+                _pos_stream_enabled = False
+                _pin_stream_enabled = False
+                for axis in axes:
+                    axis._homing_mode = False
+                    axis._homing_stage = "approach"
+                    axis.velocity = 0.0
+                    axis._accumulator = 0.0
+                    axis._accel_now = 0.0
+                    axis.target_pos = axis.current_pos  # cancel any pending move
+                reply_fn("STOPPED\n")
             elif line == "HOME":
                 # Initiate two-stage homing: fast approach, backup, slow precision
                 for axis in axes:
