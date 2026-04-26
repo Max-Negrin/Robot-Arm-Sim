@@ -5,9 +5,9 @@
       "name": "Base",
       "driver": "stepdir",
       "steps_per_rev": 800,
-      "gear_ratio": 5.0,
-      "max_sps": 1200,
-      "accel": 500,
+      "gear_ratio": 6.0,
+      "max_sps": 8000,
+      "accel": 1500,
       "jerk": 0,
       "zero_offset_deg": 0.0,
       "backlash_steps": 0,
@@ -15,46 +15,46 @@
       "invert_dir": false,
       "dir_setup_us": 5,
       "pins": [
-        0,
-        1
+        8,
+        7
       ]
     },
     {
       "idx": 1,
       "name": "Joint 1",
       "driver": "stepdir",
-      "steps_per_rev": 800,
+      "steps_per_rev": 1600,
       "gear_ratio": 20.0,
-      "max_sps": 2000,
-      "accel": 800,
+      "max_sps": 6000,
+      "accel": 1500,
       "jerk": 2500,
       "zero_offset_deg": 0.0,
-      "backlash_steps": 0,
+      "backlash_steps": 30,
       "gravity_offset_deg": 0.0,
       "invert_dir": false,
-      "dir_setup_us": 10,
+      "dir_setup_us": 20,
       "pins": [
         4,
-        5
+        3
       ]
     },
     {
       "idx": 2,
       "name": "Joint 2",
       "driver": "stepdir",
-      "steps_per_rev": 800,
-      "gear_ratio": 20.0,
-      "max_sps": 2000,
-      "accel": 500,
+      "steps_per_rev": 1600,
+      "gear_ratio": 70.0,
+      "max_sps": 6000,
+      "accel": 1500,
       "jerk": 2000,
-      "zero_offset_deg": 0.0,
-      "backlash_steps": 0,
+      "zero_offset_deg": 90.0,
+      "backlash_steps": 104,
       "gravity_offset_deg": 0.0,
       "invert_dir": false,
-      "dir_setup_us": 5,
+      "dir_setup_us": 20,
       "pins": [
         6,
-        7
+        5
       ]
     }
   ]

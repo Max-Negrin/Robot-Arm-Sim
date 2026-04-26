@@ -49,7 +49,7 @@ class PicoWifiInterface:
         self._host: Optional[str] = None
         self._port: int = DEFAULT_PORT
         self._lock = threading.Lock()
-        self._tx_queue: queue.Queue[bytes] = queue.Queue(maxsize=4)
+        self._tx_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
         self._tx_thread: Optional[threading.Thread] = None
         self._rx_thread: Optional[threading.Thread] = None
         self._running = False
@@ -124,6 +124,46 @@ class PicoWifiInterface:
             logger.error(msg)
             return False, msg
 
+        # Wait for firmware banner *before* starting TX/RX: otherwise the TX
+        # thread can send angle strings to a socket that is not yet serving the
+        # main loop, or the board may be in a different state.
+        remaining = max(1.0, deadline - time.monotonic())
+        ready = self._wait_for_banner(sock, remaining)
+
+        if not ready:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._sock = None
+            msg = (
+                f"ERROR: firmware not responding at {host}:{port}\n"
+                "CAUSE: Did not see 'firmware ready' or 'Robot Arm Pico Controller ready'\n"
+                "       within the connection timeout (board still booting or wrong server)\n"
+                "FIX:   Deploy the Robot Arm firmware, confirm the correct IP, then try again"
+            )
+            self.last_error = msg
+            logger.error(msg)
+            return False, msg
+
+        if not self._wifi_angle_probe(sock):
+            try:
+                sock.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._sock = None
+            msg = (
+                f"ERROR: connect probe failed at {host}:{port}\n"
+                "CAUSE: TCP connected and saw a ready banner, but a test (J0:0.00) was not\n"
+                "       answered with OK. Wrong process may be on this port, or firmware hung.\n"
+                "FIX:   Reboot the Pico, deploy the Robot Arm firmware, and try again"
+            )
+            self.last_error = msg
+            logger.error(msg)
+            return False, msg
+
         with self._lock:
             self._sock = sock
             self._connected = True
@@ -134,25 +174,54 @@ class PicoWifiInterface:
             target=self._tx_loop, name="pico-wifi-tx", daemon=True
         )
         self._tx_thread.start()
-        # RX thread starts AFTER boot-wait so connect() has exclusive reads
-        # during banner detection.
-
-        # Wait for the firmware ready banner with the remaining timeout
-        remaining = max(1.0, deadline - time.monotonic())
-        ready = self._wait_for_banner(sock, remaining)
-
-        # Now start the background RX reader
         self._rx_thread = threading.Thread(
             target=self._rx_loop, name="pico-wifi-rx", daemon=True
         )
         self._rx_thread.start()
 
-        if ready:
-            return True, f"Connected to {host}:{port} — Pico firmware ready ✓"
-        return True, (
-            f"Connected to {host}:{port} — firmware banner not received\n"
-            "Ensure the Pico has the Robot Arm firmware deployed."
-        )
+        return True, f"Connected to {host}:{port} — Pico firmware ready ✓"
+
+    def _wifi_angle_probe(self, sock: socket.socket) -> bool:
+        """Send a minimal J0 line and require ``OK`` (same as USB protocol probe)."""
+        try:
+            # Drain any banner tail still in the receive buffer
+            sock.settimeout(0.05)
+            for _ in range(30):
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+        except OSError:
+            return False
+        try:
+            sock.settimeout(None)
+        except OSError:
+            return False
+        try:
+            sock.sendall(b"J0:0.00\n")
+        except OSError:
+            return False
+        acc = b""
+        try:
+            deadline = time.monotonic() + 0.9
+            while time.monotonic() < deadline:
+                try:
+                    sock.settimeout(0.12)
+                    chunk = sock.recv(256)
+                except (socket.timeout, OSError):
+                    chunk = b""
+                if chunk:
+                    acc += chunk
+                if b"OK" in acc:
+                    return True
+        finally:
+            try:
+                sock.settimeout(None)
+            except OSError:
+                pass
+        return b"OK" in acc
 
     def _wait_for_banner(self, sock: socket.socket, timeout: float) -> bool:
         """Read from sock until the firmware-ready banner arrives or timeout."""
@@ -167,6 +236,7 @@ class PicoWifiInterface:
                         buf += chunk
                         if b"firmware ready" in buf or b"Robot Arm Pico Controller ready" in buf:
                             logger.info("Pico WiFi firmware ready at %s:%d", self._host, self._port)
+                            sock.settimeout(None)
                             return True
                 except socket.timeout:
                     pass

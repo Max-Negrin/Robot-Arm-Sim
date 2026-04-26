@@ -159,6 +159,14 @@ JOINTS = [
 # Lower = faster but less torque.  Raise if motors miss steps under load.
 STEP_US = 800
 
+# Max physical steps emitted in one axis.update() call. The main loop runs at
+# 1/STEP_US Hz; taking only 1 step/call capped every motor at ~1250 full steps/s,
+# so joints with different step counts finished at very different times even when
+# the host streams synchronized angles. Allow a small burst so max_sps can be
+# realized and multiple joints track a 500 Hz stream together (keep low enough
+# that NEMA pulse trains in StepperAxisStepDir._step still fit in STEP_US).
+MAX_STEPS_PER_AXIS_TICK = 12
+
 
 # ---------------------------------------------------------------------------
 # Stepper axis base class
@@ -191,6 +199,8 @@ class _StepperBase:
         self._last_dir: int = 0         # last physical step direction (+1 fwd, -1 bwd)
         self._backlash_debt: int = 0    # physical steps still owed before logical pos resumes
         self._steps_since_report: int = 0  # physical steps taken since last pin_debug call
+        # Set each tick in main: |step_error| / max(|errors|) so all joints stay in sync
+        self._coordinated_vmax_scale: float = 1.0
 
         # Home/limit switch support (optional, can be used by both 28BYJ and StepDir)
         home_pin_num = cfg.get("home_pin")
@@ -233,8 +243,12 @@ class _StepperBase:
             new_pos = min(new_pos, self._limit_max)
         self.target_pos = new_pos
 
+    def deenergise(self) -> None:
+        """Override in drivers that can cut hold current. Default: no-op."""
+        pass
+
     def update(self, dt: float) -> None:
-        """Advance velocity profile and emit at most 1 step per call.
+        """Advance velocity profile and emit physical steps (see MAX_STEPS_PER_AXIS_TICK).
 
         When jerk == 0: trapezoidal profile (instant accel change — original behaviour).
         When jerk  > 0: S-curve profile — acceleration itself ramps up/down at the
@@ -343,36 +357,40 @@ class _StepperBase:
                 return
 
             direction = 1 if error > 0 else -1
+            cvs = self._coordinated_vmax_scale
+            v_cap = self.max_sps * cvs
+            a_eff = self.accel * cvs
+            j_eff = self.jerk * cvs
 
             if self.jerk > 0:
                 # ── S-curve profile ───────────────────────────────────────────────
                 spd = abs(self.velocity)
-                extra = spd * (self.accel / (self.jerk + 1e-9))
-                brake_steps = spd * spd / (2.0 * self.accel + 1e-9) + extra
+                extra = spd * (a_eff / (j_eff + 1e-9))
+                brake_steps = spd * spd / (2.0 * a_eff + 1e-9) + extra
 
                 if direction * self.velocity < 0:
-                    target_a = direction * self.accel
+                    target_a = direction * a_eff
                 elif abs(error) <= brake_steps:
-                    target_a = -direction * self.accel
+                    target_a = -direction * a_eff
                 else:
-                    target_a = direction * self.accel
+                    target_a = direction * a_eff
 
-                max_da = self.jerk * dt
+                max_da = j_eff * dt
                 diff = target_a - self._accel_now
                 self._accel_now += max(-max_da, min(max_da, diff))
                 new_v = self.velocity + self._accel_now * dt
-                self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+                self.velocity = max(-v_cap, min(v_cap, new_v))
             else:
                 # ── Trapezoidal profile ────────────────────────────────────────
-                brake_steps = (self.velocity ** 2) / (2.0 * self.accel + 1e-9)
+                brake_steps = (self.velocity ** 2) / (2.0 * a_eff + 1e-9)
                 if direction * self.velocity < 0:
-                    self.velocity = self.velocity + direction * self.accel * dt
+                    self.velocity = self.velocity + direction * a_eff * dt
                 elif abs(error) <= brake_steps:
-                    new_v = self.velocity - direction * self.accel * dt
+                    new_v = self.velocity - direction * a_eff * dt
                     self.velocity = max(0.0, new_v) if direction > 0 else min(0.0, new_v)
                 else:
-                    new_v = self.velocity + direction * self.accel * dt
-                    self.velocity = max(-self.max_sps, min(self.max_sps, new_v))
+                    new_v = self.velocity + direction * a_eff * dt
+                    self.velocity = max(-v_cap, min(v_cap, new_v))
 
         # Software travel limits — belt-and-suspenders after the profiler.
         # set_target_angle() already clamps targets on the way in, so the
@@ -389,32 +407,38 @@ class _StepperBase:
                 self._accumulator = 0.0
                 self._accel_now = 0.0
 
-        # Accumulate fractional steps; take at most 1 physical step per call
+        # Accumulate fractional steps; emit up to MAX_STEPS_PER_AXIS_TICK per call
         self._accumulator += self.velocity * dt
-        if self._accumulator >= 1.0:
-            self._accumulator -= 1.0
-            # Detect direction reversal → load backlash debt
-            if self._last_dir == -1:
-                self._backlash_debt = self.backlash_steps
-            # Consume backlash first (physical step, no logical advance)
-            if self._backlash_debt > 0:
-                self._backlash_debt -= 1
+        n_emitted = 0
+        while n_emitted < MAX_STEPS_PER_AXIS_TICK:
+            if self._accumulator >= 1.0:
+                self._accumulator -= 1.0
+                # Detect direction reversal → load backlash debt
+                if self._last_dir == -1:
+                    self._backlash_debt = self.backlash_steps
+                # Consume backlash first (physical step, no logical advance)
+                if self._backlash_debt > 0:
+                    self._backlash_debt -= 1
+                else:
+                    self.current_pos += 1.0
+                self._step(1, forward=True)
+                self._steps_since_report += 1
+                self._last_dir = 1
+                n_emitted += 1
+            elif self._accumulator <= -1.0:
+                self._accumulator += 1.0
+                if self._last_dir == 1:
+                    self._backlash_debt = self.backlash_steps
+                if self._backlash_debt > 0:
+                    self._backlash_debt -= 1
+                else:
+                    self.current_pos -= 1.0
+                self._step(1, forward=False)
+                self._steps_since_report += 1
+                self._last_dir = -1
+                n_emitted += 1
             else:
-                self.current_pos += 1.0
-            self._step(1, forward=True)
-            self._steps_since_report += 1
-            self._last_dir = 1
-        elif self._accumulator <= -1.0:
-            self._accumulator += 1.0
-            if self._last_dir == 1:
-                self._backlash_debt = self.backlash_steps
-            if self._backlash_debt > 0:
-                self._backlash_debt -= 1
-            else:
-                self.current_pos -= 1.0
-            self._step(1, forward=False)
-            self._steps_since_report += 1
-            self._last_dir = -1
+                break
 
     def _step(self, count: int, forward: bool) -> None:
         raise NotImplementedError
@@ -479,7 +503,8 @@ class StepperAxisStepDir(_StepperBase):
         # steps_per_rev already encodes the driver dip-switch resolution (e.g. 800)
         # no microstepping multiplier needed — set steps_per_rev to match the driver
         self.invert_dir    = cfg.get("invert_dir", False)
-        self.dir_setup_us  = int(cfg.get("dir_setup_us", 5))
+        # Hold DIR stable before toggling STEP (many A4988/DRV boards need 5–20+ µs)
+        self.dir_setup_us  = int(cfg.get("dir_setup_us", 12))
         self._last_phys_dir: int = -1   # sentinel — unknown until first step
 
     def _step(self, count: int, forward: bool) -> None:
@@ -489,11 +514,21 @@ class StepperAxisStepDir(_StepperBase):
         if phys_dir != self._last_phys_dir and self.dir_setup_us > 0:
             time.sleep_us(self.dir_setup_us)
         self._last_phys_dir = phys_dir
+        # ≥2.5 µs is typical for opto inputs (e.g. DM542); use 3 µs for margin.
         for _ in range(count):
             self._step_pin.value(1)
-            time.sleep_us(2)
+            time.sleep_us(3)
             self._step_pin.value(0)
-            time.sleep_us(2)
+            time.sleep_us(3)
+
+    def deenergise(self) -> None:
+        """STEP/DIR breakouts: no separate coil pins to cut (unlike 28BYJ).
+
+        We leave STEP low; the driver + motor may still hold torque if ENABLE
+        is tied. Optional enable GPIO could be added to config later to disable
+        the driver.
+        """
+        self._step_pin.value(0)
 
     def get_pin_debug(self) -> str:
         n = self._steps_since_report; self._steps_since_report = 0
@@ -576,8 +611,22 @@ class ServoAxis:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Factory & diagnostics
 # ---------------------------------------------------------------------------
+
+def _axis_wiring_line(ax) -> str:
+    """How this axis is wired (STEP/DIR vs 28BYJ coils). Shown at boot and for STEPT/PRINTAXES."""
+    cls = type(ax).__name__
+    if cls == "StepperAxisStepDir":
+        return "J{0} STEP=GP{1} DIR=GP{2} ({3})".format(
+            ax.idx, ax._step_pin_num, ax._dir_pin_num, cls
+        )
+    if cls == "StepperAxis28BYJ":
+        return "J{0} ULN IN1..4 = GP{1} ({2})".format(ax.idx, ax._pin_nums, cls)
+    if cls == "ServoAxis":
+        return "J{0} Servo (PWM) ({1})".format(ax.idx, cls)
+    return "J{0} ({1})".format(ax.idx, cls)
+
 
 def make_axis(cfg: dict):
     driver = cfg.get("driver", "stepdir").lower()
@@ -589,6 +638,35 @@ def make_axis(cfg: dict):
         return ServoAxis(cfg)
     else:
         raise ValueError(f"Unknown driver type '{driver}' for joint {cfg.get('idx')}")
+
+
+def _apply_coordinated_motion_scales(axes) -> None:
+    """Tie per-axis max speed to relative step error so joints stay in time.
+
+    The host sends one line with all Jn angles per tick; in firmware each axis
+    was otherwise driven by its own S-curve. A low-reduction base reaches its
+    step target (or a transient stream target) well before a geared shoulder,
+    which looks like the base moving first. Scale vmax/accel on each stepper
+    by |e_i| / max_j(|e_j|) for moving axes. Servo joints are ignored.
+    """
+    steppers = []
+    for a in axes:
+        if not hasattr(a, "_steps_out"):
+            continue
+        if getattr(a, "_homing_mode", False):
+            a._coordinated_vmax_scale = 1.0
+            continue
+        err = a.target_pos - a.current_pos
+        steppers.append((a, abs(err)))
+    if not steppers:
+        return
+    max_e = max(ee for _a, ee in steppers)
+    if max_e < 0.5:
+        for a, _ in steppers:
+            a._coordinated_vmax_scale = 1.0
+        return
+    for a, ae in steppers:
+        a._coordinated_vmax_scale = min(1.0, max(0.0, ae / max_e))
 
 
 # ---------------------------------------------------------------------------
@@ -793,8 +871,16 @@ def main():
 
     print("Robot Arm Pico Controller ready")
     print("firmware ready")
+    if axes:
+        print("AXES_LOADED: {} | {}".format(
+            len(axes), " | ".join(_axis_wiring_line(a) for a in axes)))
+    else:
+        print("AXES_LOADED: 0 — no motors: fix JOINTS in main.py or Deploy from the PC GUI")
 
     tick_us = time.ticks_us()
+    # Rate-limit repeated ERR:main lines (same error every 20 ms otherwise floods host)
+    _err_last_key = None
+    _err_last_ms = 0
 
     # ── Command dispatcher ──────────────────────────────────────────────────
     # Defined once here (not inside the loop) so MicroPython does not
@@ -802,12 +888,26 @@ def main():
     def _handle_line(line, reply_fn):
         nonlocal idle_ticks, _pos_stream_enabled, _last_reply_fn, _pin_stream_enabled, _homing_active
         _last_reply_fn = reply_fn   # track active transport for position push
+        _words = line.split()
         if line == "PING":
             reply_fn("Robot Arm Pico Controller ready\n")
             reply_fn("firmware ready\n")
         elif line == "LED_TOGGLE":
             led.toggle()
             reply_fn("OK\n")
+        elif line == "MEM":
+            import gc
+            reply_fn("MEM:%d bytes free\n" % gc.mem_free())
+        elif line == "TEMP":
+            # On-die sensor on ADC(4) — typical RP2040/Pico 1 formula (see RP datasheet)
+            try:
+                import machine
+                adc = machine.ADC(4)
+                v = adc.read_u16() * 3.3 / 65535.0
+                t_c = 27.0 - (v - 0.706) / 0.001721
+                reply_fn("TEMP:%.1fC (on-die)\n" % t_c)
+            except Exception as e:
+                reply_fn("ERR:TEMP:%s\n" % e)
         elif line == "REBOOT":
             reply_fn("Rebooting...\n")
             time.sleep(0.1)
@@ -881,6 +981,58 @@ def main():
                         target_axis.home_direction, target_axis.home_speed_sps))
             except (ValueError, IndexError) as e:
                 reply_fn("ERR:bad HOMEJ: {}\n".format(e))
+        elif _words and _words[0].upper() == "MOTORINFO":
+            # What driver + GPIOs this build uses (verify against wiring; compare to Deploy / motor_config)
+            for ax in axes:
+                reply_fn(_axis_wiring_line(ax) + "\n")
+            if not axes:
+                reply_fn("ERR:no axes — JOINTS empty or all make_axis() failed; check main.py / Deploy\n")
+            reply_fn("NOTE:3.3V GPIO — many 5V-only driver boards need a level shifter for STEP/DIR/EN to register.\n")
+            reply_fn("HINT:default main.py is 28BYJ on GP2–5 for J0. After Deploy, STEPT uses *your* STEP/DIR pins above.\n")
+            reply_fn("OK\n")
+        elif _words and _words[0].upper() == "PRINTAXES":
+            # Same as boot line; use if the serial log scrolled away
+            if axes:
+                reply_fn("AXES {}: {}\n".format(
+                    len(axes), " | ".join(_axis_wiring_line(a) for a in axes)))
+            else:
+                reply_fn("AXES 0: no motors (fix JOINTS / Deploy)\n")
+            reply_fn("OK\n")
+        elif _words and _words[0].upper() == "STEPT":
+            # Raw open-loop step pulses for hardware debug: STEPT <jn> <count> [BWD]
+            try:
+                parts = _words
+                if len(parts) < 3:
+                    reply_fn("ERR:STEPT <joint> <count> [BWD]  e.g. STEPT 0 100\n")
+                else:
+                    jn = int(parts[1])
+                    cnt = min(5000, max(1, int(parts[2])))
+                    _fwd = True
+                    if len(parts) > 3 and parts[3].upper() in ("BWD", "REV", "BACK"):
+                        _fwd = False
+                    _axs = [a for a in axes if a.idx == jn]
+                    if not _axs:
+                        reply_fn("ERR:no axis J{}\n".format(jn))
+                    elif not hasattr(_axs[0], "_step"):
+                        reply_fn("ERR:J{} not a stepper (no _step)\n".format(jn))
+                    else:
+                        _a = _axs[0]
+                        for _ in range(cnt):
+                            _a._step(1, _fwd)
+                        _t = type(_a).__name__
+                        if _t == "StepperAxisStepDir":
+                            _ps = "STEP=GP{} DIR=GP{}".format(
+                                _a._step_pin_num, _a._dir_pin_num
+                            )
+                        elif _t == "StepperAxis28BYJ":
+                            _ps = "28BYJ IN={}".format(_a._pin_nums)
+                        else:
+                            _ps = _t
+                        reply_fn("OK STEPT J{} {}x{}  {}  (these GPIOs were toggled)\n".format(
+                            jn, "FWD" if _fwd else "BWD", cnt, _ps
+                        ))
+            except (ValueError, IndexError) as e:
+                reply_fn("ERR:STEPT: {}\n".format(e))
         else:
             cmd = parse_command(line)
             if cmd is not None:
@@ -893,105 +1045,126 @@ def main():
                 reply_fn("ERR:bad command\n")
 
     while True:
-        # ── 1. Advance all motor axes (GPIO writes only, no sleep) ──────────
-        any_moving = False
-        for axis in axes:
-            axis.update(dt)
-            if abs(axis.velocity) > 0.1:
-                any_moving = True
-
-        # ── 2. Serial + WiFi command processing ─────────────────────────────
-        # USB serial (non-blocking)
         try:
-            while _poller.poll(0):
-                ch = sys.stdin.read(1)
-                if ch is None:
-                    break
-                if ch == "\n":
-                    line = buf.strip()
-                    buf = ""
-                    _handle_line(line, sys.stdout.write)
-                else:
-                    buf += ch
-                    if len(buf) > 256:
+            # ── 1. Scale per-axis max speed to relative error (host sends all Jn together)
+            _apply_coordinated_motion_scales(axes)
+            # ── 2. Advance all motor axes (28BYJ: GPIO; NEMA _step uses short sleep_us)
+            any_moving = False
+            for axis in axes:
+                axis.update(dt)
+                if abs(axis.velocity) > 0.1:
+                    any_moving = True
+    
+            # ── 2. Serial + WiFi command processing ─────────────────────────────
+            # USB serial (non-blocking)
+            try:
+                while _poller.poll(0):
+                    ch = sys.stdin.read(1)
+                    if ch is None:
+                        break
+                    if ch == "\n":
+                        line = buf.strip()
                         buf = ""
-        except Exception:
-            pass
-
-        # WiFi status messages from background thread — print from main thread
-        # so they appear reliably in Thonny's serial monitor.
-        while _wifi_log:
-            print(_wifi_log.pop(0))
-
-        # WiFi TCP (non-blocking drain — lines placed by _wifi_server thread)
-        while _wifi_rx:
-            line = _wifi_rx.pop(0)
-            _handle_line(line, _wifi_tx.append)
-
-        # ── 3. 1 Hz position push (only when POS_STREAM_ON received) ───────────
-        now_ms = time.ticks_ms()
-        if _pos_stream_enabled and time.ticks_diff(now_ms, _pos_stream_last_ms) >= 1000:
-            _pos_stream_last_ms = now_ms
-            parts = []
-            for ax in axes:
-                if hasattr(ax, "current_pos") and hasattr(ax, "_steps_out") and ax._steps_out > 0:
-                    angle_deg = ax.current_pos / ax._steps_out * 360.0 + ax.zero_offset
-                else:
-                    angle_deg = 0.0
-                parts.append("J{}:{:.2f}".format(ax.idx, angle_deg))
-            _last_reply_fn("POS:" + ",".join(parts) + "\n")
-
-        # ── 3b. 1 Hz pin debug stream ────────────────────────────────────────
-        if _pin_stream_enabled and time.ticks_diff(now_ms, _pin_stream_last_ms) >= 1000:
-            _pin_stream_last_ms = now_ms
-            parts = []
-            for ax in axes:
-                # Live limit-switch reading (not the stale at_home flag)
-                limit_status = ""
-                if hasattr(ax, '_home_pin') and ax._home_pin is not None:
-                    pin_val = ax._home_pin.value()
-                    live_active = (pin_val == 1) if ax.home_pin_polarity == "NC" else (pin_val == 0)
-                    limit_status = " LIMIT:{}".format("HOME" if live_active else "none")
-                # Velocity and homing stage
-                homing_status = ""
-                if getattr(ax, '_homing_mode', False):
-                    homing_status = " HOMING:{} vel={:.0f}".format(
-                        ax._homing_stage, ax.velocity)
-                if hasattr(ax, "get_pin_debug"):
-                    parts.append("J{}: {}{}{}".format(
-                        ax.idx, ax.get_pin_debug(), limit_status, homing_status))
-            _last_reply_fn("PINS: " + "  |  ".join(parts) + "\n")
-
-        # ── 3c. Check homing completion ──────────────────────────────────────
-        # Homing is done when no axis is still in _homing_mode.
-        # The state machine clears _homing_mode when the precision stage contacts home.
-        if _homing_active:
-            still_homing = False
-            for ax in axes:
-                if getattr(ax, '_homing_mode', False):
-                    still_homing = True
-                    break
-            if not still_homing:
-                _homing_active = False
-                _last_reply_fn("HOMING_COMPLETE\n")
-
-        # ── 4. De-energise coils after ~2 s of idleness ─────────────────────
-        if not any_moving:
-            idle_ticks += 1
-            if idle_ticks > 2500:   # 2500 × 800 µs ≈ 2 s
-                for axis in axes:
-                    axis.deenergise()
+                        _handle_line(line, sys.stdout.write)
+                    else:
+                        buf += ch
+                        if len(buf) > 256:
+                            buf = ""
+            except Exception:
+                pass
+    
+            # WiFi status messages from background thread — print from main thread
+            # so they appear reliably in Thonny's serial monitor.
+            while _wifi_log:
+                print(_wifi_log.pop(0))
+    
+            # WiFi TCP (non-blocking drain — lines placed by _wifi_server thread)
+            while _wifi_rx:
+                line = _wifi_rx.pop(0)
+                _handle_line(line, _wifi_tx.append)
+    
+            # ── 3. 1 Hz position push (only when POS_STREAM_ON received) ───────────
+            now_ms = time.ticks_ms()
+            if _pos_stream_enabled and time.ticks_diff(now_ms, _pos_stream_last_ms) >= 1000:
+                _pos_stream_last_ms = now_ms
+                parts = []
+                for ax in axes:
+                    if hasattr(ax, "current_pos") and hasattr(ax, "_steps_out") and ax._steps_out > 0:
+                        angle_deg = ax.current_pos / ax._steps_out * 360.0 + ax.zero_offset
+                    else:
+                        angle_deg = 0.0
+                    parts.append("J{}:{:.2f}".format(ax.idx, angle_deg))
+                _last_reply_fn("POS:" + ",".join(parts) + "\n")
+    
+            # ── 3b. 1 Hz pin debug stream ────────────────────────────────────────
+            if _pin_stream_enabled and time.ticks_diff(now_ms, _pin_stream_last_ms) >= 1000:
+                _pin_stream_last_ms = now_ms
+                parts = []
+                for ax in axes:
+                    # Live limit-switch reading (not the stale at_home flag)
+                    limit_status = ""
+                    if hasattr(ax, '_home_pin') and ax._home_pin is not None:
+                        pin_val = ax._home_pin.value()
+                        live_active = (pin_val == 1) if ax.home_pin_polarity == "NC" else (pin_val == 0)
+                        limit_status = " LIMIT:{}".format("HOME" if live_active else "none")
+                    # Velocity and homing stage
+                    homing_status = ""
+                    if getattr(ax, '_homing_mode', False):
+                        homing_status = " HOMING:{} vel={:.0f}".format(
+                            ax._homing_stage, ax.velocity)
+                    if hasattr(ax, "get_pin_debug"):
+                        parts.append("J{}: {}{}{}".format(
+                            ax.idx, ax.get_pin_debug(), limit_status, homing_status))
+                _last_reply_fn("PINS: " + "  |  ".join(parts) + "\n")
+    
+            # ── 3c. Check homing completion ──────────────────────────────────────
+            # Homing is done when no axis is still in _homing_mode.
+            # The state machine clears _homing_mode when the precision stage contacts home.
+            if _homing_active:
+                still_homing = False
+                for ax in axes:
+                    if getattr(ax, '_homing_mode', False):
+                        still_homing = True
+                        break
+                if not still_homing:
+                    _homing_active = False
+                    _last_reply_fn("HOMING_COMPLETE\n")
+    
+            # ── 4. De-energise coils after ~2 s of idleness ─────────────────────
+            if not any_moving:
+                idle_ticks += 1
+                if idle_ticks > 2500:   # 2500 × 800 µs ≈ 2 s
+                    for axis in axes:
+                        try:
+                            d = getattr(axis, "deenergise", None)
+                            if d is not None:
+                                d()
+                        except Exception:
+                            pass
+                    idle_ticks = 0
+            else:
                 idle_ticks = 0
-        else:
-            idle_ticks = 0
+    
+            # ── 5. Sleep for the remainder of the STEP_US period ────────────────
+            # This makes every loop iteration exactly STEP_US long, giving the
+            # 28BYJ-48 coils a constant hold time and perfectly uniform step rate.
+            tick_us = time.ticks_add(tick_us, STEP_US)
+            remaining = time.ticks_diff(tick_us, time.ticks_us())
+            if remaining > 0:
+                time.sleep_us(remaining)
 
-        # ── 5. Sleep for the remainder of the STEP_US period ────────────────
-        # This makes every loop iteration exactly STEP_US long, giving the
-        # 28BYJ-48 coils a constant hold time and perfectly uniform step rate.
-        tick_us = time.ticks_add(tick_us, STEP_US)
-        remaining = time.ticks_diff(tick_us, time.ticks_us())
-        if remaining > 0:
-            time.sleep_us(remaining)
+        except Exception as _main_exc:
+            try:
+                _e2 = str(_main_exc).replace("\n", " ")[:200]
+                _k = str(type(_main_exc).__name__) + _e2
+                _now = time.ticks_ms()
+                if _err_last_key != _k or time.ticks_diff(_now, _err_last_ms) > 3000:
+                    sys.stdout.write("ERR:main:%s:%s\n" % (type(_main_exc).__name__, _e2))
+                    _err_last_key = _k
+                    _err_last_ms = _now
+            except Exception:
+                pass
+            time.sleep_ms(20)
 
 
 if __name__ == "__main__":

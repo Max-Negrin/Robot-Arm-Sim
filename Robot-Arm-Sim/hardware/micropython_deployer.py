@@ -272,7 +272,7 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
         ]
         if driver == "stepdir":
             parts.append(f'"invert_dir": {str(j.get("invert_dir", False)).lower().capitalize()}')
-            parts.append(f'"dir_setup_us": {int(j.get("dir_setup_us", 5))}')
+            parts.append(f'"dir_setup_us": {int(j.get("dir_setup_us", 12))}')
         parts += [
             f'"max_sps": {j.get("max_sps", 500)}',
             f'"accel": {j.get("accel", 1000)}',
@@ -286,8 +286,11 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             parts.append(f'"home_pin_polarity": "{j.get("home_pin_polarity", "NO")}"')
             parts.append(f'"home_direction": {j.get("home_direction", 1)}')
             parts.append(f'"home_speed_sps": {j.get("home_speed_sps", 100)}')
-            if j.get("home_offset_deg", 0.0) != 0.0:
-                parts.append(f'"home_offset_deg": {j.get("home_offset_deg")}')
+            # Must always be present when homing exists — firmware uses 0.0 as "no nudge" but
+            # a non-zero "Return offset" in the Homing panel must be deployed (was omitted if 0.0)
+            parts.append(
+                f'"home_offset_deg": {float(j.get("home_offset_deg", 0.0))}'
+            )
         # Software travel limits
         if j.get("limits_enabled", False):
             parts.append(f'"limit_min_deg": {j.get("limit_min_deg", -180.0)}')

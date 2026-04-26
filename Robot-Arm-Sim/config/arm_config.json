@@ -34,63 +34,63 @@
       0.0,
       0.0
     ],
-    "elbow": 1,
+    "elbow": 0,
     "motor_configs": [
       {
         "idx": 0,
         "name": "Base",
-        "driver": "stepdir",
-        "steps_per_rev": 800,
-        "gear_ratio": 5.0,
-        "max_sps": 1200,
-        "accel": 500,
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
         "jerk": 0,
         "zero_offset_deg": 0.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
-        "invert_dir": false,
-        "dir_setup_us": 5,
         "pins": [
-          0,
-          1
-        ]
-      },
-      {
-        "idx": 1,
-        "name": "Joint 1",
-        "driver": "stepdir",
-        "steps_per_rev": 800,
-        "gear_ratio": 20.0,
-        "max_sps": 2000,
-        "accel": 800,
-        "jerk": 2500,
-        "zero_offset_deg": 0.0,
-        "backlash_steps": 0,
-        "gravity_offset_deg": 0.0,
-        "invert_dir": false,
-        "dir_setup_us": 10,
-        "pins": [
+          2,
+          3,
           4,
           5
         ]
       },
       {
-        "idx": 2,
-        "name": "Joint 2",
-        "driver": "stepdir",
-        "steps_per_rev": 800,
-        "gear_ratio": 20.0,
-        "max_sps": 2000,
-        "accel": 500,
-        "jerk": 2000,
+        "idx": 1,
+        "name": "Joint 1",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
         "zero_offset_deg": 0.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
-        "invert_dir": false,
-        "dir_setup_us": 5,
         "pins": [
           6,
-          7
+          7,
+          8,
+          9
+        ]
+      },
+      {
+        "idx": 2,
+        "name": "Joint 2",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          10,
+          11,
+          12,
+          13
         ]
       }
     ],
@@ -112,9 +112,9 @@
       "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 8.0,
-      "y": 1.8,
-      "z": 3.33,
+      "x": 4.0,
+      "y": 3.0,
+      "z": 2.5,
       "approach_auto": true,
       "approach_angle_deg": 0.0
     },
@@ -122,26 +122,28 @@
       {
         "idx": 0,
         "name": "Base",
-        "home_pin": 10,
-        "home_pin_polarity": "NC",
+        "home_pin": 20,
+        "home_pin_polarity": "NO",
         "home_direction": 1,
-        "home_speed_sps": 20,
+        "home_speed_sps": 5,
         "home_offset_deg": 0.0,
-        "limits_enabled": true,
+        "limits_enabled": false,
         "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
       },
       {
         "idx": 1,
         "name": "Joint 1",
-        "home_pin": 11,
-        "home_pin_polarity": "NC",
+        "home_pin": 21,
+        "home_pin_polarity": "NO",
         "home_direction": 1,
-        "home_speed_sps": 200,
+        "home_speed_sps": 5,
         "home_offset_deg": 0.0,
         "limits_enabled": false,
         "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
       },
       {
         "idx": 2,
@@ -149,11 +151,12 @@
         "home_pin": 22,
         "home_pin_polarity": "NO",
         "home_direction": 1,
-        "home_speed_sps": 200,
+        "home_speed_sps": 5,
         "home_offset_deg": 0.0,
         "limits_enabled": false,
         "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
       }
     ]
   },
@@ -163,7 +166,8 @@
     "wifi_port": 8888,
     "wifi_ssid": "",
     "wifi_password": "",
-    "usb_port": "",
-    "baud": 115200
+    "usb_port": "COM5",
+    "baud": 115200,
+    "hardware_sync": true
   }
 }

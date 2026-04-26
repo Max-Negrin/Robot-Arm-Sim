@@ -177,14 +177,15 @@ frame-rate-independent.
 
 ### Animation Loop
 
-The `QTimer` fires every 16ms (~60fps). Each tick:
+The `QTimer` fires every 2ms (500Hz). Each tick:
 
-1. Compute `dt` from wall-clock delta.
+1. Compute `dt` from wall-clock delta (capped to avoid a huge jump after a stall).
 2. If animation is running, call `animator.step(dt)` to get the interpolated
    `ArmState`.
-3. Run forward kinematics on the interpolated state.
-4. Update the 3D viewport.
-5. Periodically update the stats panel (collision, singularity, FPS).
+3. **Hardware:** stream joint angles to the Pico every tick (500Hz).
+4. The 3D viewport and animation progress are redrawn every 8th tick (~62Hz) so
+   OpenGL is not repainted 500×/s.
+5. The stats panel updates at a throttled rate (~10Hz).
 
 ---
 
@@ -277,9 +278,9 @@ User toggles orientation lock
       - If checked: capture current sum(planar_angles)
       - If unchecked: clear captured orientation
 
-Timer tick (every 16ms)
+Timer tick (every 2ms, 500Hz)
   --> _on_timer_tick()
-      - Advance animation, render arm, update stats
+      - Advance animation; stream hardware; render / stats throttled
 
 User changes arm configuration
   --> _on_config_changed()
@@ -438,7 +439,7 @@ Both expose: `connect()`, `disconnect()`, `send_joint_angles(angles_rad)`, `send
 - TX daemon thread drains a `queue.Queue(maxsize=4)` and writes to the transport.
 - RX daemon thread reads lines and fires `rx_callback`.
 - If the queue is full, the oldest frame is dropped (new frame replaces it).
-- Angles only sent when delta > `UPDATE_THRESHOLD_RAD` (0.005 rad).
+- Angles only sent when delta > `UPDATE_THRESHOLD_RAD` (~1e-5 rad, so motion tracks smooth animation; coarser values made the real arm stutter).
 - `send_raw(text)` bypasses the threshold — for one-off commands (LED_TOGGLE, PING, REBOOT, etc.).
 
 **GUI → thread communication (PyQt6 constraint):**

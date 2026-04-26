@@ -15,8 +15,10 @@ Message format (Pico → host, optional status):
 import math
 
 # Minimum angle change (radians) before a new update is sent to hardware.
-# Prevents flooding serial with near-identical frames.
-UPDATE_THRESHOLD_RAD: float = 0.005   # ~0.3 degrees
+# Keep small so 60 fps animation matches the real arm: a high value (e.g. 0.005)
+# coarsens the stream to ~0.3° steps and the physical arm *stutters* while
+# the on-screen path stays smooth. ~1e-5 rad is below typical per-frame motion.
+UPDATE_THRESHOLD_RAD: float = 1e-5  # ~0.0006°; still skips identical floats
 
 BAUD_RATE: int = 115200
 TERMINATOR: str = "\n"
@@ -38,7 +40,7 @@ def encode_angles(angles_rad: list[float]) -> bytes:
     bytes
         UTF-8 encoded command string, e.g. ``b'J0:45.00,J1:32.50\\n'``.
     """
-    parts = [f"J{i}:{math.degrees(a):.2f}" for i, a in enumerate(angles_rad)]
+    parts = [f"J{i}:{math.degrees(a):.4f}" for i, a in enumerate(angles_rad)]
     return (",".join(parts) + TERMINATOR).encode("utf-8")
 
 

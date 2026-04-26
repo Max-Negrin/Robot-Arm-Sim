@@ -5,7 +5,7 @@ Main window with:
 - 3D OpenGL viewport (pyqtgraph GLViewWidget)
 - Collapsible sidebar panels for configuration, IK, constraints, math, animation
 - Dark theme via QPalette
-- 60fps timer loop driving animation
+- ~500 Hz timer loop (animation + hardware), viewport redraw throttled
 """
 
 import json
@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QPlainTextEdit, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPalette, QColor, QFont
+from PyQt6.QtGui import QPalette, QColor, QFont, QKeyEvent
 
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
@@ -41,6 +41,11 @@ from constraints import (
 )
 from math_engine import MathEngine
 from animation import Animator
+from sim_terminal import (
+    TERMINAL_HELP_LINES,
+    try_apply_shorthands,
+    try_pico_priority,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -314,99 +319,104 @@ class JointOutputPanel(QGroupBox):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Starting Joint Angles Panel
+# Zero position / joint calibration panel (per-joint zero offset, mirrors Motor config)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class InitialJointPanel(QGroupBox):
-    """Editable panel for setting the initial joint angles before IK solving.
+    """Per-joint mechanical zero offset (deg) for sim ↔ hardware alignment.
 
-    Allows users to set a custom starting pose. The IK solution is unaffected
-    because analytical IK doesn't use initial state, and numerical IK still finds
-    the target regardless of the seed pose.
+    Values are the same as **Motor configuration → Zero offset** for each joint.
+    The firmware subtracts this from commanded angles so you can line up
+    "simulator 0° (links vertical / base forward)" with your real build.
+
+    The 3D view uses absolute joint angles; changing zero here does not move
+    the model (it only changes the trim sent to the Pico and stored in config).
     """
 
     state_changed = pyqtSignal()
+    reset_to_vertical = pyqtSignal()
 
     def __init__(self, parent=None):
-        super().__init__("Starting Angles", parent)
+        super().__init__("Zero position", parent)
         layout = QVBoxLayout(self)
 
-        # Form for base + planar joints
+        blurb = QLabel(
+            "Set per-joint zero offset so hardware matches the simulator. "
+            "Deploy firmware after changing, or the Pico uses values from the last deploy."
+        )
+        blurb.setStyleSheet("color: #888; font-size: 10px;")
+        blurb.setWordWrap(True)
+        layout.addWidget(blurb)
+
+        # Form for base + planar joints (degrees of zero offset)
         self.form = QFormLayout()
         self.spinboxes: list[QDoubleSpinBox] = []
 
         layout.addLayout(self.form)
 
-        # "Copy from Arm" button: reads current arm_state into spinboxes
-        copy_btn = QPushButton("Copy from Arm")
-        copy_btn.setToolTip("Set starting angles to match current arm pose")
+        copy_btn = QPushButton("Copy from arm (calibration)")
+        copy_btn.setToolTip(
+            "Set each zero offset to the current simulator joint angle in degrees. "
+            "Use when the physical arm matches the pose and you want to record trim."
+        )
         copy_btn.clicked.connect(self._request_copy_from_arm)
         layout.addWidget(copy_btn)
+
+        self.reset_v_btn = QPushButton("Reset to resting pose")
+        self.reset_v_btn.setToolTip(
+            "Clear all zero offsets to 0° and set the 3D arm to the saved starting "
+            "joint pose (same as config starting_angles, shown under Joint State after load)."
+        )
+        self.reset_v_btn.clicked.connect(self.reset_to_vertical.emit)
+        layout.addWidget(self.reset_v_btn)
 
         self._copy_callback = None
 
     def rebuild(self, n: int) -> None:
-        """Rebuild spinboxes for base angle + n planar joints."""
-        # Clear old spinboxes
+        """Rebuild spinboxes for base + n planar joints."""
         for sb in self.spinboxes:
             sb.deleteLater()
         while self.form.count():
             self.form.removeRow(0)
         self.spinboxes = []
 
-        # Base angle spinbox
-        base_spin = QDoubleSpinBox()
-        base_spin.setRange(-180, 180)
-        base_spin.setSingleStep(1)
-        base_spin.setDecimals(1)
-        base_spin.setValue(0.0)
-        base_spin.setSuffix(" °")
-        base_spin.valueChanged.connect(self.state_changed.emit)
-        self.form.addRow("Base:", base_spin)
+        def _mk_spin() -> QDoubleSpinBox:
+            s = QDoubleSpinBox()
+            s.setRange(-360.0, 360.0)
+            s.setSingleStep(1.0)
+            s.setDecimals(1)
+            s.setValue(0.0)
+            s.setSuffix(" °")
+            s.setToolTip("Subtracted on the board before step/servo position (see Motor config Zero offset).")
+            s.valueChanged.connect(self.state_changed.emit)
+            return s
+
+        base_spin = _mk_spin()
+        self.form.addRow("Base zero:", base_spin)
         self.spinboxes.append(base_spin)
 
-        # Planar joint spinboxes
         for i in range(n):
-            spin = QDoubleSpinBox()
-            spin.setRange(-180, 180)
-            spin.setSingleStep(1)
-            spin.setDecimals(1)
-            spin.setValue(0.0)
-            spin.setSuffix(" °")
-            spin.valueChanged.connect(self.state_changed.emit)
-            self.form.addRow(f"Joint {i + 1}:", spin)
+            spin = _mk_spin()
+            self.form.addRow(f"Joint {i + 1} zero:", spin)
             self.spinboxes.append(spin)
 
-    def get_state(self) -> ArmState:
-        """Return current spinbox values as an ArmState (in radians)."""
-        if not self.spinboxes:
-            return ArmState(base_angle=0.0, planar_angles=[])
-        base_deg = self.spinboxes[0].value()
-        planar_degs = [s.value() for s in self.spinboxes[1:]]
-        return ArmState(
-            base_angle=math.radians(base_deg),
-            planar_angles=[math.radians(d) for d in planar_degs],
-        )
+    def get_values(self) -> list[float]:
+        """Return [base, j1, …] zero offset in degrees (same order as motor rows)."""
+        return [s.value() for s in self.spinboxes]
 
-    def set_state(self, state: ArmState) -> None:
-        """Fill spinboxes from an ArmState (convert radians → degrees)."""
-        if not self.spinboxes:
+    def set_values(self, degs: list[float]) -> None:
+        """Set spinboxes. Emits state_changed once at the end."""
+        if not self.spinboxes or not degs:
             return
-        self.spinboxes[0].blockSignals(True)
-        self.spinboxes[0].setValue(math.degrees(state.base_angle))
-        self.spinboxes[0].blockSignals(False)
-
-        for i, angle_rad in enumerate(state.planar_angles):
-            if i + 1 < len(self.spinboxes):
-                self.spinboxes[i + 1].blockSignals(True)
-                self.spinboxes[i + 1].setValue(math.degrees(angle_rad))
-                self.spinboxes[i + 1].blockSignals(False)
-
-        # Emit signal after all spinboxes are updated
+        n = min(len(self.spinboxes), len(degs))
+        for i in range(n):
+            self.spinboxes[i].blockSignals(True)
+            self.spinboxes[i].setValue(float(degs[i]))
+            self.spinboxes[i].blockSignals(False)
         self.state_changed.emit()
 
     def reset(self) -> None:
-        """Set all spinboxes to zero."""
+        """Set all zero offsets in this panel to 0° and notify."""
         for spin in self.spinboxes:
             spin.blockSignals(True)
             spin.setValue(0.0)
@@ -414,11 +424,9 @@ class InitialJointPanel(QGroupBox):
         self.state_changed.emit()
 
     def set_copy_callback(self, callback) -> None:
-        """Register a callback to copy from the current arm pose."""
         self._copy_callback = callback
 
     def _request_copy_from_arm(self) -> None:
-        """Trigger the copy callback."""
         if self._copy_callback:
             self._copy_callback()
 
@@ -767,8 +775,10 @@ class AnimationControlPanel(QGroupBox):
         self.stop_btn = QPushButton("Stop Animation")
         self.stop_btn.clicked.connect(animator.cancel)
         btn_row.addWidget(self.stop_btn)
-        self.reset_btn = QPushButton("Reset to Vertical")
-        self.reset_btn.setToolTip("Animate all joints back to their zero (vertical) position")
+        self.reset_btn = QPushButton("Reset to resting pose")
+        self.reset_btn.setToolTip(
+            "Animate all joints to the saved starting joint pose (config starting_angles, loaded with Joint State)"
+        )
         btn_row.addWidget(self.reset_btn)
         layout.addLayout(btn_row)
 
@@ -803,7 +813,7 @@ class StatsPanel(QGroupBox):
         layout.addRow("Self Collision:", self.self_collision_lbl)
         layout.addRow("Table Collision:", self.table_collision_lbl)
         layout.addRow("Singularity:", self.singularity_lbl)
-        layout.addRow("FPS:", self.fps_lbl)
+        layout.addRow("Main loop (Hz):", self.fps_lbl)
 
     def update_stats(self, ee_dist: float, reachable: bool,
                      self_collision: bool, table_collision: bool,
@@ -1159,6 +1169,23 @@ class WaypointPanel(QGroupBox):
 # Motor Configuration Panel
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _backlash_steps_to_arcmin(steps: int, spr: int, gear: float) -> float:
+    """Output-shaft arcminutes ↔ steps: steps/output-rev = spr×gear, 21600 arcmin/turn."""
+    total = float(spr) * float(gear)
+    if total <= 0:
+        return 0.0
+    return (float(steps) * 21600.0) / total
+
+
+def _arcmin_to_backlash_steps(arcmin: float, spr: int, gear: float) -> int:
+    if arcmin <= 0:
+        return 0
+    total = float(spr) * float(gear)
+    if total <= 0:
+        return 0
+    return max(0, int(round(arcmin * total / 21600.0)))
+
+
 class MotorConfigPanel(QGroupBox):
     """Full per-joint motor configuration editor.
 
@@ -1170,6 +1197,7 @@ class MotorConfigPanel(QGroupBox):
       • Invert dir   — flip the DIR pin logic (Step/Dir only)
       • Max speed    — steps / second ceiling
       • Acceleration — steps / second² ramp rate
+      • Backlash     — at the **output** shaft, in arcminutes (saved as full steps in JSON / firmware)
       • Zero offset  — angle correction for mechanical home position
 
     Clicking "Deploy Firmware" in the Hardware panel will inject these
@@ -1340,16 +1368,26 @@ class MotorConfigPanel(QGroupBox):
             )
             stepper_form.addRow("Jerk limit:", jerk)
 
-            backlash = QSpinBox()
-            backlash.setRange(0, 500)
-            backlash.setValue(0)
-            backlash.setSuffix(" steps")
-            backlash.setToolTip(
-                "Extra steps taken when motor direction reverses, to fill the gear\n"
-                "backlash dead-zone before the output shaft starts moving the other way.\n"
-                "Start at 0 and increase until positioning is accurate on reversal."
+            backlash_arcmin = QDoubleSpinBox()
+            backlash_arcmin.setRange(0.0, 180.0)
+            backlash_arcmin.setDecimals(2)
+            backlash_arcmin.setValue(0.0)
+            backlash_arcmin.setSuffix(" arcmin")
+            backlash_arcmin.setToolTip(
+                "Mechanical backlash at the **output** shaft, in arcminutes (′).\n"
+                "1° = 60 arcmin. After gear reduction, the firmware compensates in **full steps** "
+                "on direction change (see hint below). Tune until reversal is positionally consistent.\n"
+                "Dip-switches on the **motor driver** set microsteps (steps/rev) — set Steps/rev here to match."
             )
-            stepper_form.addRow("Backlash:", backlash)
+            backlash_steps_lbl = QLabel("→ 0 full steps")
+            backlash_steps_lbl.setStyleSheet("color: #888; font-size: 9px;")
+            _bl_row = QHBoxLayout()
+            _bl_row.addWidget(backlash_arcmin)
+            _bl_row.addWidget(backlash_steps_lbl)
+            _bl_row.addStretch()
+            _bl_w = QWidget()
+            _bl_w.setLayout(_bl_row)
+            stepper_form.addRow("Backlash (output):", _bl_w)
 
             gravity_offset = QDoubleSpinBox()
             gravity_offset.setRange(-45.0, 45.0)
@@ -1423,6 +1461,7 @@ class MotorConfigPanel(QGroupBox):
             zero.setSuffix(" °")
             zero.setToolTip("Mechanical zero correction — subtracted before converting to steps/angle")
             form.addRow("Zero offset:", zero)
+            zero.valueChanged.connect(self.config_changed.emit)
 
             self.form_layout.addWidget(box)
 
@@ -1441,7 +1480,8 @@ class MotorConfigPanel(QGroupBox):
                 "max_sps": max_sps,
                 "accel": accel,
                 "jerk": jerk,
-                "backlash": backlash,
+                "backlash_arcmin": backlash_arcmin,
+                "backlash_steps_lbl": backlash_steps_lbl,
                 "gravity_offset": gravity_offset,
                 "zero": zero,
                 "derived": derived_lbl,
@@ -1485,11 +1525,19 @@ class MotorConfigPanel(QGroupBox):
                 gear_val = r["gear"].value()
                 total = spr_val * gear_val
                 r["derived"].setText(f"{total:.0f} steps/output-rev")
+                bs = _arcmin_to_backlash_steps(
+                    r["backlash_arcmin"].value(), spr_val, gear_val
+                )
+                r["backlash_steps_lbl"].setText(f"→ {bs} full steps (firmware)")
                 self.config_changed.emit()
+
+            def _on_backlash_arcmin_changed(_v=None, r=row):
+                _update_derived(None, r)
 
             driver_combo.currentTextChanged.connect(_on_driver_changed)
             spr.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             gear.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
+            backlash_arcmin.valueChanged.connect(_on_backlash_arcmin_changed)
             _update_derived(None, row)
 
         # Restore previously set values for joints that still exist
@@ -1510,7 +1558,10 @@ class MotorConfigPanel(QGroupBox):
                 row["max_sps"].setValue(int(cfg.get("max_sps", 500)))
                 row["accel"].setValue(int(cfg.get("accel", 1000)))
                 row["jerk"].setValue(int(cfg.get("jerk", 0)))
-                row["backlash"].setValue(int(cfg.get("backlash_steps", 0)))
+                _bs0 = int(cfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs0, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
@@ -1519,7 +1570,10 @@ class MotorConfigPanel(QGroupBox):
                 row["max_sps"].setValue(int(cfg.get("max_sps", 2000)))
                 row["accel"].setValue(int(cfg.get("accel", 1000)))
                 row["jerk"].setValue(int(cfg.get("jerk", 0)))
-                row["backlash"].setValue(int(cfg.get("backlash_steps", 0)))
+                _bs0 = int(cfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs0, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
                 row["invert_dir_check"].setChecked(bool(cfg.get("invert_dir", False)))
                 row["dir_setup_spin"].setValue(int(cfg.get("dir_setup_us", 5)))
@@ -1577,7 +1631,11 @@ class MotorConfigPanel(QGroupBox):
                     "accel": row["accel"].value(),
                     "jerk": row["jerk"].value(),
                     "zero_offset_deg": row["zero"].value(),
-                    "backlash_steps": row["backlash"].value(),
+                    "backlash_steps": _arcmin_to_backlash_steps(
+                        row["backlash_arcmin"].value(),
+                        row["spr"].value(),
+                        row["gear"].value(),
+                    ),
                     "gravity_offset_deg": row["gravity_offset"].value(),
                 }
                 if not is_28byj:
@@ -1648,7 +1706,10 @@ class MotorConfigPanel(QGroupBox):
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
                 row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
+                _bs1 = int(jcfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs1, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
@@ -1657,7 +1718,10 @@ class MotorConfigPanel(QGroupBox):
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
                 row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
+                _bs1 = int(jcfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs1, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
                 row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
                 row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
@@ -1915,7 +1979,7 @@ class HardwarePanel(QGroupBox):
     - Connection type radio buttons to switch between USB and WiFi
     - Connection status display (red/green)
 
-    When connected, the MainWindow timer sends joint angles at up to 60 Hz.
+    When connected, the MainWindow timer sends joint angles at up to 500 Hz.
     """
 
     # Emitted when user changes hardware enable state
@@ -1939,9 +2003,12 @@ class HardwarePanel(QGroupBox):
         # Enable toggle
         self.enable_cb = QCheckBox("Enable hardware synchronization")
         self.enable_cb.setToolTip(
-            "When checked, joint angles are streamed to the physical robot arm\n"
-            "at up to 60 Hz."
+            "Must be ON for JOG, IK (Update/Space), and waypoints to move the real arm — "
+            "the PC sends J0:…,J1:… at up to 500 Hz.\n"
+            "When OFF, the 3D sim still moves but the Pico only receives one-off commands "
+            "(homing, LED, STOP, STEPT, etc.), not continuous angles."
         )
+        self.enable_cb.setChecked(True)
         layout.addWidget(self.enable_cb)
 
         # Status indicator
@@ -2118,6 +2185,10 @@ class HardwarePanel(QGroupBox):
     def is_wifi_mode(self) -> bool:
         return self.wifi_radio.isChecked()
 
+    def is_hardware_sync_enabled(self) -> bool:
+        """When True, the main loop calls ``send_joint_angles`` to the Pico."""
+        return self.enable_cb.isChecked()
+
     def restore(self, data: dict) -> None:
         """Restore hardware panel state from a saved dict."""
         if data.get("wifi_mode"):
@@ -2140,6 +2211,8 @@ class HardwarePanel(QGroupBox):
             idx = self.baud_combo.findText(str(data["baud"]))
             if idx >= 0:
                 self.baud_combo.setCurrentIndex(idx)
+        if "hardware_sync" in data:
+            self.enable_cb.setChecked(bool(data["hardware_sync"]))
 
     def save_state(self) -> dict:
         """Return current hardware panel state as a JSON-serializable dict."""
@@ -2151,6 +2224,7 @@ class HardwarePanel(QGroupBox):
             "wifi_password": self.get_wifi_password(),
             "usb_port": self.get_port(),
             "baud": self.get_baud(),
+            "hardware_sync": self.is_hardware_sync_enabled(),
         }
 
     def set_connected(self, connected: bool, message: str = "") -> None:
@@ -2524,7 +2598,7 @@ class HelpDialog(QWidget):
         for panel, desc in [
             ("Arm Configuration", "Link count, lengths, elbow"),
             ("Target Position", "XYZ goal + approach angle"),
-            ("Starting Angles", "Initial joint pose"),
+            ("Zero position", "Per-joint zero offset; hardware trim (same as Motor → Zero offset)"),
             ("Joint Plane Offsets", "Per-joint Z offsets"),
             ("End Effector", "Orientation constraint"),
             ("Custom Math", "SymPy joint expressions"),
@@ -2561,6 +2635,82 @@ class HelpDialog(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════
 # Pico Terminal
 # ═══════════════════════════════════════════════════════════════════════════
+
+class TerminalLineEdit(QLineEdit):
+    """Input line with bash-style previous-command recall (↑ / ↓)."""
+
+    _NAV_EXCLUDE_MODS = (
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier
+        | Qt.KeyboardModifier.MetaModifier
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._history: list[str] = []
+        self._max_history = 200
+        # Index into _history, or -1 when showing a new line (not recalling)
+        self._hist_index: int = -1
+        self._draft: str = ""
+
+    def get_history(self) -> list[str]:
+        return list(self._history)
+
+    def add_executed(self, text: str) -> None:
+        if text:
+            self._history.append(text)
+            if len(self._history) > self._max_history:
+                self._history = self._history[-self._max_history :]
+        self._hist_index = -1
+        self._draft = ""
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        key = event.key()
+        if event.modifiers() & self._NAV_EXCLUDE_MODS:
+            super().keyPressEvent(event)
+            return
+
+        if key == Qt.Key.Key_Up:
+            if not self._history:
+                super().keyPressEvent(event)
+                return
+            if self._hist_index == -1:
+                self._draft = self.text()
+                self._hist_index = len(self._history) - 1
+            elif self._hist_index > 0:
+                self._hist_index -= 1
+            else:
+                event.accept()
+                return
+            self._set_from_history()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_Down:
+            if self._hist_index == -1:
+                super().keyPressEvent(event)
+                return
+            if self._hist_index < len(self._history) - 1:
+                self._hist_index += 1
+                self._set_from_history()
+            else:
+                self._hist_index = -1
+                self.blockSignals(True)
+                self.setText(self._draft)
+                self.blockSignals(False)
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+        if self._hist_index != -1 and 0 <= self._hist_index < len(self._history):
+            if self.text() != self._history[self._hist_index]:
+                self._hist_index = -1
+
+    def _set_from_history(self) -> None:
+        self.blockSignals(True)
+        self.setText(self._history[self._hist_index])
+        self.blockSignals(False)
+
 
 class PicoTerminal(QWidget):
     """VS Code-style terminal panel showing all Pico ↔ laptop communications.
@@ -2658,7 +2808,7 @@ class PicoTerminal(QWidget):
         prompt.setStyleSheet("color: #4fc1ff; background: transparent;")
         ilay.addWidget(prompt)
 
-        self._input = QLineEdit()
+        self._input = TerminalLineEdit()
         self._input.setFont(QFont("Consolas", 9))
         self._input.setStyleSheet(
             "QLineEdit {"
@@ -2667,7 +2817,7 @@ class PicoTerminal(QWidget):
             "  border: none;"
             "}"
         )
-        self._input.setPlaceholderText("type command and press Enter (e.g. PING, LED_TOGGLE)")
+        self._input.setPlaceholderText("type command and press Enter  (↑↓ prior commands)")
         self._input.returnPressed.connect(self._on_enter)
         ilay.addWidget(self._input)
 
@@ -2714,10 +2864,14 @@ class PicoTerminal(QWidget):
 
     # ── Internal ────────────────────────────────────────────────────────────
 
+    def get_command_history(self) -> list[str]:
+        return self._input.get_history()
+
     def _on_enter(self) -> None:
         text = self._input.text().strip()
         if not text:
             return
+        self._input.add_executed(text)
         self._input.clear()
         self.command_entered.emit(text)
         self.log(text, "tx")
@@ -2760,7 +2914,11 @@ class TerminalLogHandler(logging.Handler):
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    TIMER_INTERVAL_MS = 16  # ~60 fps
+    TIMER_INTERVAL_MS = 2  # 500 Hz — smooth hardware path (viewport redraw throttled)
+    # At 500 Hz, refresh GL view / progress every N ticks (~62 Hz for N=8)
+    _VIEW_REDRAW_EVERY_N = 8
+    # Expensive stats panel ~10× per second
+    _STATS_EVERY_N = 50
 
     def __init__(self):
         super().__init__()
@@ -2774,6 +2932,8 @@ class MainWindow(QMainWindow):
             joint_limits=[_DEFAULT_LIMIT] * 4,
         )
         self.arm_state = ArmState(base_angle=0.0, planar_angles=[0.0] * 4)
+        # Base + planar joint angles (deg) for "rest" — from arm_config starting_angles on load/apply
+        self._resting_pose_degs: list[float] = [0.0] * (self.arm_config.num_planar_joints + 1)
         self.target = np.array([4.0, 3.0, 2.5])
         self.constraints = ConstraintSet()
         self.math_engine = MathEngine()
@@ -2784,6 +2944,8 @@ class MainWindow(QMainWindow):
 
         # True while restoring saved config on startup — suppresses animation triggers
         self._loading: bool = False
+        # When writing motor zero from the Zero position panel, skip syncing back
+        self._updating_motor_from_start: bool = False
 
         # Pico-reported real joint angles (joint_idx → degrees); populated by POS: push
         self._pico_pos: dict[int, float] = {}
@@ -2804,6 +2966,7 @@ class MainWindow(QMainWindow):
 
         # FPS tracking
         self._last_time = time.perf_counter()
+        self._main_loop_tick = 0
         self._fps = 60.0
 
         # Apply dark theme
@@ -2814,6 +2977,7 @@ class MainWindow(QMainWindow):
 
         # Timer
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self._on_timer_tick)
         self.timer.start(self.TIMER_INTERVAL_MS)
 
@@ -3023,6 +3187,7 @@ class MainWindow(QMainWindow):
             self._apply_arm_config_dict,
         )
         self.start_pose_panel.state_changed.connect(self._on_start_pose_changed)
+        self.start_pose_panel.reset_to_vertical.connect(self._on_start_pose_zero_vertical_reset)
         self.start_pose_panel.set_copy_callback(self._copy_arm_to_start_pose)
         self.offset_panel.config_changed.connect(self._on_offsets_changed)
 
@@ -3033,6 +3198,8 @@ class MainWindow(QMainWindow):
         # Hardware state
         self._hardware = None           # PicoInterface instance once connected
         self._connecting_iface = None   # in-flight iface during connect worker
+        # One-time terminal hint when connected but angle streaming is off (JOG/IK need sync on)
+        self._hw_sync_nudge_shown: bool = False
         import queue as _q
         self._pico_rx_queue: _q.Queue = _q.Queue()  # thread-safe RX message queue
 
@@ -3043,9 +3210,11 @@ class MainWindow(QMainWindow):
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
         self.hardware_panel.led_toggle_requested.connect(self._on_led_toggle)
         self.hardware_panel.home_all_requested.connect(self._on_home_all_requested)
+        self.hardware_panel.enable_cb.toggled.connect(self._on_hw_sync_toggled)
 
         # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
         self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
+        self.motor_config_panel.config_changed.connect(self._on_motor_config_sync_zero_panel)
 
         # Give MotorConfigPanel access to pin data so Save/Load include GPIO assignments
         self.motor_config_panel._pins_callback = self.pinout_panel.get_pins_for_joint
@@ -3066,6 +3235,7 @@ class MainWindow(QMainWindow):
         self.motor_config_panel.rebuild(n)
         self.homing_panel.rebuild(n)
         self._sync_pinout_panel()
+        self._sync_start_panel_from_motors()
 
     # ── Event Handlers ────────────────────────────────────────────────
 
@@ -3202,24 +3372,92 @@ class MainWindow(QMainWindow):
                 motor_cfg["home_pin_polarity"] = homing_cfg["home_pin_polarity"]
                 motor_cfg["home_direction"] = homing_cfg["home_direction"]
                 motor_cfg["home_speed_sps"] = homing_cfg["home_speed_sps"]
+                # Required on-Pico: post-touch "return offset" after precision (deg → steps in firmware)
+                motor_cfg["home_offset_deg"] = float(
+                    homing_cfg.get("home_offset_deg", 0.0)
+                )
         return motor_configs
 
-    def _on_reset_to_vertical(self) -> None:
-        """Animate all joints back to the zero (vertical) position."""
+    def _arm_state_from_resting_degs(self) -> ArmState:
+        """Build ArmState from ``_resting_pose_degs`` (base + planar, degrees)."""
         n = self.arm_config.num_planar_joints
-        zero_state = ArmState(base_angle=0.0, planar_angles=[0.0] * n)
-        self.animator.start(self.arm_state, zero_state, locked_orientation=None)
-        self.status_bar.showMessage("Resetting to vertical position")
+        degs = self._resting_pose_degs
+        if not degs or len(degs) < n + 1:
+            return ArmState(0.0, [0.0] * n)
+        return ArmState(
+            base_angle=math.radians(float(degs[0])),
+            planar_angles=[math.radians(float(degs[i])) for i in range(1, n + 1)],
+        )
+
+    def _on_reset_to_vertical(self) -> None:
+        """Animate all joints to the saved starting pose (arm_config starting_angles)."""
+        target = self._arm_state_from_resting_degs()
+        self.animator.start(self.arm_state, target, locked_orientation=None)
+        self.status_bar.showMessage("Resetting to saved resting pose (starting_angles)")
+
+    def _apply_zero_from_start_panel_to_motors(self) -> None:
+        """Write Zero position panel values into Motor configuration zero offsets."""
+        vals = self.start_pose_panel.get_values()
+        self._updating_motor_from_start = True
+        try:
+            for i, d in enumerate(vals):
+                if i >= len(self.motor_config_panel._rows):
+                    break
+                row = self.motor_config_panel._rows[i]
+                z = row["zero"]
+                z.blockSignals(True)
+                z.setValue(float(d))
+                z.blockSignals(False)
+        finally:
+            self._updating_motor_from_start = False
+
+    def _sync_start_panel_from_motors(self) -> None:
+        """Mirror Motor configuration zero offsets in the Zero position panel."""
+        if not self.motor_config_panel._rows or not self.start_pose_panel.spinboxes:
+            return
+        n = min(len(self.motor_config_panel._rows), len(self.start_pose_panel.spinboxes))
+        for i in range(n):
+            v = self.motor_config_panel._rows[i]["zero"].value()
+            s = self.start_pose_panel.spinboxes[i]
+            s.blockSignals(True)
+            s.setValue(float(v))
+            s.blockSignals(False)
+
+    def _on_motor_config_sync_zero_panel(self) -> None:
+        if self._loading or self._updating_motor_from_start:
+            return
+        self._sync_start_panel_from_motors()
 
     def _on_start_pose_changed(self) -> None:
-        """Handle changes to the starting joint angles."""
+        """Zero position panel: update motor config zero offsets; no change to 3D pose."""
+        if self._updating_motor_from_start:
+            return
+        self._apply_zero_from_start_panel_to_motors()
+        self._save_arm_config()
+        self.status_bar.showMessage("Zero offsets updated (re-deploy firmware to apply on Pico)")
+
+    def _on_start_pose_zero_vertical_reset(self) -> None:
+        """Reset all zero offsets to 0° and set sim pose to the saved starting angles."""
         self.animator.cancel()
-        self.arm_state = self.start_pose_panel.get_state()
+        self.start_pose_panel.reset()
+        self._apply_zero_from_start_panel_to_motors()
+        self.arm_state = self._arm_state_from_resting_degs()
         self._render_arm()
+        self._save_arm_config()
+        self.status_bar.showMessage("Zero offsets cleared; 3D arm at saved resting pose")
 
     def _copy_arm_to_start_pose(self) -> None:
-        """Copy the current arm pose to the starting angles panel."""
-        self.start_pose_panel.set_state(self.arm_state)
+        """Set zero offsets to current sim joint angles (°) for quick calibration."""
+        degs = [math.degrees(self.arm_state.base_angle)]
+        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        self._updating_motor_from_start = True
+        try:
+            self.start_pose_panel.set_values(degs)
+        finally:
+            self._updating_motor_from_start = False
+        self._apply_zero_from_start_panel_to_motors()
+        self._save_arm_config()
+        self.status_bar.showMessage("Zero offsets set from current sim pose")
 
     def _advance_sequence(self) -> None:
         """Move to the next waypoint in the sequence."""
@@ -3330,9 +3568,10 @@ class MainWindow(QMainWindow):
         self.constraints.collision_margin = self.offset_panel.get_collision_margin()
 
         self.arm_state = ArmState(base_angle=0.0, planar_angles=[0.0] * n)
+        self._resting_pose_degs = [0.0] * (n + 1)
 
         self.start_pose_panel.rebuild(n)
-        self.start_pose_panel.reset()
+        self._sync_start_panel_from_motors()
         self.joint_panel.rebuild(n)
         self.math_panel.rebuild(n)
         self.motor_config_panel.rebuild(n)
@@ -3369,8 +3608,16 @@ class MainWindow(QMainWindow):
 
     def _on_save_as_default(self) -> None:
         """Explicitly save current configuration as the startup default."""
+        # Bookmark "rest" / HOME / Reset target to this pose (not updated on every auto-save).
+        self._resting_pose_degs = list(self._get_starting_angles_degs())
         self._save_arm_config()
         self.status_bar.showMessage("Saved as default — will load automatically on next startup", 4000)
+
+    def _get_starting_angles_degs(self) -> list[float]:
+        """Base + planar joint angles in degrees (same order as arm_config starting_angles)."""
+        return [math.degrees(self.arm_state.base_angle)] + [
+            math.degrees(a) for a in self.arm_state.planar_angles
+        ]
 
     def _save_arm_config(self) -> None:
         """Save current arm config (joints, lengths, offsets) to config/arm_config.json.
@@ -3443,9 +3690,7 @@ class MainWindow(QMainWindow):
 
     def _get_arm_config_dict(self) -> dict:
         """Return current arm configuration as a JSON-serializable dict (for export)."""
-        starting = [math.degrees(self.arm_state.base_angle)] + [
-            math.degrees(a) for a in self.arm_state.planar_angles
-        ]
+        starting = self._get_starting_angles_degs()
 
         # Motor configs with GPIO pins
         self._sync_pinout_panel()
@@ -3544,17 +3789,6 @@ class MainWindow(QMainWindow):
         # Rebuild homing config for current joint count
         self.homing_panel.rebuild(n)
 
-        # Apply starting angles if present
-        starting = d.get("starting_angles")
-        if starting and len(starting) >= n + 1:
-            self.start_pose_panel.rebuild(n)
-            from kinematics import ArmState as _AS
-            state = _AS(
-                base_angle=math.radians(float(starting[0])),
-                planar_angles=[math.radians(float(a)) for a in starting[1: n + 1]],
-            )
-            self.start_pose_panel.set_state(state)
-
         # Trigger full config rebuild to sync all panels
         self._on_config_changed()
 
@@ -3579,7 +3813,10 @@ class MainWindow(QMainWindow):
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
                 row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
+                _bs2 = int(jcfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs2, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
             else:
                 row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
@@ -3588,7 +3825,10 @@ class MainWindow(QMainWindow):
                 row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
                 row["accel"].setValue(int(jcfg.get("accel", 1000)))
                 row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                row["backlash"].setValue(int(jcfg.get("backlash_steps", 0)))
+                _bs2 = int(jcfg.get("backlash_steps", 0))
+                row["backlash_arcmin"].setValue(
+                    _backlash_steps_to_arcmin(_bs2, row["spr"].value(), row["gear"].value())
+                )
                 row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
                 row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
                 row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
@@ -3646,6 +3886,19 @@ class MainWindow(QMainWindow):
         elbow = d.get("elbow")
         if elbow is not None:
             self.config_panel.elbow_combo.setCurrentIndex(int(elbow))
+
+        # Zero position panel = motor zero offsets; restore sim pose (not zero trim)
+        self._sync_start_panel_from_motors()
+        starting_angles = d.get("starting_angles")
+        if starting_angles and len(starting_angles) >= n + 1:
+            self._resting_pose_degs = [float(starting_angles[i]) for i in range(n + 1)]
+            self.arm_state = ArmState(
+                base_angle=math.radians(self._resting_pose_degs[0]),
+                planar_angles=[math.radians(self._resting_pose_degs[i]) for i in range(1, n + 1)],
+            )
+            self._render_arm()
+        else:
+            self._resting_pose_degs = [0.0] * (n + 1)
 
         # Save motor_config.json now that pins are fully restored.
         # (_on_config_changed called earlier saves arm_config.json before pins are
@@ -3913,22 +4166,31 @@ class MainWindow(QMainWindow):
     # ── Timer / Animation Loop ────────────────────────────────────────
 
     def _on_timer_tick(self) -> None:
-        """Called ~60fps. Advance animation and update display."""
+        """500 Hz: advance animation with wall-clock dt, stream hardware every tick.
+
+        3D viewport and animation progress are redrawn at ~1/_VIEW_REDRAW_EVERY_N of
+        that rate so OpenGL is not asked to paint 500×/s.
+        """
         try:
+            self._main_loop_tick += 1
             now = time.perf_counter()
             dt = now - self._last_time
             self._last_time = now
+            # Cap a long stall (e.g. debugger) so one frame does not exhaust the move
+            dt = min(max(dt, 1.0e-6), 0.05)
 
-            # FPS smoothing
+            # Loop rate smoothing (main timer, not the throttled view rate)
             self._fps = 0.9 * self._fps + 0.1 * (1.0 / max(dt, 1e-6))
 
             if self.animator.is_running:
                 self.arm_state = self.animator.step(dt)
-                self._render_arm()
-                self.anim_panel.update_progress()
 
-            # Update stats periodically (every ~5 frames)
-            if int(now * 12) % 1 == 0:
+            if self._main_loop_tick % self._VIEW_REDRAW_EVERY_N == 0:
+                self._render_arm()
+                if self.animator.is_running:
+                    self.anim_panel.update_progress()
+
+            if self._main_loop_tick % self._STATS_EVERY_N == 0:
                 self._update_stats()
 
             # Check homing timeout (15 second limit)
@@ -3937,7 +4199,7 @@ class MainWindow(QMainWindow):
                 if elapsed > 15.0:
                     self._finish_homing_sequence(success=False)
 
-            # Stream joint angles to hardware (non-blocking, threaded)
+            # Stream joint angles to hardware (non-blocking, threaded) — 500 Hz
             self._try_send_hardware_update()
 
         except Exception as e:
@@ -4013,7 +4275,7 @@ class MainWindow(QMainWindow):
         elif text.startswith("OK"):
             self.hardware_panel.log_lbl.setText(f"Pico RX: {text} — commands are arriving")
             self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            # Rate-limit OK messages to 1 Hz — Pico echoes every frame at 60 fps
+            # Rate-limit OK messages to 1 Hz — Pico may echo on every host angle frame
             _now = time.monotonic()
             if _now - getattr(self, "_last_ok_log_time", 0.0) >= 1.0:
                 self._last_ok_log_time = _now
@@ -4101,6 +4363,23 @@ class MainWindow(QMainWindow):
                     self.terminal.log(f"Unexpected disconnect: {err.splitlines()[0]}", "error")
                     self.status_bar.showMessage("Hardware disconnected")
                     self._hardware = None
+                    self._hw_sync_nudge_shown = False
+            return
+
+        if not self.hardware_panel.is_hardware_sync_enabled():
+            if (
+                not self._hw_sync_nudge_shown
+                and self._hardware is not None
+                and self._hardware.is_connected
+            ):
+                self._hw_sync_nudge_shown = True
+                self.terminal.log(
+                    "Hardware: “Enable hardware synchronization” is off — the Pico is not sent "
+                    "J0:…,J1:… angle streams, so the physical arm will not follow JOG, IK, or waypoints. "
+                    "Homing, LED, STOP, and STEPT still work. Turn the checkbox on in "
+                    "Hardware (Pico 2W) to move the real arm.",
+                    "error",
+                )
             return
 
         angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
@@ -4173,6 +4452,7 @@ class MainWindow(QMainWindow):
             self._connecting_iface = None
             self.hardware_panel.deploy_btn.setEnabled(True)
             if ok:
+                self._hw_sync_nudge_shown = False
                 self._hardware = iface
                 # rx_callback is called from the RX background thread;
                 # use a queue+poll to safely update the GUI label.
@@ -4228,6 +4508,7 @@ class MainWindow(QMainWindow):
             self._connecting_iface = None
             self.hardware_panel.deploy_btn.setEnabled(True)
             if ok:
+                self._hw_sync_nudge_shown = False
                 self._hardware = iface
                 iface.rx_callback = self._on_pico_rx_threadsafe
                 self.hardware_panel.set_connected(True, msg)
@@ -4243,11 +4524,17 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, _poll_connect)
 
+    def _on_hw_sync_toggled(self, checked: bool) -> None:
+        """Allow the sync-off nudge to fire again if the user disables streaming."""
+        if not checked:
+            self._hw_sync_nudge_shown = False
+
     def _on_hardware_disconnect(self) -> None:
         """Handle Disconnect button."""
         if self._hardware is not None:
             self._hardware.disconnect()
             self._hardware = None
+        self._hw_sync_nudge_shown = False
         self._pos_stream_active = False
         self._pin_stream_active = False
         self._pico_pos.clear()
@@ -4289,119 +4576,7 @@ class MainWindow(QMainWindow):
         self._terminal_visible = False
         self._terminal_btn.setChecked(False)
 
-    # ── Terminal command dispatcher ───────────────────────────────────────
-
-    _HELP_TEXT = [
-        "Available commands:",
-        "─── Info & diagnostics ─────────────────────────────────────",
-        "  HELP                     — show this list",
-        "  STATUS                   — full system snapshot",
-        "  HISTORY                  — recent command history",
-        "  JOINTS                   — all joint angles (deg + rad)",
-        "  LINKS                    — list link lengths",
-        "  MOTORS                   — motor config table",
-        "  REACH                    — current reach vs max reach",
-        "  DIST                     — EE distance to current target",
-        "  BBOX                     — approximate workspace bounding box",
-        "  NEAREST                  — closest reachable point to target",
-        "  STATS                    — collision / singularity check",
-        "  LIMITS                   — show joint angle limits (* = custom)",
-        "  SETLIMIT J<n> <min> <max> — set joint n limits in degrees",
-        "  RESETLIMITS              — reset all limits to ±170°",
-        "  TARGET                   — print current IK target",
-        "  FK                       — forward kinematics dump",
-        "  LATENCY                  — measure Pico round-trip time",
-        "─── Display streams ────────────────────────────────────────",
-        "  POS                      — toggle 1 Hz joint-angle stream",
-        "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
-        "  PINS / PINS ON / PINS OFF — toggle 1 Hz GPIO pin debug stream (hw only)",
-        "  LIMITS / LIMITS ON / OFF — toggle limit switch status stream (debug homing)",
-        "  STOP                     — cancel homing, stop all motors and streams",
-        "─── Motion ─────────────────────────────────────────────────",
-        "  HOME                     — animate to vertical (all joints 0)",
-        "  PARK                     — fold arm to compact stowed pose",
-        "  EXTEND                   — fully extend all joints (max reach)",
-        "  FLIP                     — toggle elbow up/down",
-        "  ELBOW UP|DOWN            — set elbow configuration",
-        "  PAUSE                    — pause running animation",
-        "  RESUME                   — resume paused animation",
-        "  STOP                     — stop animation / sequence",
-        "  SPEED <0.1-5.0>          — animation speed multiplier",
-        "  JOG J<n> <deg>           — jog joint n by ±deg   (JOG J0 5)",
-        "  JOG X|Y|Z <dist>         — jog IK target          (JOG Z -10)",
-        "  NUDGE <axis> <val>       — alias for JOG (smaller increments)",
-        "  SETJOINT J<n> <deg>      — set joint to absolute angle",
-        "  GOTO <x> <y> <z>         — set absolute IK target",
-        "  SWEEP J<n> <s> <e> [n]   — sweep joint s°→e° in n steps",
-        "  SOLVE                    — re-run IK for current target",
-        "─── Waypoints ──────────────────────────────────────────────",
-        "  WAYPOINTS                — list loaded waypoints",
-        "  WP <n>                   — jump to waypoint n (1-based)",
-        "  ADDWP                    — add current EE as waypoint",
-        "  CLEARWP                  — clear all waypoints",
-        "  CLEARPATH                — alias for CLEARWP",
-        "  LOOP / LOOP ON / OFF     — toggle waypoint loop",
-        "  RUN                      — start waypoint sequence",
-        "  PLOTPATH                 — 2D matplotlib chart of waypoints",
-        "─── Named poses ────────────────────────────────────────────",
-        "  SAVEPOSE <name>          — save current joint angles",
-        "  LOADPOSE <name>          — restore saved pose",
-        "  POSES                    — list all saved poses",
-        "  DELETEPOSE <name>        — remove a saved pose",
-        "  DIFFPOSE <name>          — angle delta: current vs saved",
-        "  COMPARE <a> <b>          — angle delta between two saved poses",
-        "  STARTPOSE                — apply configured starting angles",
-        "─── Config ─────────────────────────────────────────────────",
-        "  CONFIG                   — dump full arm config as JSON",
-        "  ZERO                     — capture current pose as zero offsets",
-        "  SAVE                     — save all configs immediately",
-        "  RESET                    — prompt to reset all to defaults",
-        "  SETLINK <i> <len>        — change link i length",
-        "  SETBASE <height>         — set base vertical offset",
-        "  SETOFFSET <j> <mm>       — set joint j plane offset",
-        "  MARGIN <val>             — set collision margin",
-        "  ACCEL <sps²>             — set motor acceleration (all joints)",
-        "  CONSTRAINT / ON / OFF    — toggle EE orientation constraint",
-        "─── Hardware ───────────────────────────────────────────────",
-        "  CONNECT                  — connect (uses panel settings)",
-        "  DISCONNECT               — disconnect from hardware",
-        "  RECONNECT                — disconnect then reconnect",
-        "  WIFI                     — show WiFi config / forward to Pico",
-        "  SETPORT <n>              — change TCP port",
-        "  BROADCAST                — scan subnet for Pico on port 8888",
-        "  DEPLOY                   — trigger firmware deploy",
-        "  REBOOT                   — soft-reset the Pico",
-        "  PING                     — check Pico is alive",
-        "  LATENCY                  — measure round-trip ping time",
-        "  LED_TOGGLE               — toggle onboard LED",
-        "  MEM                      — Pico free memory",
-        "  TEMP                     — Pico CPU temperature",
-        "  LOG [n]                  — last n lines of hardware_log.txt",
-        "  LOG LEVEL <lvl>          — set log verbosity (DEBUG/INFO/WARN)",
-        "─── Scripting ──────────────────────────────────────────────",
-        "  ALIAS <name> <cmd>       — define a command shorthand",
-        "  ALIASES                  — list defined aliases",
-        "  MACRO <name> <c1;c2;…>   — define a named sequence",
-        "  MACROS                   — list defined macros",
-        "  EXEC <name>              — run a macro",
-        "  REPEAT <n> <cmd>         — repeat command n times (≤50)",
-        "  LOAD <file>              — run commands from a .txt file",
-        "  WATCH <s> <cmd>          — auto-repeat cmd every s seconds",
-        "  WATCH STOP               — stop WATCH",
-        "─── Viewport ───────────────────────────────────────────────",
-        "  ZOOM <val>               — set camera distance",
-        "  CAMERA <preset>          — ISO / TOP / FRONT / SIDE / BACK",
-        "  SCREENSHOT               — save viewport as PNG",
-        "─── Terminal ───────────────────────────────────────────────",
-        "  CLEAR                    — clear terminal output",
-        "  ECHO <text>              — print text to terminal",
-        "  MARK [label]             — timestamp divider",
-        "  UPTIME                   — session duration HH:MM:SS",
-        "  VERSION                  — Python / PyQt6 version info",
-        "  EXPORT [filename]        — save terminal log to file",
-        "  HISTORY                  — recent command history",
-        "  <any other text>         — sent verbatim to hardware",
-    ]
+    # ── Terminal command dispatcher  (HELP: sim_terminal.help_lines) ────
 
     def _on_terminal_command(self, text: str) -> None:
         """Dispatch a command typed in the terminal input line."""
@@ -4411,35 +4586,15 @@ class MainWindow(QMainWindow):
         upper = raw.upper()
         parts = raw.split()
 
-        # Track command history (capped at 200 entries)
-        if not hasattr(self, "_cmd_history"):
-            self._cmd_history = []
-        self._cmd_history.append(raw)
-        if len(self._cmd_history) > 200:
-            self._cmd_history = self._cmd_history[-200:]
-
-        # ── Shorthand: j0 60  or  j1 90  →  SETJOINT J<n> <deg> ──────────
-        import re as _re
-        _jshort = _re.fullmatch(r"[Jj](\d+)\s+([\-\d\.]+)", raw.strip())
-        if _jshort:
-            self._on_terminal_command(f"SETJOINT J{_jshort.group(1)} {_jshort.group(2)}")
+        if try_apply_shorthands(self, raw):
             return
-
-        # ── Homing: j0 home  or  j0 home -1  or  j0 home -1 300 ────────────
-        # Also: $j0 home -1  ($ prefix makes the override permanent)
-        _jhome = _re.fullmatch(r"(\$)?[Jj](\d+)\s+home(?:\s+([\-\d]+))?(?:\s+(\d+))?", raw.strip(), _re.IGNORECASE)
-        if _jhome:
-            is_permanent = _jhome.group(1) == "$"
-            j_idx = int(_jhome.group(2))
-            direction_override = int(_jhome.group(3)) if _jhome.group(3) else None
-            speed_override = int(_jhome.group(4)) if _jhome.group(4) else None
-            self._on_home_joint_requested(j_idx, direction_override, speed_override, is_permanent)
+        if try_pico_priority(self, raw, upper, parts):
             return
 
         # ── HELP ──────────────────────────────────────────────────────────
         if upper == "HELP":
             self.terminal.log("", "info")
-            for line in self._HELP_TEXT:
+            for line in TERMINAL_HELP_LINES:
                 self.terminal.log(line, "info")
             self.terminal.log("", "info")
 
@@ -4532,13 +4687,14 @@ class MainWindow(QMainWindow):
 
         # ── STOP ──────────────────────────────────────────────────────────
         elif upper == "STOP":
-            # Cancel PC-side homing, clear all streams
+            # Cancel PC-side homing, clear all streams, stop waypoint/animation
             if self._homing_active:
                 self._homing_active = False
                 self._homing_single_joint = False
                 self.hardware_panel.home_all_btn.setEnabled(
                     self._hardware is not None and self._hardware.is_connected
                 )
+            self._on_stop_sequence()
             self._limit_stream_enabled = False
             self._pos_log_enabled = False
             self._ee_log_enabled = False
@@ -4552,7 +4708,7 @@ class MainWindow(QMainWindow):
         # ── HOME ──────────────────────────────────────────────────────────
         elif upper == "HOME":
             self._on_reset_to_vertical()
-            self.terminal.log("Animating to home (all joints zero)", "info")
+            self.terminal.log("Animating to resting pose (config starting_angles)", "info")
 
         # ── ELBOW ─────────────────────────────────────────────────────────
         elif upper in ("ELBOW UP", "ELBOW DOWN"):
@@ -4632,14 +4788,28 @@ class MainWindow(QMainWindow):
             else:
                 self.terminal.log("No waypoints to run", "error")
 
-        # ── STOP ──────────────────────────────────────────────────────────
-        elif upper == "STOP":
-            self._on_stop_sequence()
-            self.terminal.log("Animation / sequence stopped", "info")
-
         # ── JOG ───────────────────────────────────────────────────────────
-        elif upper.startswith("JOG") and len(parts) == 3:
+        elif upper.startswith("JOG") and len(parts) >= 3:
             axis = parts[1].upper()
+            joint_abs = (
+                len(parts) == 4
+                and parts[3].upper() == "ABS"
+                and axis.startswith("J")
+            )
+            if not axis.startswith("J") and len(parts) != 3:
+                self.terminal.log(
+                    "JOG: use  JOG X|Y|Z <dist>  (3 words) or  JOG J<n> <deg> [ABS]",
+                    "error",
+                )
+                return
+            if axis.startswith("J") and not (
+                len(parts) == 3 or (len(parts) == 4 and parts[3].upper() == "ABS")
+            ):
+                self.terminal.log(
+                    "JOG: use  JOG J<n> <deg>  (relative)  or  JOG J<n> <deg> ABS  (absolute)",
+                    "error",
+                )
+                return
             try:
                 delta = float(parts[2])
             except ValueError:
@@ -4647,7 +4817,7 @@ class MainWindow(QMainWindow):
                 return
 
             if axis.startswith("J"):
-                # JOG J<n> <deg> — jog joint n directly
+                # JOG J<n> <deg> — relative ±deg, or JOG J<n> <deg> ABS for absolute
                 try:
                     idx = int(axis[1:])
                 except ValueError:
@@ -4656,22 +4826,40 @@ class MainWindow(QMainWindow):
                 n = self.arm_config.num_planar_joints
                 if idx == 0:
                     target_state = self.arm_state.copy()
-                    target_state.base_angle += math.radians(delta)
+                    if joint_abs:
+                        target_state.base_angle = math.radians(delta)
+                    else:
+                        target_state.base_angle += math.radians(delta)
                     target_deg = math.degrees(target_state.base_angle)
                     self.animator.start(self.arm_state, target_state)
-                    self.terminal.log(
-                        f"Jogged base by {delta:+.2f}° → {target_deg:.2f}°",
-                        "info",
-                    )
+                    if joint_abs:
+                        self.terminal.log(
+                            f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
+                            "info",
+                        )
+                    else:
+                        self.terminal.log(
+                            f"Jogged base by {delta:+.2f}° → {target_deg:.2f}°",
+                            "info",
+                        )
                 elif 1 <= idx <= n:
                     target_state = self.arm_state.copy()
-                    target_state.planar_angles[idx - 1] += math.radians(delta)
+                    if joint_abs:
+                        target_state.planar_angles[idx - 1] = math.radians(delta)
+                    else:
+                        target_state.planar_angles[idx - 1] += math.radians(delta)
                     target_deg = math.degrees(target_state.planar_angles[idx - 1])
                     self.animator.start(self.arm_state, target_state)
-                    self.terminal.log(
-                        f"Jogged J{idx} by {delta:+.2f}° → {target_deg:.2f}°",
-                        "info",
-                    )
+                    if joint_abs:
+                        self.terminal.log(
+                            f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
+                            "info",
+                        )
+                    else:
+                        self.terminal.log(
+                            f"Jogged J{idx} by {delta:+.2f}° → {target_deg:.2f}°",
+                            "info",
+                        )
                 else:
                     self.terminal.log(f"JOG: joint index {idx} out of range (0–{n})", "error")
                     return
@@ -4702,6 +4890,8 @@ class MainWindow(QMainWindow):
                 if 0 <= idx <= n:
                     current_offset = row["zero"].value()
                     row["zero"].setValue(current_offset + angles_deg[idx])
+            self._sync_start_panel_from_motors()
+            self._save_arm_config()
             self.terminal.log(
                 f"Zero offsets updated for {n + 1} joints — current pose is now zero",
                 "info",
@@ -4856,7 +5046,7 @@ class MainWindow(QMainWindow):
 
         # ── HISTORY ───────────────────────────────────────────────────────
         elif upper == "HISTORY":
-            hist = getattr(self, "_cmd_history", [])
+            hist = self.terminal.get_command_history()
             if not hist:
                 self.terminal.log("No command history", "info")
             else:
@@ -4899,9 +5089,13 @@ class MainWindow(QMainWindow):
 
         # ── STARTPOSE ─────────────────────────────────────────────────────
         elif upper == "STARTPOSE":
-            self.arm_state = self.start_pose_panel.get_state()
+            self.animator.cancel()
+            self.arm_state = self._arm_state_from_resting_degs()
+            self.joint_panel.update_angles(self.arm_state, ConstraintSet())
             self._render_arm()
-            self.terminal.log("Applied starting pose", "info")
+            degs = self._get_starting_angles_degs()
+            jstr = "  ".join(f"J{i}={degs[i]:+.1f}°" for i in range(len(degs)))
+            self.terminal.log(f"Sim pose set to saved starting pose ({jstr})", "info")
 
         # ── STATS ─────────────────────────────────────────────────────────
         elif upper == "STATS":
@@ -5135,9 +5329,9 @@ class MainWindow(QMainWindow):
                     _do_sweep_step()
 
         # ── NUDGE ─────────────────────────────────────────────────────────
-        elif upper.startswith("NUDGE") and len(parts) == 3:
+        elif upper.startswith("NUDGE") and len(parts) >= 3:
             # Same as JOG but default mental model is "tiny move"
-            self._on_terminal_command(f"JOG {parts[1]} {parts[2]}")
+            self._on_terminal_command("JOG " + " ".join(parts[1:]))
 
         # ── WP ────────────────────────────────────────────────────────────
         elif upper.startswith("WP") and len(parts) == 2:
@@ -5586,22 +5780,6 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"Motor accel → {val:.0f} steps/s² (all joints)", "info")
             except ValueError:
                 self.terminal.log("ACCEL: usage  ACCEL <steps/s²>", "error")
-
-        # ── MEM ───────────────────────────────────────────────────────────
-        elif upper == "MEM":
-            if self._hardware is not None:
-                self._hardware.send_raw("MEM\n")
-                self.terminal.log("MEM", "tx")
-            else:
-                self.terminal.log("MEM: not connected", "error")
-
-        # ── TEMP ──────────────────────────────────────────────────────────
-        elif upper == "TEMP":
-            if self._hardware is not None:
-                self._hardware.send_raw("TEMP\n")
-                self.terminal.log("TEMP", "tx")
-            else:
-                self.terminal.log("TEMP: not connected", "error")
 
         # ── WIFI (show panel info / forward to hardware) ───────────────────
         elif upper == "WIFI":

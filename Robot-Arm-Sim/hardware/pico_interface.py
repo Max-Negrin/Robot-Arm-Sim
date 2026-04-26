@@ -78,6 +78,172 @@ def list_serial_ports() -> list[str]:
         return []
 
 
+def _usb_angle_probe(ser) -> bool:
+    """True if a minimal J0 line gets ``OK`` from the robot protocol.
+
+    The MicroPython *REPL* treats ``J0:0.00`` as Python and responds with
+    ``SyntaxError`` and ``File "<stdin>"`` — so this distinguishes firmware
+    from a bare ``>>>`` prompt even when a stale boot line looked like
+    "firmware ready".
+    """
+    time.sleep(0.08)
+    try:
+        while ser.in_waiting:
+            ser.read(ser.in_waiting)
+    except Exception:
+        return False
+    try:
+        ser.write(b"J0:0.00\n")
+        ser.flush()
+    except Exception:
+        return False
+    deadline = time.monotonic() + 0.85
+    acc = b""
+    while time.monotonic() < deadline:
+        try:
+            n = ser.in_waiting
+            if n:
+                acc += ser.read(n)
+        except Exception:
+            return False
+        if b"SyntaxError" in acc or b"File \"<stdin>\"" in acc:
+            return False
+        if b"OK" in acc and b"SyntaxError" not in acc:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _looks_like_host_angle_protocol_line(text: str) -> bool:
+    """True if the line is a valid ``J0:…,J1:…,…`` update (same as firmware parse_command).
+
+    Some USB/CDC stacks (or test harnesses) can reflect host TX on the RX line. That must
+    not be classified as the MicroPython REPL.
+    """
+    t = text.strip()
+    if not t.startswith("J0:"):
+        return False
+    try:
+        for token in t.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if ":" not in token:
+                return False
+            key, val = token.split(":", 1)
+            if len(key) < 2 or key[0] != "J" or not key[1:].isdigit():
+                return False
+            float(val)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_likely_firmware_status_line(t: str) -> bool:
+    """Lines the robot script prints — never treat as REPL.
+
+    Substring heuristics (e.g. ``if "SyntaxError" in line``) can false-match angle data
+    or other benign text; this allowlist is checked first.
+    """
+    t = t.strip()
+    if not t:
+        return True
+    u = t.upper()
+    if u == "OK" or u.startswith("ERR:"):
+        return True
+    if t.startswith("POS:") or t.startswith("PINS:"):
+        return True
+    if t.startswith("MEM:") or t.startswith("TEMP:"):
+        return True
+    if t in (
+        "STOPPED",
+        "HOMING",
+        "HOMING_COMPLETE",
+        "firmware ready",
+        "Rebooting...",
+    ):
+        return True
+    if t.startswith("HOME J") or t.startswith("HOMING J") or t.startswith("Robot Arm"):
+        return True
+    if t.startswith("WARN:"):
+        return True
+    if t.startswith("WiFi "):
+        return True
+    if t.startswith("MPY:") or t.startswith("MicroPython "):
+        return True
+    if _looks_like_host_angle_protocol_line(t):
+        return True
+    if u.startswith("UPLOAD_") or u.startswith("PING "):
+        return True
+    return False
+
+
+def _is_repl_traceback_line(text: str) -> bool:
+    """Unmistakable REPL / traceback lines. Prefer strict prefixes over loose substrings."""
+    t = text.strip()
+    if _is_likely_firmware_status_line(t):
+        return False
+    if 'File "<stdin>"' in text or 'File \'<stdin>\'' in text:
+        return True
+    if t.startswith(">>>"):
+        return True
+    if "Traceback" in t and "most recent call" in t:
+        return True
+    # Exception lines; require prefix so we do not false-match on random substrings
+    for prefix in (
+        "SyntaxError",
+        "NameError",
+        "TypeError",
+        "ValueError",
+        "KeyError",
+        "IndexError",
+        "AttributeError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "OSError",
+        "RuntimeError",
+        "MemoryError",
+        "ZeroDivisionError",
+        "IndentationError",
+        "KeyboardInterrupt",
+    ):
+        if t.startswith(prefix):
+            return True
+    if t.lstrip().startswith("File "):
+        return True
+    if t == "^":  # traceback caret
+        return True
+    return False
+
+
+def _capture_repl_following_text(ser, pending_buf: bytes, first_line: str) -> str:
+    """Read additional serial lines after a REPL/traceback marker (best-effort for debugging)."""
+    out: list[str] = [first_line]
+    buf = bytearray(pending_buf)
+    t_end = time.monotonic() + 0.9
+    idle_rounds = 0
+    while time.monotonic() < t_end and len(out) < 120:
+        while b"\n" in buf:
+            line, rest = bytes(buf).split(b"\n", 1)
+            buf[:] = rest
+            t = line.decode("utf-8", errors="replace").strip()
+            if t:
+                out.append(t)
+        try:
+            n = ser.in_waiting
+        except Exception:
+            n = 0
+        if n:
+            buf.extend(ser.read(n))
+            idle_rounds = 0
+        else:
+            idle_rounds += 1
+            if idle_rounds > 20 and not buf:
+                break
+            time.sleep(0.02)
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------------------
 # Main interface class
 # ---------------------------------------------------------------------------
@@ -94,7 +260,7 @@ class PicoInterface:
         self._port: Optional[str] = None
         self._baud: int = BAUD_RATE
         self._lock = threading.Lock()
-        self._tx_queue: queue.Queue[bytes] = queue.Queue(maxsize=4)
+        self._tx_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
         self._worker: Optional[threading.Thread] = None
         self._rx_worker: Optional[threading.Thread] = None
         self._running = False
@@ -199,10 +365,13 @@ class PicoInterface:
             self._serial = ser
             self._port = target_port
             self._baud = baud
-            self._connected = True
+            # Not safe to set _connected until main.py is running: the TX thread
+            # can otherwise feed angle strings to the `>>>` REPL and cause
+            # SyntaxError / NameError.
+            self._connected = False
             self.last_error = ""
 
-        # Escape raw REPL and get to a known state before starting the TX thread.
+        # Escape raw REPL and get to a known state.
         # A previous failed deploy can leave the Pico stuck in raw REPL mode.
         try:
             ser.reset_input_buffer()
@@ -215,15 +384,11 @@ class PicoInterface:
         except Exception as exc:
             logger.debug("Pre-connect reset error: %s", exc)
 
-        self._running = True
-        self._worker = threading.Thread(
-            target=self._tx_loop, name="pico-tx", daemon=True
-        )
-        self._worker.start()
-        # RX worker starts AFTER boot-wait so connect() has exclusive serial reads
-
-        # Wait for main.py to boot, then PING it
+        # Wait for main.py before starting TX/RX: only this thread may read
+        # until we see the firmware banner, so nothing is written to the REPL
+        # during the boot window.
         ready = False
+        angle_probe_rejected = False
         try:
             deadline = time.monotonic() + 7.0
             buf = b""
@@ -233,33 +398,82 @@ class PicoInterface:
                 if chunk:
                     buf += chunk
                     if b"Robot Arm Pico Controller ready" in buf or b"firmware ready" in buf:
-                        # main.py printed its startup banner — now confirm with PING
+                        if not _usb_angle_probe(ser):
+                            logger.error(
+                                "Saw ready banner on %s but J0:0.00 did not return OK — "
+                                "the board is at the MicroPython REPL, not the robot firmware",
+                                target_port,
+                            )
+                            angle_probe_rejected = True
+                            break
                         ser.write(b"PING\n")
                         ser.flush()
-                        time.sleep(0.5)
+                        time.sleep(0.3)
                         buf += ser.read(ser.in_waiting)
                         logger.info("Pico firmware ready on %s", target_port)
                         ready = True
                         break
                 else:
                     time.sleep(0.05)
-            if not ready:
+            if not ready and not angle_probe_rejected:
                 logger.info("No ready banner after reset on %s, buf=%r", target_port, buf[:80])
         except Exception as exc:
             logger.debug("Boot wait error: %s", exc)
 
-        # Start RX reader now that boot-wait is done
+        if angle_probe_rejected:
+            with self._lock:
+                if self._serial and self._serial.is_open:
+                    try:
+                        self._serial.close()
+                    except Exception:
+                        pass
+                self._serial = None
+                self._port = None
+            msg = (
+                f"ERROR: connect probe failed on {target_port}\n"
+                "CAUSE: A ready banner appeared, but a test angle command (J0:0.00) was not\n"
+                "       answered with OK. The port is the MicroPython REPL, not the\n"
+                "       running robot script (e.g. main.py missing, crashed, or wrong board).\n"
+                "FIX:   Click Deploy to flash firmware, power-cycle the Pico, and connect again"
+            )
+            self.last_error = msg
+            logger.error(msg)
+            return False, msg
+
+        if not ready:
+            with self._lock:
+                if self._serial and self._serial.is_open:
+                    try:
+                        self._serial.close()
+                    except Exception:
+                        pass
+                self._serial = None
+                self._port = None
+            msg = (
+                f"ERROR: firmware did not start on {target_port} after soft reset\n"
+                "CAUSE: No 'firmware ready' / 'Robot Arm Pico Controller ready' banner from main.py\n"
+                "       (reconnect often leaves the board at the REPL if main.py is missing or crashed)\n"
+                "FIX:   Click Deploy to upload the firmware, then connect again"
+            )
+            self.last_error = msg
+            logger.error(msg)
+            return False, msg
+
+        with self._lock:
+            self._connected = True
+
+        self._running = True
+        self._worker = threading.Thread(
+            target=self._tx_loop, name="pico-tx", daemon=True
+        )
+        self._worker.start()
+
         self._rx_worker = threading.Thread(
             target=self._rx_loop, name="pico-rx", daemon=True
         )
         self._rx_worker.start()
 
-        if ready:
-            return True, f"Connected on {target_port} — Pico firmware ready ✓"
-        return True, (
-            f"Connected on {target_port} — firmware did not start automatically\n"
-            "Click Deploy to upload the firmware, then Disconnect and Connect again."
-        )
+        return True, f"Connected on {target_port} — Pico firmware ready ✓"
 
     def disconnect(self) -> None:
         """Close the serial connection gracefully."""
@@ -332,11 +546,14 @@ class PicoInterface:
 
     def _tx_loop(self) -> None:
         """Background thread: drains the TX queue and writes to serial."""
-        while self._running:
+        while self._running and self._connected:
             try:
                 msg = self._tx_queue.get(timeout=0.05)
             except queue.Empty:
                 continue
+
+            if not self._connected:
+                break
 
             with self._lock:
                 ser = self._serial
@@ -371,6 +588,19 @@ class PicoInterface:
                         text = line.decode("utf-8", errors="replace").strip()
                         if text:
                             logger.debug("RX: %s", text)
+                            if _is_repl_traceback_line(text):
+                                more = _capture_repl_following_text(ser, buf, text)
+                                buf = b""
+                                logger.error(
+                                    "Pico output looked like REPL / traceback. Captured (disconnecting):\n%s",
+                                    more[:4000],
+                                )
+                                self._on_disconnect(
+                                    "MicroPython error or REPL on serial (firmware may have crashed). "
+                                    "Check log for 'Captured' block; redeploy, reset, reconnect.",
+                                    details=more[:3000],
+                                )
+                                return
                             if self.rx_callback:
                                 self.rx_callback(text)
                 else:
@@ -379,13 +609,14 @@ class PicoInterface:
                 break
         logger.debug("RX loop exited")
 
-    def _on_disconnect(self, reason: str) -> None:
+    def _on_disconnect(self, reason: str, details: str = "") -> None:
         """Handle an unexpected disconnection."""
         self._connected = False
         self._running = False
+        cap = f"\nCAPTURED SERIAL (truncated):\n{details}\n" if (details and details.strip()) else ""
         self.last_error = (
             f"ERROR: Pico disconnected\n"
-            f"CAUSE: {reason}\n"
+            f"CAUSE: {reason}\n{cap}"
             "FIX:   Reconnect the USB cable and click 'Connect'"
         )
         logger.error("Pico disconnected: %s", reason)
