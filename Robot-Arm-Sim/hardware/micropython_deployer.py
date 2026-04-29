@@ -285,7 +285,10 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             parts.append(f'"home_pin": {j.get("home_pin")}')
             parts.append(f'"home_pin_polarity": "{j.get("home_pin_polarity", "NO")}"')
             parts.append(f'"home_direction": {j.get("home_direction", 1)}')
-            parts.append(f'"home_speed_sps": {j.get("home_speed_sps", 100)}')
+            _hsp = j.get("home_speed_sps", 100)
+            parts.append(f'"home_search_speed_sps": {int(j.get("home_search_speed_sps", _hsp))}')
+            parts.append(f'"home_speed_sps": {_hsp}')
+            parts.append(f'"home_backup_steps": {float(j.get("home_backup_steps", 5.0))}')
             # Must always be present when homing exists — firmware uses 0.0 as "no nudge" but
             # a non-zero "Return offset" in the Homing panel must be deployed (was omitted if 0.0)
             parts.append(
@@ -323,7 +326,7 @@ def _inject_wifi_config(
     password: str,
     port: int = 8888,
 ) -> str:
-    """Replace the WiFi config block in firmware_text with the supplied credentials."""
+    """Replace the WiFi config block. ENABLE_WIFI is True only when *ssid* is non-empty."""
     begin_marker = "# <<BEGIN_WIFI_CONFIG>>"
     end_marker   = "# <<END_WIFI_CONFIG>>"
     start = firmware_text.find(begin_marker)
@@ -331,12 +334,55 @@ def _inject_wifi_config(
     if start == -1 or end == -1:
         logger.warning("WiFi sentinels not found in firmware — WiFi config not injected")
         return firmware_text
+    enable = bool(ssid and str(ssid).strip())
+    # repr() for safe escaping of quotes/backslashes in SSID/password
     new_block = (
         f"# <<BEGIN_WIFI_CONFIG>>\n"
-        f'WIFI_SSID = "{ssid}"\n'
-        f'WIFI_PASSWORD = "{password}"\n'
-        f"TCP_PORT = {port}\n"
+        f"ENABLE_WIFI = {enable}\n"
+        f"WIFI_SSID = {repr(ssid)}\n"
+        f"WIFI_PASSWORD = {repr(password)}\n"
+        f"TCP_PORT = {int(port)}\n"
         f"# <<END_WIFI_CONFIG>>"
+    )
+    return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
+
+
+def _inject_step_us(firmware_text: str, step_us: int) -> str:
+    """Replace STEP_US in the firmware template (value from Hardware tab, µs)."""
+    begin_marker = "# <<BEGIN_STEP_US_CONFIG>>"
+    end_marker = "# <<END_STEP_US_CONFIG>>"
+    start = firmware_text.find(begin_marker)
+    end = firmware_text.find(end_marker)
+    if start == -1 or end == -1:
+        logger.warning("STEP_US sentinels not found — STEP_US not injected")
+        return firmware_text
+    su = max(50, min(2000, int(step_us)))
+    new_block = (
+        f"# <<BEGIN_STEP_US_CONFIG>>\n"
+        f"# Set at Deploy from the PC Hardware tab (main-loop period, µs).\n"
+        f"STEP_US = {su}\n"
+        f"# <<END_STEP_US_CONFIG>>"
+    )
+    return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
+
+
+def _inject_host_follow_max_sps(firmware_text: str, host_follow_max_sps: int) -> str:
+    """Replace HOST_FOLLOW_MAX_SPS (proportional cap on stepper host-follow rates)."""
+    begin_marker = "# <<BEGIN_HOST_FOLLOW_SPS_CAP>>"
+    end_marker = "# <<END_HOST_FOLLOW_SPS_CAP>>"
+    start = firmware_text.find(begin_marker)
+    end = firmware_text.find(end_marker)
+    if start == -1 or end == -1:
+        logger.warning("HOST_FOLLOW_MAX_SPS sentinels not found — cap not injected")
+        return firmware_text
+    hf = max(0, int(host_follow_max_sps))
+    new_block = (
+        f"# <<BEGIN_HOST_FOLLOW_SPS_CAP>>\n"
+        f"# Global ceiling for host-follow step rate (full steps/s), set from the PC Hardware tab at Deploy.\n"
+        f"# 0 = off — each joint uses its JOINTS max_sps as configured.\n"
+        f"# N > 0 — scale all joints proportionally so the fastest matches N when needed.\n"
+        f"HOST_FOLLOW_MAX_SPS = {hf}\n"
+        f"# <<END_HOST_FOLLOW_SPS_CAP>>"
     )
     return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
 
@@ -449,6 +495,8 @@ class MicroPythonDeployer:
 
     def deploy(self, port: str, joints_config: list[dict] | None = None,
                wifi_ssid: str = "", wifi_password: str = "", wifi_port: int = 8888,
+               step_us: int = 250,
+               host_follow_max_sps: int = 0,
                progress_cb=None) -> tuple[bool, str]:
         """Deploy ``firmware/pico_control_script.py`` to the Pico on *port*.
 
@@ -498,11 +546,23 @@ class MicroPythonDeployer:
             _prog(f"Injected {len(joints_config)} joint config(s) into firmware")
             logger.info("Injected %d joint configs into firmware", len(joints_config))
 
-        # Inject WiFi credentials if provided
-        if wifi_ssid:
-            firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, wifi_port)
-            _prog(f"Injected WiFi config: SSID={wifi_ssid!r}, port={wifi_port}")
-            logger.info("Injected WiFi config: SSID=%r port=%d", wifi_ssid, wifi_port)
+        firmware_text = _inject_step_us(firmware_text, step_us)
+        _prog(f"Injected STEP_US = {max(50, min(2000, int(step_us)))} µs (main loop period)")
+
+        firmware_text = _inject_host_follow_max_sps(firmware_text, host_follow_max_sps)
+        _hf = max(0, int(host_follow_max_sps))
+        if _hf:
+            _prog(f"Injected HOST_FOLLOW_MAX_SPS = {_hf} (proportional step-rate cap)")
+        else:
+            _prog("HOST_FOLLOW_MAX_SPS = 0 (no global cap on host-follow rates)")
+
+        # Always refresh WiFi block: ENABLE_WIFI True only when SSID is set (else USB-only firmware)
+        firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, wifi_port)
+        if wifi_ssid and str(wifi_ssid).strip():
+            _prog(f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, port={wifi_port}")
+            logger.info("Injected WiFi: SSID=%r port=%d", wifi_ssid, wifi_port)
+        else:
+            _prog("Firmware WiFi disabled (ENABLE_WIFI=False; fastest control loop)")
 
         # Deploy via raw serial REPL (no external tools needed)
         _prog("Deploying via raw serial REPL...")
@@ -525,6 +585,8 @@ class MicroPythonDeployer:
     def deploy_wifi(self, host: str, tcp_port: int = 8888,
                     joints_config: list[dict] | None = None,
                     wifi_ssid: str = "", wifi_password: str = "",
+                    step_us: int = 250,
+                    host_follow_max_sps: int = 0,
                     progress_cb=None) -> tuple[bool, str]:
         """Deploy firmware to the Pico over WiFi TCP (no USB required).
 
@@ -560,8 +622,18 @@ class MicroPythonDeployer:
             firmware_text = _inject_joints_config(firmware_text, joints_config)
             _prog(f"Injected {len(joints_config)} joint config(s) into firmware")
 
-        if wifi_ssid:
-            firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, tcp_port)
-            _prog(f"Injected WiFi config: SSID={wifi_ssid!r}, port={tcp_port}")
+        firmware_text = _inject_step_us(firmware_text, step_us)
+        _prog(f"Injected STEP_US = {max(50, min(2000, int(step_us)))} µs")
+
+        firmware_text = _inject_host_follow_max_sps(firmware_text, host_follow_max_sps)
+        _hf = max(0, int(host_follow_max_sps))
+        if _hf:
+            _prog(f"Injected HOST_FOLLOW_MAX_SPS = {_hf}")
+
+        firmware_text = _inject_wifi_config(
+            firmware_text, wifi_ssid or "", wifi_password or "", tcp_port
+        )
+        if wifi_ssid and str(wifi_ssid).strip():
+            _prog(f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, port={tcp_port}")
 
         return _deploy_via_wifi(host, tcp_port, firmware_text, progress_cb=progress_cb)

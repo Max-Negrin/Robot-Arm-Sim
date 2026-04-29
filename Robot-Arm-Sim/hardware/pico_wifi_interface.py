@@ -7,7 +7,8 @@ Drop-in replacement for PicoInterface when the Pico is connected over WiFi
 
 Architecture
 ------------
-- Background daemon TX thread drains a queue and sends over TCP at up to 60 Hz.
+- Background daemon TX thread drains the send queue as fast as enqueued (TCP). The GUI
+  rate-limits ``send_joint_angles`` using a nominal ``_baud`` hint on this interface.
 - Background daemon RX thread reads response lines and fires rx_callback.
 - Main thread calls ``send_joint_angles()`` non-blocking, same as serial version.
 
@@ -28,7 +29,7 @@ import threading
 import time
 from typing import Optional
 
-from .protocol import UPDATE_THRESHOLD_RAD, angles_changed, encode_angles
+from .protocol import UPDATE_THRESHOLD_RAD, angles_changed, encode_angles, encode_sync_line
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class PicoWifiInterface:
         self._last_angles: list[float] = []
         self.last_error: str = ""
         self.rx_callback = None   # callable(str) — called with each line from Pico
+        # Not UART speed — used only by MainWindow to estimate safe J0:… line rate (LAN TCP).
+        self._baud: int = 921600
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -285,6 +288,13 @@ class PicoWifiInterface:
             self._last_angles = list(angles_rad)
         except queue.Full:
             pass
+
+    def seed_pose_to_match_host(self, angles_rad: list[float]) -> None:
+        """Same as :meth:`PicoInterface.seed_pose_to_match_host` — see ``SYNC:`` in firmware."""
+        if not self._connected:
+            return
+        self.send_raw("STOP\n")
+        self.send_raw(encode_sync_line(angles_rad))
 
     def send_raw(self, text: str) -> None:
         """Queue a raw text command for transmission (non-blocking).

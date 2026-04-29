@@ -5,7 +5,7 @@ Main window with:
 - 3D OpenGL viewport (pyqtgraph GLViewWidget)
 - Collapsible sidebar panels for configuration, IK, constraints, math, animation
 - Dark theme via QPalette
-- ~500 Hz timer loop (animation + hardware), viewport redraw throttled
+- ~1 kHz timer (animation + sim); serial angle stream throttled to link capacity; viewport throttled
 """
 
 import json
@@ -40,7 +40,7 @@ from constraints import (
     check_table_collision, clamp_state,
 )
 from math_engine import MathEngine
-from animation import Animator
+from animation import Animator, motor_rad_limits_from_joint_cfgs
 from sim_terminal import (
     TERMINAL_HELP_LINES,
     try_apply_shorthands,
@@ -323,14 +323,15 @@ class JointOutputPanel(QGroupBox):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class InitialJointPanel(QGroupBox):
-    """Per-joint mechanical zero offset (deg) for sim ↔ hardware alignment.
+    """Per-joint zero offset (°) and configurable home / resting pose (°).
 
-    Values are the same as **Motor configuration → Zero offset** for each joint.
-    The firmware subtracts this from commanded angles so you can line up
-    "simulator 0° (links vertical / base forward)" with your real build.
+    **Zero offset** matches **Motor configuration → Zero offset** — subtracted on
+    the board so the simulator and hardware agree.
 
-    The 3D view uses absolute joint angles; changing zero here does not move
-    the model (it only changes the trim sent to the Pico and stored in config).
+    **Home pose** is saved as ``starting_angles`` in arm config — used for
+    *Reset to resting pose* and the default on load.
+
+    Changing zero trim does not move the 3D model; it changes what is sent to the Pico.
     """
 
     state_changed = pyqtSignal()
@@ -341,8 +342,8 @@ class InitialJointPanel(QGroupBox):
         layout = QVBoxLayout(self)
 
         blurb = QLabel(
-            "Set per-joint zero offset so hardware matches the simulator. "
-            "Deploy firmware after changing, or the Pico uses values from the last deploy."
+            "Zero offset: trim so hardware matches the sim (re-deploy after change). "
+            "Home pose: target joint angles for Reset and for saved starting_angles."
         )
         blurb.setStyleSheet("color: #888; font-size: 10px;")
         blurb.setWordWrap(True)
@@ -351,10 +352,22 @@ class InitialJointPanel(QGroupBox):
         # Form for base + planar joints (degrees of zero offset)
         self.form = QFormLayout()
         self.spinboxes: list[QDoubleSpinBox] = []
+        self.home_spins: list[QDoubleSpinBox] = []
+        self._home_form = QFormLayout()
 
         layout.addLayout(self.form)
+        home_hdr = QLabel("<b>Home / resting pose (°)</b>")
+        home_hdr.setStyleSheet("font-size: 10px;")
+        layout.addWidget(home_hdr)
+        home_help = QLabel(
+            "Used when you click “Reset to resting pose” and stored in config as starting_angles."
+        )
+        home_help.setStyleSheet("color: #888; font-size: 9px;")
+        home_help.setWordWrap(True)
+        layout.addWidget(home_help)
+        layout.addLayout(self._home_form)
 
-        copy_btn = QPushButton("Copy from arm (calibration)")
+        copy_btn = QPushButton("Copy zero trim from current arm")
         copy_btn.setToolTip(
             "Set each zero offset to the current simulator joint angle in degrees. "
             "Use when the physical arm matches the pose and you want to record trim."
@@ -362,25 +375,47 @@ class InitialJointPanel(QGroupBox):
         copy_btn.clicked.connect(self._request_copy_from_arm)
         layout.addWidget(copy_btn)
 
+        self.home_from_arm_btn = QPushButton("Set home pose from current arm")
+        self.home_from_arm_btn.setToolTip(
+            "Set the home / resting joint angles to the current simulator pose (degrees)."
+        )
+        self.home_from_arm_btn.clicked.connect(self._request_home_from_arm)
+        layout.addWidget(self.home_from_arm_btn)
+
+        self.save_home_btn = QPushButton("Save home / resting position to config")
+        self.save_home_btn.setToolTip(
+            "Write the home / resting joint angles (starting_angles) and full arm config "
+            "to config/arm_config.json. Angles in the “Home / resting pose (°)” fields above are saved."
+        )
+        self.save_home_btn.clicked.connect(self._request_save_home)
+        layout.addWidget(self.save_home_btn)
+
         self.reset_v_btn = QPushButton("Reset to resting pose")
         self.reset_v_btn.setToolTip(
-            "Clear all zero offsets to 0° and set the 3D arm to the saved starting "
-            "joint pose (same as config starting_angles, shown under Joint State after load)."
+            "Clear all zero offsets to 0° and set the 3D arm to the home pose above "
+            "(saved as starting_angles in arm_config.json)."
         )
         self.reset_v_btn.clicked.connect(self.reset_to_vertical.emit)
         layout.addWidget(self.reset_v_btn)
 
         self._copy_callback = None
+        self._home_from_arm_callback = None
+        self._save_home_callback = None
 
     def rebuild(self, n: int) -> None:
         """Rebuild spinboxes for base + n planar joints."""
         for sb in self.spinboxes:
             sb.deleteLater()
+        for sb in self.home_spins:
+            sb.deleteLater()
         while self.form.count():
             self.form.removeRow(0)
+        while self._home_form.count():
+            self._home_form.removeRow(0)
         self.spinboxes = []
+        self.home_spins = []
 
-        def _mk_spin() -> QDoubleSpinBox:
+        def _mk_zero_spin() -> QDoubleSpinBox:
             s = QDoubleSpinBox()
             s.setRange(-360.0, 360.0)
             s.setSingleStep(1.0)
@@ -391,18 +426,51 @@ class InitialJointPanel(QGroupBox):
             s.valueChanged.connect(self.state_changed.emit)
             return s
 
-        base_spin = _mk_spin()
+        def _mk_home_spin() -> QDoubleSpinBox:
+            s = QDoubleSpinBox()
+            s.setRange(-3600.0, 3600.0)
+            s.setSingleStep(1.0)
+            s.setDecimals(1)
+            s.setValue(0.0)
+            s.setSuffix(" °")
+            s.setToolTip("Joint angle (simulator frame) for this home / resting target.")
+            s.valueChanged.connect(self.state_changed.emit)
+            return s
+
+        self.form.addRow(QLabel("<b>Zero trim (°)</b>"), QLabel(""))
+        base_spin = _mk_zero_spin()
         self.form.addRow("Base zero:", base_spin)
         self.spinboxes.append(base_spin)
 
         for i in range(n):
-            spin = _mk_spin()
+            spin = _mk_zero_spin()
             self.form.addRow(f"Joint {i + 1} zero:", spin)
             self.spinboxes.append(spin)
+
+        hb = _mk_home_spin()
+        self._home_form.addRow("Base home:", hb)
+        self.home_spins.append(hb)
+        for i in range(n):
+            hs = _mk_home_spin()
+            self._home_form.addRow(f"Joint {i + 1} home:", hs)
+            self.home_spins.append(hs)
 
     def get_values(self) -> list[float]:
         """Return [base, j1, …] zero offset in degrees (same order as motor rows)."""
         return [s.value() for s in self.spinboxes]
+
+    def get_home_degs(self) -> list[float]:
+        """Base + planar home / resting joint angles in degrees (starting_angles)."""
+        return [s.value() for s in self.home_spins]
+
+    def set_home_degs(self, degs: list[float]) -> None:
+        if not self.home_spins or not degs:
+            return
+        n = min(len(self.home_spins), len(degs))
+        for i in range(n):
+            self.home_spins[i].blockSignals(True)
+            self.home_spins[i].setValue(float(degs[i]))
+            self.home_spins[i].blockSignals(False)
 
     def set_values(self, degs: list[float]) -> None:
         """Set spinboxes. Emits state_changed once at the end."""
@@ -426,9 +494,23 @@ class InitialJointPanel(QGroupBox):
     def set_copy_callback(self, callback) -> None:
         self._copy_callback = callback
 
+    def set_home_from_arm_callback(self, callback) -> None:
+        self._home_from_arm_callback = callback
+
+    def set_save_home_callback(self, callback) -> None:
+        self._save_home_callback = callback
+
     def _request_copy_from_arm(self) -> None:
         if self._copy_callback:
             self._copy_callback()
+
+    def _request_home_from_arm(self) -> None:
+        if self._home_from_arm_callback:
+            self._home_from_arm_callback()
+
+    def _request_save_home(self) -> None:
+        if self._save_home_callback:
+            self._save_home_callback()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1186,6 +1268,19 @@ def _arcmin_to_backlash_steps(arcmin: float, spr: int, gear: float) -> int:
     return max(0, int(round(arcmin * total / 21600.0)))
 
 
+def _backlash_angle_rad_from_motor_cfg(cfg: dict) -> float:
+    """Output-shaft backlash as radians from stored full steps (same as firmware)."""
+    steps = int(cfg.get("backlash_steps", 0) or 0)
+    if steps <= 0:
+        return 0.0
+    spr = float(cfg.get("steps_per_rev", 4096))
+    gear = float(cfg.get("gear_ratio", 1.0))
+    steps_out = spr * gear
+    if steps_out <= 0:
+        return 0.0
+    return 2.0 * math.pi * (float(steps) / steps_out)
+
+
 class MotorConfigPanel(QGroupBox):
     """Full per-joint motor configuration editor.
 
@@ -1312,7 +1407,11 @@ class MotorConfigPanel(QGroupBox):
             gear.setDecimals(2)
             gear.setSingleStep(0.5)
             gear.setValue(1.0)
-            gear.setToolTip("External gear reduction ratio (1.0 = direct drive)")
+            gear.setToolTip(
+                "Output gear vs motor (1.0 = direct). Higher ratio reduces effective °/s for the same sps, "
+                "so a joint with a large reduction often needs a higher max speed (sps) to keep up in moves "
+                "that must finish in one shared time with other joints."
+            )
             stepper_form.addRow("Gear ratio:", gear)
 
             invert_dir_widget = QWidget()
@@ -1346,14 +1445,28 @@ class MotorConfigPanel(QGroupBox):
             max_sps.setRange(1, 50000)
             max_sps.setValue(500)
             max_sps.setSuffix(" sps")
-            max_sps.setToolTip("Maximum motor speed in steps per second")
+            max_sps.setToolTip(
+                "Maximum **motor** full steps per second at the driver.\n\n"
+                "Output-shaft speed depends on Steps/rev × Gear: output °/s ≈ max_sps ÷ (steps/rev × gear) × 360. "
+                "A high gear (e.g. J2=70× vs J1=20×) needs far more motor steps per degree at the arm, so "
+                "a higher max_sps on J2 can still be **slower** at the output than a lower‑gear joint — see "
+                "“Steps/output” below.\n\n"
+                "The sim uses these limits to set one common move duration; coordinated moves run only as fast "
+                "as the tightest joint allows.\n\n"
+                "On the Pico, host follow averages up to this max_sps (Deploy to sync JOINTS). "
+                "If motion stutters, raise STEP_US in Hardware or lower max_sps."
+            )
             stepper_form.addRow("Max speed:", max_sps)
 
             accel = QSpinBox()
             accel.setRange(1, 200000)
             accel.setValue(1000)
             accel.setSuffix(" sps²")
-            accel.setToolTip("Acceleration ramp rate in steps per second²")
+            accel.setToolTip(
+                "Acceleration limit in full steps per second² — used by the sim for move timing and, "
+                "after Deploy, by the Pico to **ramp** host-follow speed (smoother starts/stops than hitting "
+                "max sps instantly). Lower = gentler; higher = snappier."
+            )
             stepper_form.addRow("Accel:", accel)
 
             jerk = QSpinBox()
@@ -1520,11 +1633,19 @@ class MotorConfigPanel(QGroupBox):
                     r["derived"].setText("")
                     self.config_changed.emit()
                     return
-                is_28byj = "28BYJ" in text
                 spr_val = r["spr"].value()
                 gear_val = r["gear"].value()
-                total = spr_val * gear_val
-                r["derived"].setText(f"{total:.0f} steps/output-rev")
+                total = float(spr_val) * float(gear_val)
+                if total <= 0:
+                    r["derived"].setText("—")
+                    self.config_changed.emit()
+                    return
+                ms = float(r["max_sps"].value())
+                # Same formula as animation.motor_rad_limits_from_joint_cfgs: ω = max_sps * 2π / steps_out
+                deg_per_s = (ms / total) * 360.0
+                r["derived"].setText(
+                    f"{total:.0f} steps/output-rev  ·  max_sps → ≈ {deg_per_s:.1f}°/s @ output shaft"
+                )
                 bs = _arcmin_to_backlash_steps(
                     r["backlash_arcmin"].value(), spr_val, gear_val
                 )
@@ -1537,8 +1658,10 @@ class MotorConfigPanel(QGroupBox):
             driver_combo.currentTextChanged.connect(_on_driver_changed)
             spr.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             gear.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
+            max_sps.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             backlash_arcmin.valueChanged.connect(_on_backlash_arcmin_changed)
             _update_derived(None, row)
+            row["_refresh_derived"] = lambda r=row: _update_derived(None, r)
 
         # Restore previously set values for joints that still exist
         for row in self._rows:
@@ -1578,6 +1701,11 @@ class MotorConfigPanel(QGroupBox):
                 row["invert_dir_check"].setChecked(bool(cfg.get("invert_dir", False)))
                 row["dir_setup_spin"].setValue(int(cfg.get("dir_setup_us", 5)))
             row["zero"].setValue(float(cfg.get("zero_offset_deg", 0.0)))
+
+        for row in self._rows:
+            rfn = row.get("_refresh_derived")
+            if callable(rfn):
+                rfn()
 
     # ── Data access ────────────────────────────────────────────────────────
 
@@ -1727,6 +1855,11 @@ class MotorConfigPanel(QGroupBox):
                 row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
             row["zero"].setValue(float(jcfg.get("zero_offset_deg", 0.0)))
 
+        for row in self._rows:
+            rfn = row.get("_refresh_derived")
+            if callable(rfn):
+                rfn()
+
         logger.info("Motor config loaded from %s", path)
 
         # Emit pin data so MainWindow can restore PinoutPanel spinboxes
@@ -1756,7 +1889,9 @@ class HomingPanel(QGroupBox):
     - Home switch GPIO pin
     - Polarity (NO = active-high, NC = active-low)
     - Homing direction (+1 forward, -1 backward)
-    - Homing approach speed (steps/sec)
+    - Search speed (steps/sec) — move toward the switch before first contact
+    - Fine speed (steps/sec) — backup, precision re-approach, leaving switch
+    - Backup distance (output steps) — min travel to clear the switch
 
     Settings persist via motor_config.json alongside motor parameters.
     Firmware will poll these pins and zero position when detected.
@@ -1802,7 +1937,9 @@ class HomingPanel(QGroupBox):
             "home_pin": QSpinBox(),
             "polarity": QComboBox(),
             "direction": QComboBox(),
+            "search_speed": QSpinBox(),
             "speed": QSpinBox(),
+            "backup_steps": QSpinBox(),
             "home_offset": QDoubleSpinBox(),
             "limits_enabled": QCheckBox("Enable software limits"),
             "limit_min": QDoubleSpinBox(),
@@ -1821,11 +1958,28 @@ class HomingPanel(QGroupBox):
         row["direction"].addItems(["+1 (forward)", "-1 (backward)"])
         row["direction"].currentIndexChanged.connect(self._on_changed)
 
+        row["search_speed"].setRange(1, 5000)
+        row["search_speed"].setValue(5)
+        row["search_speed"].setSuffix(" sps")
+        row["search_speed"].setToolTip(
+            "Open-loop rate toward the home switch until the first contact (search phase)."
+        )
+        row["search_speed"].valueChanged.connect(self._on_changed)
+
         row["speed"].setRange(1, 5000)
         row["speed"].setValue(5)
         row["speed"].setSuffix(" sps")
-        row["speed"].setToolTip("Homing approach speed — use low values (5-20 sps) to avoid damage")
+        row["speed"].setToolTip(
+            "Open-loop rate for backup, precision re-approach, and the first step off the switch."
+        )
         row["speed"].valueChanged.connect(self._on_changed)
+
+        row["backup_steps"].setRange(1, 1_000_000)
+        row["backup_steps"].setValue(5)
+        row["backup_steps"].setToolTip(
+            "Minimum full output steps to back off after first contact, before the slow re-approach."
+        )
+        row["backup_steps"].valueChanged.connect(self._on_changed)
 
         row["home_offset"].setRange(-3600.0, 3600.0)
         row["home_offset"].setValue(0.0)
@@ -1870,7 +2024,9 @@ class HomingPanel(QGroupBox):
         layout.addRow("Home Pin (GP):", row["home_pin"])
         layout.addRow("Polarity:", row["polarity"])
         layout.addRow("Direction:", row["direction"])
-        layout.addRow("Speed (sps):", row["speed"])
+        layout.addRow("Search speed (sps):", row["search_speed"])
+        layout.addRow("Fine speed (sps):", row["speed"])
+        layout.addRow("Backup (min steps):", row["backup_steps"])
         layout.addRow("Return Offset:", row["home_offset"])
         layout.addRow("", row["limits_enabled"])
         layout.addRow("Min Limit:", row["limit_min"])
@@ -1911,7 +2067,9 @@ class HomingPanel(QGroupBox):
                 "home_pin": row["home_pin"].value(),
                 "home_pin_polarity": polarity,
                 "home_direction": direction,
+                "home_search_speed_sps": row["search_speed"].value(),
                 "home_speed_sps": row["speed"].value(),
+                "home_backup_steps": row["backup_steps"].value(),
                 "home_offset_deg": row["home_offset"].value(),
                 "limits_enabled": limits_on,
                 "limit_min_deg": row["limit_min"].value(),
@@ -1942,9 +2100,22 @@ class HomingPanel(QGroupBox):
             row["direction"].setCurrentIndex(0 if direction == 1 else 1)
             row["direction"].blockSignals(False)
 
+            fine_s = int(config.get("home_speed_sps", 5))
+            row["search_speed"].blockSignals(True)
+            # Older configs: firmware used 2× fine for search; pre-fill so behavior matches
+            if "home_search_speed_sps" in config:
+                row["search_speed"].setValue(int(config["home_search_speed_sps"]))
+            else:
+                row["search_speed"].setValue(2 * fine_s)
+            row["search_speed"].blockSignals(False)
+
             row["speed"].blockSignals(True)
-            row["speed"].setValue(config.get("home_speed_sps", 5))
+            row["speed"].setValue(fine_s)
             row["speed"].blockSignals(False)
+
+            row["backup_steps"].blockSignals(True)
+            row["backup_steps"].setValue(int(config.get("home_backup_steps", 5)))
+            row["backup_steps"].blockSignals(False)
 
             row["home_offset"].blockSignals(True)
             row["home_offset"].setValue(config.get("home_offset_deg", 0.0))
@@ -1979,7 +2150,8 @@ class HardwarePanel(QGroupBox):
     - Connection type radio buttons to switch between USB and WiFi
     - Connection status display (red/green)
 
-    When connected, the MainWindow timer sends joint angles at up to 500 Hz.
+    When connected, joint angles are streamed at a serial-safe rate (see
+    ``_hardware_angle_stream_min_interval_s``), not at the full 1 kHz sim tick.
     """
 
     # Emitted when user changes hardware enable state
@@ -2004,7 +2176,8 @@ class HardwarePanel(QGroupBox):
         self.enable_cb = QCheckBox("Enable hardware synchronization")
         self.enable_cb.setToolTip(
             "Must be ON for JOG, IK (Update/Space), and waypoints to move the real arm — "
-            "the PC sends J0:…,J1:… at up to 500 Hz.\n"
+            "the PC sends J0:…,J1:… as fast as the serial link allows (typically ~100–200 Hz "
+            "at 115200 baud), with the sim stepped at 1 kHz.\n"
             "When OFF, the 3D sim still moves but the Pico only receives one-off commands "
             "(homing, LED, STOP, STEPT, etc.), not continuous angles."
         )
@@ -2055,6 +2228,35 @@ class HardwarePanel(QGroupBox):
         self.baud_combo.setCurrentText("115200")
         baud_row.addWidget(self.baud_combo)
         usb_layout.addLayout(baud_row)
+
+        step_us_row = QHBoxLayout()
+        step_us_row.addWidget(QLabel("STEP_US:"))
+        self.step_us_spin = QSpinBox()
+        self.step_us_spin.setRange(50, 2000)
+        self.step_us_spin.setValue(250)
+        self.step_us_spin.setSingleStep(10)
+        self.step_us_spin.setSuffix(" µs")
+        self.step_us_spin.valueChanged.connect(self._update_step_us_tooltip)
+        self._update_step_us_tooltip()
+        step_us_row.addWidget(self.step_us_spin)
+        usb_layout.addLayout(step_us_row)
+
+        cap_row = QHBoxLayout()
+        cap_row.addWidget(QLabel("Host max sps:"))
+        self.host_follow_max_sps_spin = QSpinBox()
+        self.host_follow_max_sps_spin.setRange(0, 200_000)
+        self.host_follow_max_sps_spin.setValue(0)
+        self.host_follow_max_sps_spin.setSingleStep(500)
+        self.host_follow_max_sps_spin.setSpecialValueText("off")
+        self.host_follow_max_sps_spin.setToolTip(
+            "Global cap on host-follow full step rate (matches Pico HOST_FOLLOW_MAX_SPS at Deploy).\n"
+            "0 = off (each joint uses its Motor tab max sps).\n"
+            "N > 0 = scale every stepper proportionally so the fastest joint runs at at most N "
+            "(e.g. J2=10000, J0=5000, N=4000 → effective 4000 and 2000).\n"
+            "Does not scale up when all joints are already below N."
+        )
+        cap_row.addWidget(self.host_follow_max_sps_spin)
+        usb_layout.addLayout(cap_row)
 
         layout.addWidget(self._usb_widget)
 
@@ -2213,6 +2415,12 @@ class HardwarePanel(QGroupBox):
                 self.baud_combo.setCurrentIndex(idx)
         if "hardware_sync" in data:
             self.enable_cb.setChecked(bool(data["hardware_sync"]))
+        if "firmware_step_us" in data:
+            self.step_us_spin.setValue(int(max(50, min(2000, data["firmware_step_us"]))))
+        if "firmware_host_follow_max_sps" in data:
+            self.host_follow_max_sps_spin.setValue(
+                int(max(0, min(200_000, int(data["firmware_host_follow_max_sps"]))))
+            )
 
     def save_state(self) -> dict:
         """Return current hardware panel state as a JSON-serializable dict."""
@@ -2225,7 +2433,23 @@ class HardwarePanel(QGroupBox):
             "usb_port": self.get_port(),
             "baud": self.get_baud(),
             "hardware_sync": self.is_hardware_sync_enabled(),
+            "firmware_step_us": self.get_step_us(),
+            "firmware_host_follow_max_sps": self.get_host_follow_max_sps(),
         }
+
+    def get_step_us(self) -> int:
+        """Control-loop period (µs) written into firmware at Deploy."""
+        try:
+            return int(max(50, min(2000, self.step_us_spin.value())))
+        except Exception:
+            return 250
+
+    def get_host_follow_max_sps(self) -> int:
+        """Proportional host-follow cap (full steps/s); 0 = disabled. Written at Deploy."""
+        try:
+            return int(max(0, min(200_000, self.host_follow_max_sps_spin.value())))
+        except Exception:
+            return 0
 
     def set_connected(self, connected: bool, message: str = "") -> None:
         self._connected = connected
@@ -2277,6 +2501,20 @@ class HardwarePanel(QGroupBox):
         return self.wifi_pw_edit.text()
 
     # ── Internal ───────────────────────────────────────────────────────────
+
+    def _update_step_us_tooltip(self) -> None:
+        """Show STEP_US and the corresponding target loop frequency (updates live)."""
+        v = max(1, int(self.step_us_spin.value()))
+        hz = 1_000_000.0 / v
+        if hz >= 1000.0:
+            rate_line = f"Target loop rate ≈ {hz:.0f} Hz ({hz / 1000.0:.2f} kHz) — 1 / {v} µs."
+        else:
+            rate_line = f"Target loop rate ≈ {hz:.1f} Hz — 1 / {v} µs."
+        self.step_us_spin.setToolTip(
+            "Main control-loop period on the Pico (injected into firmware at Deploy).\n"
+            + rate_line
+            + "\nLower value = faster loop but more CPU load; raise if steps miss or timing jitters."
+        )
 
     def _on_mode_changed(self, usb_checked: bool) -> None:
         self._usb_widget.setVisible(usb_checked)
@@ -2598,7 +2836,10 @@ class HelpDialog(QWidget):
         for panel, desc in [
             ("Arm Configuration", "Link count, lengths, elbow"),
             ("Target Position", "XYZ goal + approach angle"),
-            ("Zero position", "Per-joint zero offset; hardware trim (same as Motor → Zero offset)"),
+            (
+                "Zero position",
+                "Zero trim; home / resting pose (°). Use “Save home / resting position to config” for starting_angles",
+            ),
             ("Joint Plane Offsets", "Per-joint Z offsets"),
             ("End Effector", "Orientation constraint"),
             ("Custom Math", "SymPy joint expressions"),
@@ -2914,9 +3155,11 @@ class TerminalLogHandler(logging.Handler):
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    TIMER_INTERVAL_MS = 2  # 500 Hz — smooth hardware path (viewport redraw throttled)
-    # At 500 Hz, refresh GL view / progress every N ticks (~62 Hz for N=8)
+    TIMER_INTERVAL_MS = 1  # 1000 Hz sim + smooth animation steps
+    # Idle: GL ~125 Hz (N=8). While animating, GL at ~125 Hz; arm state still at 1 kHz.
     _VIEW_REDRAW_EVERY_N = 8
+    # Full-rate GL during movement is expensive; 125 fps is enough for smooth motion
+    _VIEW_REDRAW_EVERY_N_ANIM = 8
     # Expensive stats panel ~10× per second
     _STATS_EVERY_N = 50
 
@@ -2968,6 +3211,8 @@ class MainWindow(QMainWindow):
         self._last_time = time.perf_counter()
         self._main_loop_tick = 0
         self._fps = 60.0
+        self._last_hw_angle_send_mono: float = 0.0
+        self._bottleneck_status_shown: bool = False
 
         # Apply dark theme
         self._apply_dark_theme()
@@ -3189,6 +3434,8 @@ class MainWindow(QMainWindow):
         self.start_pose_panel.state_changed.connect(self._on_start_pose_changed)
         self.start_pose_panel.reset_to_vertical.connect(self._on_start_pose_zero_vertical_reset)
         self.start_pose_panel.set_copy_callback(self._copy_arm_to_start_pose)
+        self.start_pose_panel.set_home_from_arm_callback(self._copy_home_pose_from_arm)
+        self.start_pose_panel.set_save_home_callback(self._on_save_home_pose)
         self.offset_panel.config_changed.connect(self._on_offsets_changed)
 
         # Waypoint sequence state
@@ -3200,6 +3447,9 @@ class MainWindow(QMainWindow):
         self._connecting_iface = None   # in-flight iface during connect worker
         # One-time terminal hint when connected but angle streaming is off (JOG/IK need sync on)
         self._hw_sync_nudge_shown: bool = False
+        # PC-side direction-reversal backlash (see _apply_direction_backlash_to_angles)
+        self._hw_bl_prev: list[float] | None = None
+        self._hw_bl_pdelta: list[float] | None = None
         import queue as _q
         self._pico_rx_queue: _q.Queue = _q.Queue()  # thread-safe RX message queue
 
@@ -3371,7 +3621,13 @@ class MainWindow(QMainWindow):
                 motor_cfg["home_pin"] = homing_cfg["home_pin"]
                 motor_cfg["home_pin_polarity"] = homing_cfg["home_pin_polarity"]
                 motor_cfg["home_direction"] = homing_cfg["home_direction"]
+                motor_cfg["home_search_speed_sps"] = int(
+                    homing_cfg.get("home_search_speed_sps", homing_cfg["home_speed_sps"])
+                )
                 motor_cfg["home_speed_sps"] = homing_cfg["home_speed_sps"]
+                motor_cfg["home_backup_steps"] = int(
+                    homing_cfg.get("home_backup_steps", 5)
+                )
                 # Required on-Pico: post-touch "return offset" after precision (deg → steps in firmware)
                 motor_cfg["home_offset_deg"] = float(
                     homing_cfg.get("home_offset_deg", 0.0)
@@ -3379,9 +3635,12 @@ class MainWindow(QMainWindow):
         return motor_configs
 
     def _arm_state_from_resting_degs(self) -> ArmState:
-        """Build ArmState from ``_resting_pose_degs`` (base + planar, degrees)."""
+        """Build ArmState from the configured home pose (Zero position panel) or cache."""
         n = self.arm_config.num_planar_joints
-        degs = self._resting_pose_degs
+        if self.start_pose_panel.home_spins:
+            degs = self.start_pose_panel.get_home_degs()
+        else:
+            degs = self._resting_pose_degs
         if not degs or len(degs) < n + 1:
             return ArmState(0.0, [0.0] * n)
         return ArmState(
@@ -3389,10 +3648,60 @@ class MainWindow(QMainWindow):
             planar_angles=[math.radians(float(degs[i])) for i in range(1, n + 1)],
         )
 
+    def _anim_motor_limits(self) -> list[tuple[float, float]] | None:
+        """(ω, α) per joint in rad/s and rad/s² from Motor configuration; None if not ready."""
+        n = 1 + self.arm_config.num_planar_joints
+        rows = getattr(self.motor_config_panel, "_rows", None) or []
+        if len(rows) < n:
+            return None
+        try:
+            cfgs = self.motor_config_panel.get_joint_configs()
+            if len(cfgs) < n:
+                return None
+            cap = self.hardware_panel.get_host_follow_max_sps()
+            return motor_rad_limits_from_joint_cfgs(
+                cfgs[:n],
+                host_follow_max_sps=float(cap) if cap else None,
+            )
+        except Exception:
+            return None
+
+    def _merge_in_flight_joint_targets(
+        self,
+        target_state: ArmState,
+        *,
+        base_edited: bool,
+        planar_idx_edited: int | None,
+    ) -> None:
+        """
+        When a new joint jog/set starts while another move is in progress, the new
+        end pose must not replace non-edited joints with the current frame snapshot
+        (that would cancel their in-flight target and drop their velocity, causing
+        jerk). Use the running animation's end pose for all joints that are not
+        being set on this command.
+        """
+        end = self.animator.run_target()
+        if end is None:
+            return
+        n = len(target_state.planar_angles)
+        if len(end.planar_angles) != n:
+            return
+        if not base_edited:
+            target_state.base_angle = end.base_angle
+        for i in range(n):
+            if planar_idx_edited is not None and i == planar_idx_edited:
+                continue
+            target_state.planar_angles[i] = end.planar_angles[i]
+
     def _on_reset_to_vertical(self) -> None:
         """Animate all joints to the saved starting pose (arm_config starting_angles)."""
         target = self._arm_state_from_resting_degs()
-        self.animator.start(self.arm_state, target, locked_orientation=None)
+        self.animator.start(
+            self.arm_state,
+            target,
+            locked_orientation=None,
+            motor_rad_limits=self._anim_motor_limits(),
+        )
         self.status_bar.showMessage("Resetting to saved resting pose (starting_angles)")
 
     def _apply_zero_from_start_panel_to_motors(self) -> None:
@@ -3429,22 +3738,26 @@ class MainWindow(QMainWindow):
         self._sync_start_panel_from_motors()
 
     def _on_start_pose_changed(self) -> None:
-        """Zero position panel: update motor config zero offsets; no change to 3D pose."""
+        """Zero / home position panel: sync motor zero offsets, cache home pose, save."""
         if self._updating_motor_from_start:
             return
+        if self.start_pose_panel.home_spins:
+            self._resting_pose_degs = list(self.start_pose_panel.get_home_degs())
         self._apply_zero_from_start_panel_to_motors()
         self._save_arm_config()
-        self.status_bar.showMessage("Zero offsets updated (re-deploy firmware to apply on Pico)")
+        self.status_bar.showMessage("Zero / home settings saved", 2000)
 
     def _on_start_pose_zero_vertical_reset(self) -> None:
-        """Reset all zero offsets to 0° and set sim pose to the saved starting angles."""
+        """Reset all zero trim to 0° and set sim pose to the configured home / resting pose."""
         self.animator.cancel()
+        if self.start_pose_panel.home_spins:
+            self._resting_pose_degs = list(self.start_pose_panel.get_home_degs())
         self.start_pose_panel.reset()
         self._apply_zero_from_start_panel_to_motors()
         self.arm_state = self._arm_state_from_resting_degs()
         self._render_arm()
         self._save_arm_config()
-        self.status_bar.showMessage("Zero offsets cleared; 3D arm at saved resting pose")
+        self.status_bar.showMessage("Zero trim cleared; 3D arm at configured home pose")
 
     def _copy_arm_to_start_pose(self) -> None:
         """Set zero offsets to current sim joint angles (°) for quick calibration."""
@@ -3457,7 +3770,32 @@ class MainWindow(QMainWindow):
             self._updating_motor_from_start = False
         self._apply_zero_from_start_panel_to_motors()
         self._save_arm_config()
-        self.status_bar.showMessage("Zero offsets set from current sim pose")
+        self.status_bar.showMessage("Zero trim set from current sim pose")
+
+    def _copy_home_pose_from_arm(self) -> None:
+        """Set home / resting joint angles to the current simulator pose (degrees)."""
+        degs = [math.degrees(self.arm_state.base_angle)]
+        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        self._updating_motor_from_start = True
+        try:
+            self.start_pose_panel.set_home_degs(degs)
+            self._resting_pose_degs = list(degs)
+        finally:
+            self._updating_motor_from_start = False
+        self._save_arm_config()
+        self.status_bar.showMessage("Home pose set from current arm (starting_angles)")
+
+    def _on_save_home_pose(self) -> None:
+        """Persist home / resting joint angles (and full arm state) to arm_config.json."""
+        if self._loading:
+            return
+        if self.start_pose_panel.home_spins:
+            self._resting_pose_degs = list(self.start_pose_panel.get_home_degs())
+        self._save_arm_config()
+        self.status_bar.showMessage(
+            "Home / resting position saved to config/arm_config.json (starting_angles)",
+            5000,
+        )
 
     def _advance_sequence(self) -> None:
         """Move to the next waypoint in the sequence."""
@@ -3508,8 +3846,12 @@ class MainWindow(QMainWindow):
 
         if result.success and result.state is not None:
             self.joint_panel.update_angles(result.state, ConstraintSet())
-            self.animator.start(self.arm_state, result.state,
-                                locked_orientation=approach_angle)
+            self.animator.start(
+                self.arm_state,
+                result.state,
+                locked_orientation=approach_angle,
+                motor_rad_limits=self._anim_motor_limits(),
+            )
 
             self._sequence_index += 1
             total = len(self._sequence_queue)
@@ -3571,6 +3913,7 @@ class MainWindow(QMainWindow):
         self._resting_pose_degs = [0.0] * (n + 1)
 
         self.start_pose_panel.rebuild(n)
+        self.start_pose_panel.set_home_degs(self._resting_pose_degs)
         self._sync_start_panel_from_motors()
         self.joint_panel.rebuild(n)
         self.math_panel.rebuild(n)
@@ -3608,16 +3951,26 @@ class MainWindow(QMainWindow):
 
     def _on_save_as_default(self) -> None:
         """Explicitly save current configuration as the startup default."""
-        # Bookmark "rest" / HOME / Reset target to this pose (not updated on every auto-save).
-        self._resting_pose_degs = list(self._get_starting_angles_degs())
+        degs = [math.degrees(self.arm_state.base_angle)]
+        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        self._updating_motor_from_start = True
+        try:
+            if self.start_pose_panel.home_spins:
+                self.start_pose_panel.set_home_degs(degs)
+            self._resting_pose_degs = list(degs)
+        finally:
+            self._updating_motor_from_start = False
         self._save_arm_config()
         self.status_bar.showMessage("Saved as default — will load automatically on next startup", 4000)
 
     def _get_starting_angles_degs(self) -> list[float]:
-        """Base + planar joint angles in degrees (same order as arm_config starting_angles)."""
-        return [math.degrees(self.arm_state.base_angle)] + [
-            math.degrees(a) for a in self.arm_state.planar_angles
-        ]
+        """Base + planar joint home pose in degrees (``starting_angles`` in arm_config)."""
+        if self.start_pose_panel.home_spins:
+            return self.start_pose_panel.get_home_degs()
+        n = 1 + self.arm_config.num_planar_joints
+        if self._resting_pose_degs and len(self._resting_pose_degs) >= n:
+            return list(self._resting_pose_degs[:n])
+        return [0.0] * n
 
     def _save_arm_config(self) -> None:
         """Save current arm config (joints, lengths, offsets) to config/arm_config.json.
@@ -3892,6 +4245,8 @@ class MainWindow(QMainWindow):
         starting_angles = d.get("starting_angles")
         if starting_angles and len(starting_angles) >= n + 1:
             self._resting_pose_degs = [float(starting_angles[i]) for i in range(n + 1)]
+            if self.start_pose_panel.home_spins:
+                self.start_pose_panel.set_home_degs(self._resting_pose_degs)
             self.arm_state = ArmState(
                 base_angle=math.radians(self._resting_pose_degs[0]),
                 planar_angles=[math.radians(self._resting_pose_degs[i]) for i in range(1, n + 1)],
@@ -3899,6 +4254,8 @@ class MainWindow(QMainWindow):
             self._render_arm()
         else:
             self._resting_pose_degs = [0.0] * (n + 1)
+            if self.start_pose_panel.home_spins:
+                self.start_pose_panel.set_home_degs(self._resting_pose_degs)
 
         # Save motor_config.json now that pins are fully restored.
         # (_on_config_changed called earlier saves arm_config.json before pins are
@@ -3956,8 +4313,12 @@ class MainWindow(QMainWindow):
             if result.success and result.state is not None:
                 final_state = result.state
                 self.joint_panel.update_angles(final_state, ConstraintSet())
-                self.animator.start(self.arm_state, final_state,
-                                    locked_orientation=approach_angle)
+                self.animator.start(
+                    self.arm_state,
+                    final_state,
+                    locked_orientation=approach_angle,
+                    motor_rad_limits=self._anim_motor_limits(),
+                )
                 elbow_str = result.elbow_config.value if result.elbow_config else "n/a"
                 self.status_bar.showMessage(
                     f"{result.message} | elbow: {elbow_str} | error: {result.error_distance:.4f}"
@@ -4063,15 +4424,20 @@ class MainWindow(QMainWindow):
                     row["direction"].setCurrentIndex(0 if d == 1 else 1)
                 if speed_override is not None:
                     row["speed"].setValue(int(speed_override))
+                    row["search_speed"].setValue(int(speed_override))
             self.terminal.log(f"J{j_idx} HOME: permanent overrides saved to config", "info")
             # Refresh configs after updating the panel
             self._homing_configs = self.homing_panel.get_homing_configs()
             cfg = next((c for c in self._homing_configs if c["idx"] == j_idx), cfg)
 
-        # Effective direction/speed for this run (command-line > config default)
+        # Effective direction / speeds (command-line > config defaults)
         direction = direction_override if direction_override is not None else cfg["home_direction"]
-        speed = speed_override if speed_override is not None else cfg["home_speed_sps"]
         direction = 1 if direction >= 0 else -1
+        fine_s = int(speed_override if speed_override is not None else cfg["home_speed_sps"])
+        if speed_override is not None:
+            search_s = fine_s
+        else:
+            search_s = int(cfg.get("home_search_speed_sps", fine_s))
 
         self._homing_active = True
         self._homing_start_time = time.monotonic()
@@ -4080,10 +4446,10 @@ class MainWindow(QMainWindow):
         self._homing_joint_indices = [j_idx]
 
         self._hardware.send_raw("PIN_STREAM_ON\n")
-        # Send firmware HOMEJ<n> [dir] [speed] — triggers the per-joint state machine
-        self._hardware.send_raw(f"HOMEJ{j_idx} {direction} {int(speed)}\n")
+        # HOMEJ<n> <dir> <search_sps> <fine_sps> — firmware uses search toward the switch, fine for backup/precision
+        self._hardware.send_raw(f"HOMEJ{j_idx} {direction} {search_s} {fine_s}\n")
         self.terminal.log(
-            f"J{j_idx} HOME → HOMEJ{j_idx} dir={direction:+d} speed={int(speed)}",
+            f"J{j_idx} HOME → HOMEJ{j_idx} dir={direction:+d} search={search_s} sps fine={fine_s} sps",
             "tx",
         )
 
@@ -4092,7 +4458,8 @@ class MainWindow(QMainWindow):
         if not text.startswith("PINS:"):
             return
 
-        # Format: "PINS: J0: ... LIMIT:home  |  J1: ... LIMIT:none  | ..."
+        # Format: "PINS: J0: ... LIMIT:HOME  |  J1: ... LIMIT:none  | ..."
+        # Firmware uses LIMIT:HOME / LIMIT:none (match case-insensitively).
         limits = []
         parts = text[5:].split("|")
         for part in parts:
@@ -4103,10 +4470,10 @@ class MainWindow(QMainWindow):
                 j_part = part.split(":")[0].strip()  # "J0"
                 j_idx = int(j_part[1:])
 
-                # Extract LIMIT status
-                if "LIMIT:home" in part:
+                up = part.upper()
+                if "LIMIT:HOME" in up:
                     limits.append(f"J{j_idx}:HOME")
-                elif "LIMIT:none" in part:
+                elif "LIMIT:NONE" in up:
                     limits.append(f"J{j_idx}:---")
             except (ValueError, IndexError):
                 pass
@@ -4121,6 +4488,9 @@ class MainWindow(QMainWindow):
         self._homing_active = False
         if self._hardware is not None and self._hardware.is_connected:
             self._hardware.send_raw("PIN_STREAM_OFF\n")
+            if not success:
+                # Timeout / cancel mid-sequence — firmware may still be in _homing_mode.
+                self._hardware.send_raw("STOP\n")
 
         is_single_joint = getattr(self, "_homing_single_joint", False)
         # Firmware's state machine already zeros position on contact and stops motion.
@@ -4166,10 +4536,10 @@ class MainWindow(QMainWindow):
     # ── Timer / Animation Loop ────────────────────────────────────────
 
     def _on_timer_tick(self) -> None:
-        """500 Hz: advance animation with wall-clock dt, stream hardware every tick.
+        """~1 kHz: advance animation with wall-clock dt; GL and hardware are throttled.
 
-        3D viewport and animation progress are redrawn at ~1/_VIEW_REDRAW_EVERY_N of
-        that rate so OpenGL is not asked to paint 500×/s.
+        Arm state updates every tick while animating; 3D redraw ~125 fps. Serial stream
+        is capped so 115200 baud is not flooded (prevents jerky real-arm motion).
         """
         try:
             self._main_loop_tick += 1
@@ -4182,10 +4552,27 @@ class MainWindow(QMainWindow):
             # Loop rate smoothing (main timer, not the throttled view rate)
             self._fps = 0.9 * self._fps + 0.1 * (1.0 / max(dt, 1e-6))
 
+            if not self.animator.is_running:
+                self._bottleneck_status_shown = False
             if self.animator.is_running:
                 self.arm_state = self.animator.step(dt)
+                if not self._bottleneck_status_shown and self.animator.bottleneck_joint is not None:
+                    self._bottleneck_status_shown = True
+                    bj = self.animator.bottleneck_joint
+                    self.status_bar.showMessage(
+                        f"Move duration is set by J{bj} (Motor max sps/gear). All joints use one time so they "
+                        f"finish together. If the move is too slow, increase that joint’s max sps or fix an "
+                        f"overstated gear ratio — often the elbow (J2).",
+                        8000,
+                    )
 
-            if self._main_loop_tick % self._VIEW_REDRAW_EVERY_N == 0:
+            # GL: 1 kHz not needed; ~125 fps while moving is visually smooth; idle ~125 fps too
+            v_period = (
+                self._VIEW_REDRAW_EVERY_N_ANIM
+                if self.animator.is_running
+                else self._VIEW_REDRAW_EVERY_N
+            )
+            if self._main_loop_tick % v_period == 0:
                 self._render_arm()
                 if self.animator.is_running:
                     self.anim_panel.update_progress()
@@ -4199,7 +4586,7 @@ class MainWindow(QMainWindow):
                 if elapsed > 15.0:
                     self._finish_homing_sequence(success=False)
 
-            # Stream joint angles to hardware (non-blocking, threaded) — 500 Hz
+            # Stream joint angles (rate-limited inside; see _hardware_angle_stream_min_interval_s)
             self._try_send_hardware_update()
 
         except Exception as e:
@@ -4299,6 +4686,81 @@ class MainWindow(QMainWindow):
             self.hardware_panel.log_lbl.setStyleSheet("color: #aaa;")
             self.terminal.log(text, "rx")
 
+    def _gravity_adjusted_hardware_angles_rad(self) -> list[float]:
+        """Joint angles in radians for the Pico, including per-joint gravity comp (deg)."""
+        angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+        gravity_offsets = self.motor_config_panel.get_gravity_offsets()
+        for i, grav_deg in gravity_offsets.items():
+            if grav_deg and i < len(angles):
+                angles[i] += math.radians(grav_deg)
+        return angles
+
+    def _reset_hardware_backlash_state(self) -> None:
+        self._hw_bl_prev = None
+        self._hw_bl_pdelta = None
+
+    def _apply_direction_backlash_to_angles(self, raw: list[float]) -> list[float]:
+        """On direction reversal, add output backlash (rad) to the new commanded motion once."""
+        try:
+            cfgs = self.motor_config_panel.get_joint_configs()
+        except Exception:
+            return list(raw)
+        n = min(len(raw), len(cfgs))
+        out = list(raw)
+        if self._hw_bl_prev is None or len(self._hw_bl_prev) != n:
+            self._hw_bl_prev = [float("nan")] * n
+            self._hw_bl_pdelta = [0.0] * n
+        for i in range(n):
+            bl = _backlash_angle_rad_from_motor_cfg(cfgs[i])
+            prev = self._hw_bl_prev[i]
+            d = raw[i] - prev if prev == prev else 0.0
+            p = self._hw_bl_pdelta[i]
+            if bl > 0.0 and prev == prev and p * d < 0.0 and p != 0.0 and d != 0.0:
+                out[i] = raw[i] + math.copysign(bl, d)
+            self._hw_bl_prev[i] = raw[i]
+            self._hw_bl_pdelta[i] = d if prev == prev else 0.0
+        return out
+
+    def _seed_hardware_pose_from_sim(self) -> None:
+        """On connect: align the Pico’s logical position with the simulator (no burst from 0)."""
+        h = self._hardware
+        if h is None or not getattr(h, "is_connected", False):
+            return
+        # SYNC cancels firmware homing and re-applies angles — never run mid-homing.
+        if getattr(self, "_homing_active", False):
+            self.terminal.log(
+                "Skipped SYNC seed — homing in progress (connect after HOMING_COMPLETE, or press STOP)",
+                "info",
+            )
+            return
+        raw = self._gravity_adjusted_hardware_angles_rad()
+        if hasattr(h, "seed_pose_to_match_host"):
+            h.seed_pose_to_match_host(raw)
+        n = len(raw)
+        self._hw_bl_prev = [raw[i] for i in range(n)]
+        self._hw_bl_pdelta = [0.0] * n
+
+    def _hardware_angle_stream_min_interval_s(self) -> float:
+        """Min time between J0,…,Jn lines so the transport is not over-driven.
+
+        While animating, the 3D arm moves every ~1 ms; keep the angle line rate near
+        what USB/WiFi can sustain so the hardware tracks the viewport. Idle motion
+        uses a lower cap to reduce serial load.
+        """
+        h = self._hardware
+        baud = getattr(h, "_baud", None) if h else None
+        if baud is None:
+            return 1.0 / 200.0
+        n = 1 + self.arm_config.num_planar_joints
+        est_bytes = max(40, 2 + n * 15)
+        wire_bps = max(1200.0, float(baud)) / 10.0
+        max_line_hz = 0.68 * (wire_bps / est_bytes)
+        if getattr(self, "animator", None) and self.animator.is_running:
+            stream_hz = max(100.0, min(330.0, max_line_hz * 0.92))
+        else:
+            stream_hz = max(35.0, min(200.0, max_line_hz))
+        return 1.0 / stream_hz
+
     def _try_send_hardware_update(self) -> None:
         """Send current joint angles to the Pico if connected (non-blocking)."""
         # Drain RX messages from the background RX thread (thread-safe queue)
@@ -4382,15 +4844,13 @@ class MainWindow(QMainWindow):
                 )
             return
 
-        angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
-        # Apply per-joint gravity offset on the PC side before sending.
-        # The firmware no longer adds gravity_offset internally, so the PC
-        # compensates here — keeps firmware lean and offset tunable without redeployment.
-        gravity_offsets = self.motor_config_panel.get_gravity_offsets()
-        for i, grav_deg in gravity_offsets.items():
-            if grav_deg and i < len(angles):
-                angles[i] += math.radians(grav_deg)
-        self._hardware.send_joint_angles(angles)
+        raw = self._gravity_adjusted_hardware_angles_rad()
+        t_mono = time.monotonic()
+        # During homing, do not stream J0:… (host angle follow) — keeps USB quiet while HOME runs.
+        if not getattr(self, "_homing_active", False):
+            if t_mono - self._last_hw_angle_send_mono >= self._hardware_angle_stream_min_interval_s():
+                self._last_hw_angle_send_mono = t_mono
+                self._hardware.send_joint_angles(self._apply_direction_backlash_to_angles(raw))
 
         # Keep POS_STREAM on the Pico in sync with what streams are enabled
         streams_wanted = (
@@ -4460,8 +4920,14 @@ class MainWindow(QMainWindow):
                 self.hardware_panel.set_connected(True, msg)
                 self.terminal.set_connected(True, f"USB {port}")
                 self.terminal.log(f"Connected via USB ({port})", "info")
+                self.terminal.log(
+                    "If a joint (e.g. J2) never moves: PRINTAXES (firmware list), or STEPT 2 200 "
+                    "— see HELP. Re-Deploy if a joint is missing at boot ('skipping joint').",
+                    "info",
+                )
                 self.status_bar.showMessage(msg.split("\n")[0])
                 logger.info("Hardware connected: %s", msg)
+                QTimer.singleShot(0, self._seed_hardware_pose_from_sim)
             else:
                 self.hardware_panel.set_connected(False, msg)
                 self.terminal.log(f"Connection failed: {msg.splitlines()[0]}", "error")
@@ -4514,8 +4980,14 @@ class MainWindow(QMainWindow):
                 self.hardware_panel.set_connected(True, msg)
                 self.terminal.set_connected(True, f"WiFi {host}:{port}")
                 self.terminal.log(f"Connected via WiFi ({host}:{port})", "info")
+                self.terminal.log(
+                    "If a joint (e.g. J2) never moves: PRINTAXES, or STEPT 2 200 — see HELP. "
+                    "Re-Deploy if a joint is missing at boot ('skipping joint').",
+                    "info",
+                )
                 self.status_bar.showMessage(msg.split("\n")[0])
                 logger.info("Hardware WiFi connected: %s", msg)
+                QTimer.singleShot(0, self._seed_hardware_pose_from_sim)
             else:
                 self.hardware_panel.set_connected(False, msg)
                 self.terminal.log(f"WiFi connection failed: {msg.splitlines()[0]}", "error")
@@ -4534,6 +5006,7 @@ class MainWindow(QMainWindow):
         if self._hardware is not None:
             self._hardware.disconnect()
             self._hardware = None
+        self._reset_hardware_backlash_state()
         self._hw_sync_nudge_shown = False
         self._pos_stream_active = False
         self._pin_stream_active = False
@@ -4830,8 +5303,15 @@ class MainWindow(QMainWindow):
                         target_state.base_angle = math.radians(delta)
                     else:
                         target_state.base_angle += math.radians(delta)
+                    self._merge_in_flight_joint_targets(
+                        target_state, base_edited=True, planar_idx_edited=None
+                    )
                     target_deg = math.degrees(target_state.base_angle)
-                    self.animator.start(self.arm_state, target_state)
+                    self.animator.start(
+                        self.arm_state,
+                        target_state,
+                        motor_rad_limits=self._anim_motor_limits(),
+                    )
                     if joint_abs:
                         self.terminal.log(
                             f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
@@ -4848,8 +5328,17 @@ class MainWindow(QMainWindow):
                         target_state.planar_angles[idx - 1] = math.radians(delta)
                     else:
                         target_state.planar_angles[idx - 1] += math.radians(delta)
+                    self._merge_in_flight_joint_targets(
+                        target_state,
+                        base_edited=False,
+                        planar_idx_edited=idx - 1,
+                    )
                     target_deg = math.degrees(target_state.planar_angles[idx - 1])
-                    self.animator.start(self.arm_state, target_state)
+                    self.animator.start(
+                        self.arm_state,
+                        target_state,
+                        motor_rad_limits=self._anim_motor_limits(),
+                    )
                     if joint_abs:
                         self.terminal.log(
                             f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
@@ -4942,11 +5431,27 @@ class MainWindow(QMainWindow):
                 if idx == 0:
                     target_state = self.arm_state.copy()
                     target_state.base_angle = math.radians(deg)
-                    self.animator.start(self.arm_state, target_state)
+                    self._merge_in_flight_joint_targets(
+                        target_state, base_edited=True, planar_idx_edited=None
+                    )
+                    self.animator.start(
+                        self.arm_state,
+                        target_state,
+                        motor_rad_limits=self._anim_motor_limits(),
+                    )
                 elif 1 <= idx <= n:
                     target_state = self.arm_state.copy()
                     target_state.planar_angles[idx - 1] = math.radians(deg)
-                    self.animator.start(self.arm_state, target_state)
+                    self._merge_in_flight_joint_targets(
+                        target_state,
+                        base_edited=False,
+                        planar_idx_edited=idx - 1,
+                    )
+                    self.animator.start(
+                        self.arm_state,
+                        target_state,
+                        motor_rad_limits=self._anim_motor_limits(),
+                    )
                 else:
                     self.terminal.log(f"SETJOINT: index {idx} out of range (0–{n})", "error")
                     return
@@ -5830,6 +6335,8 @@ class MainWindow(QMainWindow):
         wifi_ssid = self.hardware_panel.get_wifi_ssid()
         wifi_pw   = self.hardware_panel.get_wifi_password()
         wifi_port = self.hardware_panel.get_wifi_port()
+        step_us   = self.hardware_panel.get_step_us()
+        host_cap  = self.hardware_panel.get_host_follow_max_sps()
 
         # ── WiFi deploy: use IP from panel (connection not required) ────────
         from hardware.pico_wifi_interface import PicoWifiInterface
@@ -5867,6 +6374,8 @@ class MainWindow(QMainWindow):
                     joints_config=joints_config,
                     wifi_ssid=wifi_ssid,
                     wifi_password=wifi_pw,
+                    step_us=step_us,
+                    host_follow_max_sps=host_cap,
                     progress_cb=_progress,
                 )
                 _msg_queue.put(("done", ok, result_msg))
@@ -5936,6 +6445,8 @@ class MainWindow(QMainWindow):
                 wifi_ssid=wifi_ssid,
                 wifi_password=wifi_pw,
                 wifi_port=wifi_port,
+                step_us=step_us,
+                host_follow_max_sps=host_cap,
                 progress_cb=_progress,
             )
             _msg_queue.put(("done", ok, result_msg))

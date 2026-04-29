@@ -5,7 +5,7 @@ Architecture
 ------------
 - Background daemon thread handles all serial I/O so the GUI never blocks.
 - Main thread calls ``send_joint_angles()`` which enqueues a message.
-- The sender thread dequeues and transmits at up to 60 Hz.
+- The sender thread dequeues as fast as the producer enqueues (PC timer ~1 kHz when enabled).
 - If the Pico disconnects, ``is_connected`` becomes False; the simulator
   continues running without hardware.
 
@@ -27,7 +27,7 @@ from typing import Optional
 
 from .protocol import (
     BAUD_RATE, PICO_VID, UPDATE_THRESHOLD_RAD,
-    angles_changed, encode_angles,
+    angles_changed, encode_angles, encode_sync_line,
 )
 
 logger = logging.getLogger(__name__)
@@ -523,6 +523,18 @@ class PicoInterface:
             self._last_angles = list(angles_rad)
         except queue.Full:
             pass  # Silently drop frame
+
+    def seed_pose_to_match_host(self, angles_rad: list[float]) -> None:
+        """Tell the firmware current mechanical pose matches the simulator (see ``SYNC:`` in firmware).
+
+        Sends ``STOP`` then ``SYNC:J0:…`` so a fresh link does not sprint from zero to
+        the on-screen target at MAX_STEPS/tick. Does not set ``_last_angles`` so the next
+        ``send_joint_angles`` still emits a full ``J0:…`` line (and works on older firmware).
+        """
+        if not self._connected:
+            return
+        self.send_raw("STOP\n")
+        self.send_raw(encode_sync_line(angles_rad))
 
     def send_raw(self, text: str) -> None:
         """Queue a raw text command for transmission (non-blocking).

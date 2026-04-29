@@ -7,6 +7,11 @@ Message format (host → Pico):
 Each Jn value is a joint angle in degrees. The base rotation is J0; planar
 joints follow sequentially. Update rate is throttled by the caller.
 
+    SYNC:J0:0.00,J1:0.00,…\n
+        — (firmware) set logical position to these angles with no large catch-up
+        step burst; used right after connect so the real arm is not told to
+        “sprint” from a zeroed controller state to the simulator pose.
+
 Message format (Pico → host, optional status):
     OK\n          — last command accepted
     ERR:<msg>\n  — error from Pico
@@ -25,6 +30,12 @@ TERMINATOR: str = "\n"
 
 # Pico USB vendor IDs that identify a Raspberry Pi device
 PICO_VID: int = 0x2E8A   # Raspberry Pi
+
+
+def encode_sync_line(angles_rad: list[float]) -> str:
+    """``SYNC:J0:…,J1:…`` — tells the Pico to set logical position to match host (no big catch-up)."""
+    body = ",".join(f"J{i}:{math.degrees(a):.4f}" for i, a in enumerate(angles_rad))
+    return f"SYNC:{body}\n"
 
 
 def encode_angles(angles_rad: list[float]) -> bytes:

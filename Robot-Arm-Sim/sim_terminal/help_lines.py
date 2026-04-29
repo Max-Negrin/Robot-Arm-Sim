@@ -88,6 +88,7 @@ TERMINAL_HELP_LINES = [
     "  PRINTAXES                — repeat AXES_LOADED line (which GPIOs each J uses)",
     "  STEPT <j> <n> [BWD]      — raw n step pulses (proves PUL/DIR vs angle-stream jog)",
     "  (GUI: 'Enable hardware synchronization' must be ON for JOG/IK/waypoints; OFF = no J0:… stream; homing/LED/STOP still work)",
+    "  (Joint J2 dead: run PRINTAXES — all joints must be listed. If J2 is missing, re-Deploy; check boot for 'skipping joint 2'. STEPT 2 200 tests that motor/GPIO. Host streams J0..J(n-1); n = Arm links+1, must match Motor rows.)",
     "  (DIR = steady; STEP = fast edges — a DMM is poor to see STEP; use PINS or scope)",
     "  LATENCY                  — measure round-trip ping time",
     "  LED_TOGGLE               — toggle onboard LED",
