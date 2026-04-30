@@ -65,52 +65,58 @@ Expected: 10/10 tests pass ✅
 
 ## Project Structure
 
+Repository layout (Fab Academy GitLab / GitHub mirror):
+
 ```
-Robot-Arm-Sim/
-├── main.py                      # Entry point & QApplication launcher
-├── main_old.py                  # Legacy tkinter/matplotlib version (reference only)
+<repository root>/
+├── README.md
+├── requirements.txt
+├── docs/
+│   ├── FAB_PROJECT_DOCUMENTATION.md
+│   ├── FAB_WEEK11_ASSIGNMENT.md  # Fab Academy Week 11 (networking / I/O)
+│   ├── ARCHITECTURE.md
+│   ├── future_improvements.md
+│   └── AI_HANDOFF.md              # THIS FILE
 │
-├── kinematics.py                # Core math: FK, IK, DH transforms, Jacobian
-├── constraints.py               # Constraint validation, collision, singularity checks
-├── math_engine.py               # Sandboxed SymPy expression evaluator
-├── animation.py                 # Smooth interpolation & timing system
-├── gui.py                       # PyQt6 GUI: MainWindow, panels, 3D viewport
-│
-├── blink_test.py                # Standalone diagnostic: deploys blink firmware, confirms LED
-├── diagnose_pico.py             # Port/REPL diagnostic and firmware deployer
-│
-├── tests/
-│   ├── test_integration.py      # Module compatibility & basic functionality
-│   ├── test_math_correctness.py # Mathematical accuracy validation
-│   └── test_acceptance.py       # 10 comprehensive acceptance tests
-│
-├── hardware/
-│   ├── __init__.py              # Package marker
-│   ├── protocol.py              # Serial message encoding
-│   ├── pico_interface.py        # PicoInterface class + find_pico_port() (USB)
-│   ├── pico_wifi_interface.py   # PicoWifiInterface class (WiFi TCP, same API)
-│   └── micropython_deployer.py  # MicroPythonDeployer (raw serial REPL)
-│
-├── firmware/
-│   └── pico_control_script.py   # MicroPython stepper control (deployed to Pico)
-│
-├── config/
-│   ├── arm_config.json          # Auto-saved full session state (all panels)
-│   └── motor_config.json        # Motor parameters (steps, gear ratio, etc.)
-│
-├── logs/
-│   └── hardware_log.txt         # Rotating file log (2 MB × 3 files)
-│
-├── waypoints/                   # JSON waypoint files (load manually via Waypoint panel)
-│   └── helix.json               # 64-point 3D helix (x=3.5cos t, y=3.5sin t, z=2.5+t/π)
-│
-├── text files/
-│   ├── ARCHITECTURE.md          # Detailed technical architecture
-│   └── future_improvements.md
-│
-├── requirements.txt             # Python dependencies
-├── AI_HANDOFF.md               # THIS FILE
-└── README.md                    # User-facing documentation
+└── Robot-Arm-Sim/
+    ├── main.py                      # Entry point & QApplication launcher
+    ├── main_old.py                  # Legacy tkinter/matplotlib version (reference only)
+    │
+    ├── kinematics.py                # Core math: FK, IK, DH transforms, Jacobian
+    ├── constraints.py               # Constraint validation, collision, singularity checks
+    ├── math_engine.py               # Sandboxed SymPy expression evaluator
+    ├── animation.py                 # Smooth interpolation & timing system
+    ├── gui.py                       # PyQt6 GUI: MainWindow, panels, 3D viewport
+    │
+    ├── blink_test.py                # Standalone diagnostic: deploys blink firmware, confirms LED
+    ├── diagnose_pico.py             # Port/REPL diagnostic and firmware deployer
+    │
+    ├── tests/
+    │   ├── test_integration.py      # Module compatibility & basic functionality
+    │   ├── test_math_correctness.py # Mathematical accuracy validation
+    │   └── test_acceptance.py       # 10 comprehensive acceptance tests
+    │
+    ├── hardware/
+    │   ├── __init__.py              # Package marker
+    │   ├── protocol.py              # Serial message encoding
+    │   ├── pico_interface.py        # PicoInterface class + find_pico_port() (USB)
+    │   ├── pico_wifi_interface.py   # PicoWifiInterface class (WiFi TCP, same API)
+    │   └── micropython_deployer.py  # MicroPythonDeployer (raw serial REPL)
+    │
+    ├── firmware/
+    │   └── pico_control_script.py   # MicroPython stepper control (deployed to Pico)
+    │
+    ├── config/
+    │   ├── arm_config.json          # Auto-saved full session state (all panels)
+    │   └── motor_config.json        # Motor parameters (steps, gear ratio, etc.)
+    │
+    ├── logs/
+    │   └── hardware_log.txt         # Rotating file log (2 MB × 3 files)
+    │
+    ├── waypoints/                   # JSON waypoint files (load manually via Waypoint panel)
+    │   └── helix.json               # 64-point 3D helix (x=3.5cos t, y=3.5sin t, z=2.5+t/π)
+    │
+    └── ...
 ```
 
 **Key File Sizes (approximate, as of 2026-04-12):**

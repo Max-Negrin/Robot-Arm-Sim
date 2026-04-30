@@ -46,6 +46,7 @@ from sim_terminal import (
     try_apply_shorthands,
     try_pico_priority,
 )
+from hardware.protocol import TRAJECTORY_STREAM_HZ, clamp_trajectory_stream_hz
 
 logger = logging.getLogger(__name__)
 
@@ -1641,7 +1642,7 @@ class MotorConfigPanel(QGroupBox):
                     self.config_changed.emit()
                     return
                 ms = float(r["max_sps"].value())
-                # Same formula as animation.motor_rad_limits_from_joint_cfgs: ω = max_sps * 2π / steps_out
+                # ω @ output: hardware.motion_limits.rad_velocity_accel_from_step_limits (same as animator)
                 deg_per_s = (ms / total) * 360.0
                 r["derived"].setText(
                     f"{total:.0f} steps/output-rev  ·  max_sps → ≈ {deg_per_s:.1f}°/s @ output shaft"
@@ -3212,6 +3213,7 @@ class MainWindow(QMainWindow):
         self._main_loop_tick = 0
         self._fps = 60.0
         self._last_hw_angle_send_mono: float = 0.0
+        self._hw_stream_origin_mono: float = time.monotonic()
         self._bottleneck_status_shown: bool = False
 
         # Apply dark theme
@@ -4739,27 +4741,14 @@ class MainWindow(QMainWindow):
         n = len(raw)
         self._hw_bl_prev = [raw[i] for i in range(n)]
         self._hw_bl_pdelta = [0.0] * n
+        self._hw_stream_origin_mono = time.monotonic()
+        self._last_hw_angle_send_mono = 0.0
 
     def _hardware_angle_stream_min_interval_s(self) -> float:
-        """Min time between J0,…,Jn lines so the transport is not over-driven.
+        """Interval between host trajectory samples (``T:`` lines), 50–200 Hz band."""
 
-        While animating, the 3D arm moves every ~1 ms; keep the angle line rate near
-        what USB/WiFi can sustain so the hardware tracks the viewport. Idle motion
-        uses a lower cap to reduce serial load.
-        """
-        h = self._hardware
-        baud = getattr(h, "_baud", None) if h else None
-        if baud is None:
-            return 1.0 / 200.0
-        n = 1 + self.arm_config.num_planar_joints
-        est_bytes = max(40, 2 + n * 15)
-        wire_bps = max(1200.0, float(baud)) / 10.0
-        max_line_hz = 0.68 * (wire_bps / est_bytes)
-        if getattr(self, "animator", None) and self.animator.is_running:
-            stream_hz = max(100.0, min(330.0, max_line_hz * 0.92))
-        else:
-            stream_hz = max(35.0, min(200.0, max_line_hz))
-        return 1.0 / stream_hz
+        hz = clamp_trajectory_stream_hz(TRAJECTORY_STREAM_HZ)
+        return 1.0 / hz
 
     def _try_send_hardware_update(self) -> None:
         """Send current joint angles to the Pico if connected (non-blocking)."""
@@ -4850,7 +4839,13 @@ class MainWindow(QMainWindow):
         if not getattr(self, "_homing_active", False):
             if t_mono - self._last_hw_angle_send_mono >= self._hardware_angle_stream_min_interval_s():
                 self._last_hw_angle_send_mono = t_mono
-                self._hardware.send_joint_angles(self._apply_direction_backlash_to_angles(raw))
+                adj = self._apply_direction_backlash_to_angles(raw)
+                stream_t = max(0.0, t_mono - self._hw_stream_origin_mono)
+                send_traj = getattr(self._hardware, "send_joint_trajectory_sample", None)
+                if callable(send_traj):
+                    send_traj(adj, stream_t)
+                else:
+                    self._hardware.send_joint_angles(adj)
 
         # Keep POS_STREAM on the Pico in sync with what streams are enabled
         streams_wanted = (
@@ -6376,6 +6371,7 @@ class MainWindow(QMainWindow):
                     wifi_password=wifi_pw,
                     step_us=step_us,
                     host_follow_max_sps=host_cap,
+                    arm_config=self._get_arm_config_dict(),
                     progress_cb=_progress,
                 )
                 _msg_queue.put(("done", ok, result_msg))
@@ -6447,6 +6443,7 @@ class MainWindow(QMainWindow):
                 wifi_port=wifi_port,
                 step_us=step_us,
                 host_follow_max_sps=host_cap,
+                arm_config=self._get_arm_config_dict(),
                 progress_cb=_progress,
             )
             _msg_queue.put(("done", ok, result_msg))

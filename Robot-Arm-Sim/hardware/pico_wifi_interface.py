@@ -29,7 +29,13 @@ import threading
 import time
 from typing import Optional
 
-from .protocol import UPDATE_THRESHOLD_RAD, angles_changed, encode_angles, encode_sync_line
+from .protocol import (
+    UPDATE_THRESHOLD_RAD,
+    angles_changed,
+    encode_angles,
+    encode_sync_line,
+    encode_trajectory_sample,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +284,24 @@ class PicoWifiInterface:
             return
 
         msg = encode_angles(angles_rad)
+        try:
+            if self._tx_queue.full():
+                try:
+                    self._tx_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self._tx_queue.put_nowait(msg)
+            self._last_angles = list(angles_rad)
+        except queue.Full:
+            pass
+
+    def send_joint_trajectory_sample(
+        self, angles_rad: list[float], stream_time_s: float
+    ) -> None:
+        """Queue a timestamped pose for CNC-style buffering on the Pico."""
+        if not self._connected:
+            return
+        msg = encode_trajectory_sample(angles_rad, stream_time_s)
         try:
             if self._tx_queue.full():
                 try:

@@ -182,7 +182,7 @@ The `QTimer` fires every 2ms (500Hz). Each tick:
 1. Compute `dt` from wall-clock delta (capped to avoid a huge jump after a stall).
 2. If animation is running, call `animator.step(dt)` to get the interpolated
    `ArmState`.
-3. **Hardware:** stream joint angles to the Pico every tick (500Hz).
+3. **Hardware:** `_try_send_hardware_update()` runs every tick; **timestamped** trajectory samples (`send_joint_trajectory_sample`) are emitted at `TRAJECTORY_STREAM_HZ` (default 100 Hz, clamped 50–200 Hz), not at the full 500 Hz timer rate.
 4. The 3D viewport and animation progress are redrawn every 8th tick (~62Hz) so
    OpenGL is not repainted 500×/s.
 5. The stats panel updates at a throttled rate (~10Hz).
@@ -432,15 +432,15 @@ Two transport classes with identical public APIs:
 | `PicoInterface` | `hardware/pico_interface.py` | USB serial (pyserial) |
 | `PicoWifiInterface` | `hardware/pico_wifi_interface.py` | TCP socket (port 8888) |
 
-Both expose: `connect()`, `disconnect()`, `send_joint_angles(angles_rad)`, `send_raw(text)`, `rx_callback`, `is_connected`.
+Both expose: `connect()`, `disconnect()`, `send_joint_trajectory_sample(angles_rad, stream_time_s)`, `send_joint_angles(angles_rad)`, `send_raw(text)`, `rx_callback`, `is_connected`.
 
 **Threading model (same for both):**
 
-- TX daemon thread drains a `queue.Queue(maxsize=4)` and writes to the transport.
+- TX daemon thread drains a `queue.Queue(maxsize=32)` (Wi‑Fi) or similar (USB) and writes to the transport.
 - RX daemon thread reads lines and fires `rx_callback`.
 - If the queue is full, the oldest frame is dropped (new frame replaces it).
-- Angles only sent when delta > `UPDATE_THRESHOLD_RAD` (~1e-5 rad, so motion tracks smooth animation; coarser values made the real arm stutter).
-- `send_raw(text)` bypasses the threshold — for one-off commands (LED_TOGGLE, PING, REBOOT, etc.).
+- Trajectory streaming sends every tick at `TRAJECTORY_STREAM_HZ` (see `hardware/protocol.py`) without the `UPDATE_THRESHOLD_RAD` gate; legacy `send_joint_angles` still uses `angles_changed()` (~1e‑5 rad).
+- `send_raw(text)` bypasses the trajectory encoder — for one-off commands (LED_TOGGLE, PING, REBOOT, etc.).
 
 **GUI → thread communication (PyQt6 constraint):**
 `QTimer.singleShot(0, fn)` called from a background thread does NOT fire — the timer is created in the calling thread's context, which has no event loop. All background→GUI updates use `queue.Queue` + main-thread `QTimer.singleShot(50, _poll)` polling chains.
@@ -464,13 +464,17 @@ TCP_PORT = 8888
 
 **Main loop structure:**
 
-1. Non-blocking stdin poll (`select.poll(0)`) — reads one char if available
-2. Drain `_wifi_rx` list (commands received from WiFi TCP thread)
-3. `_handle_line(line, reply_fn)` for any complete command
-4. Motor step updates (trapezoidal velocity, step accumulator)
-5. `time.sleep_us(remaining)` to hit exactly `STEP_US = 800 µs` per loop
+1. Measure loop period → `tdt` for motion integration (capped after stalls).
+2. Interpolate host trajectory ring (`T:` samples) into per-joint `set_target_angle` targets (~35 ms lookahead).
+3. Advance motors (host-follow accel/jerk toward steps; round-robin stepping when enabled).
+4. Non-blocking stdin poll (`select.poll(0)`) — reads one char if available
+5. Drain `_wifi_rx` list (commands received from WiFi TCP thread)
+6. `_handle_line(line, reply_fn)` for any complete command
+7. `time.sleep_us(remaining)` toward `STEP_US` period
 
-**`_handle_line` commands:** `PING`, `LED_TOGGLE`, `REBOOT`, and any `J0:deg,J1:deg,…` angle command.
+**Motion:** timestamped lines feed `TrajectoryRing`; plain `J0:deg,…` sets immediate targets. `STOP` flushes the ring and freezes commanded pose; `SYNC:` flushes the ring, snaps logical pose, re-seeds interpolation state. Step/dir axes use **PIO** for STEP timing when `pio_stepdir` is true (default); 28BYJ remains coil stepping on the main loop.
+
+**`_handle_line` commands:** `PING`, `LED_TOGGLE`, `REBOOT`, `T:…` trajectory samples, `J0:deg,J1:deg,…`, `SYNC:…`, etc.
 
 **WiFi TCP server** (background `_thread`):
 

@@ -23,12 +23,13 @@ deployed block (set when you deploy with an SSID, or edit ENABLE_WIFI manually).
 
 Standard message format (host → Pico):
     Host → Pico:  J0:45.00,J1:32.50,J2:10.00,J3:0.00\n
+    Host → Pico:  T:<stream_seconds>,J0:45.00,...  (timestamped trajectory for ring buffer)\n
     Pico → Host:  OK\n   (or ERR:<message>\n on error)
 
-Motion: the PC streams joint angles; the firmware maps them to target steps
-and follows with accel-limited velocity (Motor ``accel`` / ``max_sps``).
-Trajectory shaping and synchronized moves are primarily on the host; the Pico
-ramps step rate to avoid jerky starts/stops when the stream updates.
+Motion: the PC streams joint angles (optionally with ``T:`` timestamps); the firmware
+interpolates a short lookahead buffer, maps to target steps, and follows with
+accel/jerk-limited velocity (``accel`` / ``jerk`` / ``max_sps``). STEP/DIR axes
+may use PIO for stable STEP timing when ``pio_stepdir`` is enabled.
 Homing still uses a simple local open-loop move toward a limit switch.
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -40,7 +41,41 @@ import sys
 import time
 import math
 import select
+import machine
 from machine import Pin, PWM
+
+# PIO STEP pulses for step/dir drivers (falls back to StepperAxisStepDir if unavailable).
+try:
+    import rp2
+    from rp2 import PIO, StateMachine, asm_pio
+
+    @asm_pio(set_init=PIO.OUT_LOW)
+    def _pio_step_pulse_program():
+        pull(block)
+        mov(x, osr)
+        label("wait_lo")
+        jmp(x_dec, "wait_lo")
+        set(pins, 1) [7]
+        set(pins, 0)
+
+    _PIO_HAVE_STEP = True
+except ImportError:
+    _PIO_HAVE_STEP = False
+    _pio_step_pulse_program = None
+
+_PIO_SM_NEXT = 0
+
+
+def _pio_alloc_sm_id(cfg: dict) -> int:
+    """Assign a distinct PIO state machine index per step/dir axis."""
+    global _PIO_SM_NEXT
+    if "pio_sm" in cfg:
+        return int(cfg["pio_sm"])
+    i = _PIO_SM_NEXT
+    _PIO_SM_NEXT = i + 1
+    if i > 7:
+        raise ValueError("Too many PIO step/dir axes (max 8 state machines)")
+    return i
 
 # When the host streams J0:..,J1:..,J2:.. but make_axis() skipped a JOINT, we
 # record indices here and print a one-time WARN (otherwise J2 is ignored silently).
@@ -180,6 +215,18 @@ STEP_US = 250
 HOST_FOLLOW_MAX_SPS = 0
 # <<END_HOST_FOLLOW_SPS_CAP>>
 
+# <<BEGIN_WEB_ARM_CONFIG>>
+# Injected at Deploy from the PC Arm Configuration (matches simulator FK/IK).
+WEB_HTTP_PORT = 8080
+ARM_LINK_LENGTHS = []
+ARM_JOINT_PLANE_OFFSETS = []
+ARM_JOINT_LATERAL_X = []
+ARM_JOINT_LATERAL_Y = []
+ARM_BASE_VERTICAL_OFFSET = 0.0
+ARM_JOINT_LIMITS_RAD = []
+IK_USE_ELBOW_DOWN = True
+# <<END_WEB_ARM_CONFIG>>
+
 # Main loop: serial + motion + sleep each iteration. Shorter STEP_US → higher target loop
 # rate (≈ 1/STEP_US kHz). Host follow can emit several full steps per axis per tick; if the
 # loop overruns STEP_US, raise it or lower max_sps / MAX_STEPS_PER_AXIS_TICK.
@@ -199,16 +246,439 @@ _HOMING_ONE_STEP_PER_TICK = True
 # next axis updates (looks like one joint at a time).
 _HOST_INTERLEAVE_STEPS = True
 
+# CNC-style trajectory ring (host ``T:<seconds>,J0:…`` lines).
+TRAJ_RING_CAP = 48
+TRAJ_LOOKAHEAD_S = 0.035
+
+_traj_ring = None
+_traj_anchor_us = None
+_traj_prev_deg = ()
+_traj_slots = 0
+
+# Commands from WiFi HTTP dashboard → drained on main loop (thread-safe list append).
+_web_cmd_queue = []
+_http_axes_ref = None
+
+
+def _clamp_scalar(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def _axis_angle_deg(ax):
+    """Joint angle in degrees (simulator convention) for FK / web display."""
+    try:
+        if hasattr(ax, "_steps_out") and ax._steps_out and ax._steps_out > 0:
+            return ax.current_pos / ax._steps_out * 360.0 + getattr(ax, "zero_offset", 0.0)
+        return float(getattr(ax, "target_pos", 0.0)) + float(getattr(ax, "zero_offset", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _angles_deg_bundle(axes):
+    """(base_deg, planar_deg[]) aligned with ARM_LINK_LENGTHS."""
+    by_idx = {a.idx: a for a in axes}
+    bd = _axis_angle_deg(by_idx.get(0)) if 0 in by_idx else 0.0
+    planar = []
+    for i in range(len(ARM_LINK_LENGTHS)):
+        ax = by_idx.get(i + 1)
+        planar.append(_axis_angle_deg(ax) if ax is not None else 0.0)
+    return bd, planar
+
+
+def _fk_positions_deg(base_deg, planar_degs):
+    n = len(ARM_LINK_LENGTHS)
+    pd = list(planar_degs[:n])
+    while len(pd) < n:
+        pd.append(0.0)
+    base_rad = base_deg * 0.017453292519943295
+    planar_rad = [d * 0.017453292519943295 for d in pd[:n]]
+    return _fk_positions_rad(base_rad, planar_rad)
+
+
+def _fk_positions_rad(base_rad, planar_rads):
+    """World XYZ polyline [eff0,nom0, …] — matches kinematics.forward_kinematics."""
+    if not ARM_LINK_LENGTHS or len(planar_rads) != len(ARM_LINK_LENGTHS):
+        return []
+    cb = math.cos(base_rad)
+    sb = math.sin(base_rad)
+    r_hat = [cb, sb, 0.0]
+    z_hat = [0.0, 0.0, 1.0]
+    y_hat = [-sb, cb, 0.0]
+    attach = [0.0, 0.0, ARM_BASE_VERTICAL_OFFSET]
+    cumulative = 0.0
+    positions = []
+    for i, length in enumerate(ARM_LINK_LENGTHS):
+        lx = ARM_JOINT_LATERAL_X[i] if i < len(ARM_JOINT_LATERAL_X) else 0.0
+        ly = ARM_JOINT_LATERAL_Y[i] if i < len(ARM_JOINT_LATERAL_Y) else 0.0
+        sin_pre = math.sin(cumulative)
+        cos_pre = math.cos(cumulative)
+        eff_start = [attach[0], attach[1], attach[2]]
+        if lx:
+            eff_start[0] += lx * (cos_pre * r_hat[0] - sin_pre * z_hat[0])
+            eff_start[1] += lx * (cos_pre * r_hat[1] - sin_pre * z_hat[1])
+            eff_start[2] += lx * (cos_pre * r_hat[2] - sin_pre * z_hat[2])
+        if ly:
+            eff_start[0] += ly * y_hat[0]
+            eff_start[1] += ly * y_hat[1]
+            eff_start[2] += ly * y_hat[2]
+        positions.append(tuple(eff_start))
+
+        cumulative += planar_rads[i]
+        sin_c = math.sin(cumulative)
+        cos_c = math.cos(cumulative)
+        po = ARM_JOINT_PLANE_OFFSETS[i] if i < len(ARM_JOINT_PLANE_OFFSETS) else 0.0
+        nom_end = [
+            eff_start[0] + length * sin_c * r_hat[0] + (length * cos_c + po) * z_hat[0],
+            eff_start[1] + length * sin_c * r_hat[1] + (length * cos_c + po) * z_hat[1],
+            eff_start[2] + length * sin_c * r_hat[2] + (length * cos_c + po) * z_hat[2],
+        ]
+        positions.append(tuple(nom_end))
+        attach = nom_end
+    return positions
+
+
+def _solve_2r_rad(L1, L2, r, z, elbow_down):
+    """2R IK in (r,z); elbow_down ⇔ ELBOW_DOWN in kinematics.py (sin_b negative)."""
+    d_sq = r * r + z * z
+    d = math.sqrt(d_sq)
+    if d > L1 + L2 + 1e-8 or d < abs(L1 - L2) - 1e-8:
+        return None
+    c_b = _clamp_scalar((d_sq - L1 * L1 - L2 * L2) / (2.0 * L1 * L2), -1.0, 1.0)
+    sin_b_abs = math.sqrt(max(0.0, 1.0 - c_b * c_b))
+    sin_b = -sin_b_abs if elbow_down else sin_b_abs
+    theta_b = math.atan2(sin_b, c_b)
+    theta_a = math.atan2(r, z) - math.atan2(L2 * sin_b, L1 + L2 * c_b)
+    return (theta_a, theta_b)
+
+
+def _ik_try_world(tx, ty, tz):
+    """Return (base_deg, planar_degs) or None — analytical only; lateral offsets → None."""
+    if any(ARM_JOINT_LATERAL_X) or any(ARM_JOINT_LATERAL_Y):
+        return None
+    N = len(ARM_LINK_LENGTHS)
+    if N == 0:
+        return None
+    links = ARM_LINK_LENGTHS
+    base_rad = math.atan2(ty, tx) if (abs(tx) > 1e-10 or abs(ty) > 1e-10) else 0.0
+    r = math.sqrt(tx * tx + ty * ty)
+    z_off = ARM_BASE_VERTICAL_OFFSET + sum(ARM_JOINT_PLANE_OFFSETS)
+    z = tz - z_off
+    elbow_down = IK_USE_ELBOW_DOWN
+
+    def finish(plan_rads):
+        out_deg = []
+        for i, pr in enumerate(plan_rads):
+            if i < len(ARM_JOINT_LIMITS_RAD):
+                lo, hi = ARM_JOINT_LIMITS_RAD[i]
+                pr = _clamp_scalar(pr, lo, hi)
+            out_deg.append(pr * 57.29577951308232)
+        return (base_rad * 57.29577951308232, out_deg)
+
+    if N == 1:
+        d = math.sqrt(r * r + z * z)
+        if abs(d - links[0]) > 1e-2:
+            return None
+        return finish([math.atan2(r, z)])
+
+    if N == 2:
+        sol = _solve_2r_rad(links[0], links[1], r, z, elbow_down)
+        if sol is None:
+            return None
+        return finish([sol[0], sol[1]])
+
+    phi = math.atan2(r, z)
+    tail = sum(links[2:])
+    r_w = r - tail * math.sin(phi)
+    z_w = z - tail * math.cos(phi)
+    sol = _solve_2r_rad(links[0], links[1], r_w, z_w, elbow_down)
+    if sol is None:
+        return None
+    ta, tb = sol
+    cum = ta + tb
+    plan = [ta, tb, phi - cum]
+    for _ in range(N - 3):
+        plan.append(0.0)
+    return finish(plan[:N])
+
+
+def _apply_web_command(item, axes):
+    if item[0] == "JJ":
+        jn = int(item[1])
+        ddeg = float(item[2])
+        for ax in axes:
+            if ax.idx == jn:
+                ax.set_target_angle(_axis_angle_deg(ax) + ddeg)
+                return
+    elif item[0] == "JE":
+        dx = float(item[1])
+        bd, pd = _angles_deg_bundle(axes)
+        pos = _fk_positions_deg(bd, pd)
+        if not pos:
+            return
+        ee = pos[-1]
+        sol = _ik_try_world(ee[0] + dx, ee[1], ee[2])
+        if sol is None:
+            return
+        base_deg, planar_deg = sol
+        by_idx = {a.idx: a for a in axes}
+        if 0 in by_idx:
+            by_idx[0].set_target_angle(base_deg)
+        for i, pdeg in enumerate(planar_deg):
+            ji = i + 1
+            if ji in by_idx:
+                by_idx[ji].set_target_angle(pdeg)
+
+
+def _web_http_server_thread():
+    """HTTP dashboard on WEB_HTTP_PORT (only started when WiFi enabled)."""
+    global _http_axes_ref
+    try:
+        import json
+        import socket
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("0.0.0.0", int(WEB_HTTP_PORT)))
+        srv.listen(2)
+        srv.settimeout(1.0)
+
+        html = """<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arm dashboard</title><style>
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:12px;}
+h1{font-size:1.1rem;margin:0 0 8px;}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;}
+.dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle;}
+.dot.on{background:#0f0;box-shadow:0 0 6px #0f0;}.dot.off{background:#644;}.dot.na{background:#333;}
+svg{background:#1a1a1a;border:1px solid #333;display:block;max-width:100%;}button{margin:2px;padding:6px 10px;cursor:pointer;}
+.ee{font-family:monospace;font-size:14px;}small{color:#888;}
+</style></head><body>
+<h1>Pico arm dashboard</h1>
+<p><small>TCP """ + str(TCP_PORT) + """ · HTTP """ + str(WEB_HTTP_PORT) + """</small></p>
+<div class="row" id="sw"></div>
+<svg id="sv" width="320" height="240" viewBox="-110 -110 220 220"><path id="armPath" stroke="#6cf" stroke-width="3" fill="none" d=""/></svg>
+<p class="ee" id="ee"></p>
+<div class="row" id="jb"></div>
+<div class="row"><button type="button" id="em">EE −X</button><button type="button" id="ep">EE +X</button>
+<small> EE jog uses onboard IK (Deploy injects arm geometry)</small></div>
+<script>
+function armLine(points){if(points.length<2)return '';
+let mx=0,my=0,Mx=0,My=0;for(const p of points){mx=Math.min(mx,p[0]);Mx=Math.max(Mx,p[0]);my=Math.min(my,p[1]);My=Math.max(My,p[1]);}
+const rw=Math.max(Mx-mx,1e-6),rh=Math.max(My-my,1e-6),sc=Math.min(180/rw,180/rh)*0.85,cx=(mx+Mx)/2,cy=(my+My)/2;
+let d='';for(let i=0;i<points.length;i++){const x=(points[i][0]-cx)*sc,y=-(points[i][1]-cy)*sc;d+=(i?'L':'M')+x+','+y;}
+return d;}
+async function poll(){try{const r=await fetch('/api/state');const j=await r.json();
+document.getElementById('ee').textContent='EE X='+j.ee.x+' Y='+j.ee.y+' Z='+j.ee.z+(j.fk_ok?'':' (FK off)');
+let h='';for(const s of j.switches){const cls=s.pressed?'on':(s.wired?'off':'na');
+h+='<span><span class="dot '+cls+'"></span>J'+s.idx+' limit</span> ';}
+document.getElementById('sw').innerHTML=h;
+let b='';for(const jo of j.joints){b+='<button type="button" data-j="'+jo.idx+'" data-d="-0.5">J'+jo.idx+' −</button>';
+b+='<button type="button" data-j="'+jo.idx+'" data-d="0.5">J'+jo.idx+' +</button> ';}
+document.getElementById('jb').innerHTML=b;
+document.querySelectorAll('#jb button').forEach(function(bt){bt.onclick=function(){
+fetch('/api/jog_joint?j='+bt.dataset.j+'&delta='+bt.dataset.d);};});
+const pts=j.polyline_xy||[];document.getElementById('armPath').setAttribute('d',pts.length?armLine(pts):'');}
+catch(e){console.warn(e);}}
+setInterval(poll,250);poll();
+document.getElementById('em').onclick=function(){fetch('/api/jog_ee?dx=-0.35');};
+document.getElementById('ep').onclick=function(){fetch('/api/jog_ee?dx=0.35');};
+</script>
+</body></html>"""
+
+        while True:
+            try:
+                conn, _addr = srv.accept()
+            except OSError:
+                continue
+            try:
+                conn.settimeout(3.0)
+                req = b""
+                while b"\r\n\r\n" not in req and len(req) < 4096:
+                    req += conn.recv(512)
+                if not req:
+                    conn.close()
+                    continue
+                head = req.split(b"\r\n\r\n", 1)[0].decode("utf-8", "replace")
+                lines = head.split("\r\n")
+                req_line = lines[0] if lines else ""
+                parts = req_line.split()
+                path_full = parts[1] if len(parts) > 1 else "/"
+                path = path_full
+                qs = ""
+                if "?" in path_full:
+                    path, qs = path_full.split("?", 1)
+
+                if path == "/" or path == "/index.html":
+                    body = html
+                    ctype = "text/html; charset=utf-8"
+                elif path == "/api/state":
+                    axes = _http_axes_ref
+                    bd, pd = _angles_deg_bundle(axes) if axes else (0.0, [])
+                    pts3 = _fk_positions_deg(bd, pd) if axes else []
+                    fk_ok = len(pts3) > 0
+                    poly_xy = [[round(p[0], 4), round(p[1], 4)] for p in pts3] if fk_ok else []
+                    joints_out = []
+                    sw_out = []
+                    for ax in sorted(axes or [], key=lambda a: a.idx):
+                        live = False
+                        if getattr(ax, "_home_pin", None) is not None:
+                            try:
+                                pv = ax._home_pin.value()
+                                live = (pv == 1) if ax.home_pin_polarity == "NC" else (pv == 0)
+                            except Exception:
+                                live = False
+                        joints_out.append({"idx": ax.idx, "deg": round(_axis_angle_deg(ax), 3)})
+                        sw_out.append({"idx": ax.idx, "pressed": live, "wired": getattr(ax, "_home_pin", None) is not None})
+                    ee = pts3[-1] if fk_ok else (0.0, 0.0, 0.0)
+                    doc = {
+                        "fk_ok": fk_ok,
+                        "joints": joints_out,
+                        "switches": sw_out,
+                        "ee": {
+                            "x": round(ee[0], 4),
+                            "y": round(ee[1], 4),
+                            "z": round(ee[2], 4),
+                        },
+                        "polyline_xy": poly_xy,
+                        "tcp_control_port": TCP_PORT,
+                        "http_port": WEB_HTTP_PORT,
+                    }
+                    body = json.dumps(doc)
+                    ctype = "application/json"
+                elif path == "/api/jog_joint":
+                    pr = {}
+                    for pair in qs.split("&"):
+                        if "=" in pair:
+                            k, v = pair.split("=", 1)
+                            pr[k] = v
+                    try:
+                        jn = int(pr.get("j", "-1"))
+                        delta = float(pr.get("delta", "0"))
+                        _web_cmd_queue.append(("JJ", jn, delta))
+                        body = '{"ok":true}'
+                    except Exception:
+                        body = '{"ok":false}'
+                    ctype = "application/json"
+                elif path == "/api/jog_ee":
+                    pr = {}
+                    for pair in qs.split("&"):
+                        if "=" in pair:
+                            k, v = pair.split("=", 1)
+                            pr[k] = v
+                    try:
+                        dx = float(pr.get("dx", "0"))
+                        _web_cmd_queue.append(("JE", dx))
+                        body = '{"ok":true}'
+                    except Exception:
+                        body = '{"ok":false}'
+                    ctype = "application/json"
+                else:
+                    body = "Not found"
+                    ctype = "text/plain"
+
+                raw_b = body.encode("utf-8")
+                hdr = (
+                    "HTTP/1.0 200 OK\r\nContent-Type: "
+                    + ctype
+                    + "\r\nConnection: close\r\nContent-Length: "
+                    + str(len(raw_b))
+                    + "\r\n\r\n"
+                )
+                conn.send(hdr.encode("utf-8") + raw_b)
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            print("WARN: web dashboard:", exc)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Unified velocity → step budget (host-follow, homing, PIO pulse spacing)
+# All step-rate motion uses these limits only: max_speed_sps, accel_sps2, jerk_sps3.
+# ---------------------------------------------------------------------------
+
+AXIS_PLAN_EPS_STEPS = 0.5
+HOMING_PLAN_ERR_MAG = 1e9
+
+
+def axis_plan_velocity_steps(
+    dt,
+    signed_position_error_steps,
+    vel_signed,
+    frac_carry,
+    dv_prev,
+    max_speed_sps,
+    accel_sps2,
+    jerk_sps3,
+    max_burst,
+):
+    """Plan integer full-steps this tick from accel/jerk-limited velocity toward ``signed_position_error_steps``.
+
+    Parameters mirror motor tab units (full steps/s, s/s², s/s³). Returns:
+    ``(n_steps, new_vel_signed, new_frac_carry, new_dv_prev)``.
+    """
+    tdt = max(dt, 1e-9)
+    e = float(signed_position_error_steps)
+    a = abs(e)
+    if a < AXIS_PLAN_EPS_STEPS:
+        return 0, 0.0, 0.0, 0.0
+
+    ae = float(accel_sps2)
+    if ae <= 0.0:
+        ae = max(float(max_speed_sps) * 10.0, 400.0)
+
+    vmax = max(float(max_speed_sps), 1e-9)
+    ds = max(0.0, a - 0.5)
+    v_cap_k = math.sqrt(max(0.0, 2.0 * ae * ds))
+    v_cap = min(vmax, v_cap_k)
+    v_cmd = math.copysign(v_cap, e)
+
+    dv_max = ae * tdt
+    diff = v_cmd - vel_signed
+    if diff > dv_max:
+        dv_raw = dv_max
+    elif diff < -dv_max:
+        dv_raw = -dv_max
+    else:
+        dv_raw = diff
+
+    jk = float(jerk_sps3)
+    if jk > 0.0:
+        lim = jk * tdt * tdt
+        if dv_raw > dv_prev + lim:
+            dv_raw = dv_prev + lim
+        elif dv_raw < dv_prev - lim:
+            dv_raw = dv_prev - lim
+        ndv_prev = dv_raw
+    else:
+        ndv_prev = dv_raw
+
+    vel_signed = vel_signed + dv_raw
+    spd = abs(vel_signed)
+    if spd < 1e-9:
+        return 0, vel_signed, frac_carry, ndv_prev
+
+    frac_carry += spd * tdt
+    n_rate = int(frac_carry)
+    frac_carry -= float(n_rate)
+    n_rate = min(n_rate, int(max_burst))
+    n_want = int(min(a + 0.5, 1e7))
+    return min(n_want, n_rate), vel_signed, frac_carry, ndv_prev
+
 
 # ---------------------------------------------------------------------------
 # Stepper axis base class
 # ---------------------------------------------------------------------------
 
 class _StepperBase:
-    """Host sends joint angles; we convert to target steps and emit full steps.
+    """Host trajectory → steps; motion uses :func:`axis_plan_velocity_steps` only.
 
-    Host-follow uses a signed velocity state with accel limit (Motor tab ``accel``) and a
-    brake envelope so motion ramps smoothly instead of jumping to ``max_sps`` instantly.
+    Limits are ``max_sps``, ``accel``, ``jerk`` from ``JOINTS`` (plus optional homing speed cap).
     """
 
     def __init__(self, cfg: dict):
@@ -220,7 +690,7 @@ class _StepperBase:
         _ac = float(cfg.get("accel", 0))
         # Steps/s² — if missing/0, default ~0.1 s to reach max_sps for smooth ramps
         self.accel = _ac if _ac > 0.0 else max(float(self.max_sps) * 10.0, 400.0)
-        self.jerk = float(cfg.get("jerk", 0))  # not used
+        self.jerk = float(cfg.get("jerk", 0))  # steps/s³ — limits |Δ(dv)| per tick when > 0
         self.zero_offset    = cfg.get("zero_offset_deg", 0.0)
         # Kept in JOINTS for PC-side direction-reversal compensation; not used on-device
         self.backlash_steps = int(cfg.get("backlash_steps", 0))
@@ -256,13 +726,12 @@ class _StepperBase:
         self._homing_stage = "approach"  # stage: approach, backup, precision
         self._homing_backup_start = 0.0  # current_pos when backup began
         self._homing_backup_distance = 0.0  # how many steps to back off
-        # Fractional home steps (carry) — rate set by home_speed_sps vs loop dt
-        self._homing_step_accum: float = 0.0
         self._homing_last_stage: str = ""
-        # Host follow: accel-limited velocity → steps (replaces raw max_sps*dt bursts)
+        # Shared velocity planner state (axis_plan_velocity_steps): host-follow + homing use same integrators
         self._host_sps_accum: float = 0.0   # legacy SYNC clear; kept for compatibility
         self._host_follow_vel: float = 0.0  # signed steps/s toward +target
         self._host_follow_frac: float = 0.0  # fractional step carry
+        self._host_dv_prev: float = 0.0  # last velocity increment (for jerk limiting)
 
         # Software travel limits (None = disabled)
         _lmin = cfg.get("limit_min_deg")
@@ -291,27 +760,27 @@ class _StepperBase:
         pass
 
     def clear_host_follow_rates(self) -> None:
-        """Zero host-follow integrators (STOP, SYNC, ESTOP paths)."""
+        """Zero unified motion-plan integrators (STOP, SYNC, homing stage changes)."""
         self._host_sps_accum = 0.0
         self._host_follow_vel = 0.0
         self._host_follow_frac = 0.0
+        self._host_dv_prev = 0.0
 
-    def _homing_step_budget(self, speed_sps, dt) -> int:
-        """Emits 0/1 full steps; average rate ≤ speed_sps and ≤ 1/dt (no sub-ms bursts)."""
-        tdt = max(dt, 1e-9)
-        # One step per main loop: cannot request more than 1/dt steps/s average
-        _cap = 1.0 / tdt
-        sp = min(float(speed_sps), _cap)
-        self._homing_step_accum += sp * tdt
+    def _homing_step_budget(self, speed_sps, dt, step_sign) -> int:
+        """Steps this tick toward open-loop homing direction using same planner as host-follow."""
+        n, self._host_follow_vel, self._host_follow_frac, self._host_dv_prev = axis_plan_velocity_steps(
+            dt,
+            HOMING_PLAN_ERR_MAG * float(step_sign),
+            self._host_follow_vel,
+            self._host_follow_frac,
+            self._host_dv_prev,
+            float(speed_sps),
+            float(self.accel),
+            float(self.jerk),
+            MAX_STEPS_PER_AXIS_TICK,
+        )
         if _HOMING_ONE_STEP_PER_TICK:
-            if self._homing_step_accum < 1.0:
-                return 0
-            self._homing_step_accum -= 1.0
-            return 1
-        n = int(self._homing_step_accum)
-        if n > MAX_STEPS_PER_AXIS_TICK:
-            n = MAX_STEPS_PER_AXIS_TICK
-        self._homing_step_accum -= float(n)
+            return min(n, 1)
         return n
 
     def _emit_one_step(self, forward) -> None:
@@ -345,49 +814,22 @@ class _StepperBase:
         return n
 
     def _host_follow_budget(self, dt) -> int:
-        """Steps to emit this tick toward host angle.
-
-        Trapezoid-like envelope: ``accel`` (steps/s², from Motor config) limits how fast
-        |velocity| can change; cruise speed is capped by ``max_sps`` and by sqrt(2*a*distance)
-        so we can decelerate to rest without overshooting the remaining error.
-        """
+        """Steps toward ``target_pos`` using :func:`axis_plan_velocity_steps` (``max_sps``, ``accel``, ``jerk``)."""
         e = self.target_pos - self.current_pos
-        a = abs(e)
-        tdt = max(dt, 1e-9)
-        if a < 0.5:
+        n, self._host_follow_vel, self._host_follow_frac, self._host_dv_prev = axis_plan_velocity_steps(
+            dt,
+            e,
+            self._host_follow_vel,
+            self._host_follow_frac,
+            self._host_dv_prev,
+            float(self.max_sps),
+            float(self.accel),
+            float(self.jerk),
+            MAX_STEPS_PER_AXIS_TICK,
+        )
+        if n == 0 and abs(e) < AXIS_PLAN_EPS_STEPS:
             self._host_sps_accum = 0.0
-            self._host_follow_vel = 0.0
-            self._host_follow_frac = 0.0
-            return 0
-
-        ae = float(self.accel)
-        # max speed that can be killed in distance ~a at deceleration ae (kinematic cap)
-        ds = max(0.0, a - 0.5)
-        v_cap = math.sqrt(max(0.0, 2.0 * ae * ds)) if ae > 0.0 else float(self.max_sps)
-        v_cap = min(float(self.max_sps), v_cap)
-        v_cmd = math.copysign(v_cap, e)
-
-        dv_max = ae * tdt
-        v = self._host_follow_vel
-        diff = v_cmd - v
-        if diff > dv_max:
-            v = v + dv_max
-        elif diff < -dv_max:
-            v = v - dv_max
-        else:
-            v = v_cmd
-        self._host_follow_vel = v
-
-        spd = abs(v)
-        if spd < 1e-9:
-            return 0
-
-        self._host_follow_frac += spd * tdt
-        n_rate = int(self._host_follow_frac)
-        self._host_follow_frac -= float(n_rate)
-        n_rate = min(n_rate, MAX_STEPS_PER_AXIS_TICK)
-        n_want = int(min(a + 0.5, 1e7))
-        return min(n_want, n_rate)
+        return n
 
     def _interleave_plan_host_steps(self, tdt) -> int:
         """Plan host-follow for this tick (called from main when _HOST_INTERLEAVE_STEPS).
@@ -436,7 +878,7 @@ class _StepperBase:
             self.velocity = de / tdt
 
     def update(self, dt: float) -> None:
-        """Follow host Jn angles: map to target steps, emit full steps; no S-curve here."""
+        """Advance stepping toward target / homing using :func:`axis_plan_velocity_steps`."""
         tdt = max(dt, 1e-9)
         e_before = self.target_pos - self.current_pos
 
@@ -456,7 +898,7 @@ class _StepperBase:
             else:
                 st = self._homing_stage
                 if st != self._homing_last_stage:
-                    self._homing_step_accum = 0.0
+                    self.clear_host_follow_rates()
                     self._homing_last_stage = st
                 hdir = self.home_direction
                 hs = self.home_speed_sps
@@ -468,20 +910,20 @@ class _StepperBase:
                         self._homing_stage = "backup"
                         self._homing_backup_start = self.current_pos
                         self._homing_backup_distance = self.home_backup_steps
-                        n_b = self._homing_step_budget(hs, dt)
                         f_back = (hs * -hdir) > 0
+                        n_b = self._homing_step_budget(hs, dt, 1 if f_back else -1)
                         s_last = self._emit_n_in_direction(n_b, f_back)
                     else:
-                        n_search = self._homing_step_budget(hsearch, dt)
                         f = (hsearch * hdir) > 0
+                        n_search = self._homing_step_budget(hsearch, dt, 1 if f else -1)
                         s_last = self._emit_n_in_direction(n_search, f)
                 elif st == "backup":
                     backed = abs(self.current_pos - self._homing_backup_start)
                     if backed >= self._homing_backup_distance and not home_active:
                         self._homing_stage = "precision"
                     else:
-                        n_slow = self._homing_step_budget(hs, dt)
                         f = (hs * -hdir) > 0
+                        n_slow = self._homing_step_budget(hs, dt, 1 if f else -1)
                         s_last = self._emit_n_in_direction(n_slow, f)
                 elif st == "precision":
                     if home_active:
@@ -489,16 +931,17 @@ class _StepperBase:
                         offset_steps = self.home_offset_deg / 360.0 * self._steps_out
                         if abs(offset_steps) > 0.5:
                             self.target_pos = -hdir * abs(offset_steps)
+                            self.clear_host_follow_rates()
                             self._homing_stage = "offset"
                         else:
                             self.at_home = True
                             self._homing_mode = False
                             self._homing_stage = "approach"
-                            self._homing_step_accum = 0.0
+                            self.clear_host_follow_rates()
                             self._homing_last_stage = ""
                     else:
-                        n_slow = self._homing_step_budget(hs, dt)
                         f = (hs * hdir) > 0
+                        n_slow = self._homing_step_budget(hs, dt, 1 if f else -1)
                         s_last = self._emit_n_in_direction(n_slow, f)
                 elif st == "offset":
                     s_last = self._emit_n_toward_target(self._host_follow_budget(tdt))
@@ -508,7 +951,7 @@ class _StepperBase:
                         self.at_home = True
                         self._homing_mode = False
                         self._homing_stage = "approach"
-                        self._homing_step_accum = 0.0
+                        self.clear_host_follow_rates()
                         self._homing_last_stage = ""
 
                 sgn = 1.0 if self._last_dir == 1 else -1.0
@@ -634,6 +1077,73 @@ class StepperAxisStepDir(_StepperBase):
 
 
 # ---------------------------------------------------------------------------
+# NEMA step/dir via PIO (hardware-timed STEP); DIR still from CPU
+# ---------------------------------------------------------------------------
+
+
+class StepperAxisStepDirPIO(_StepperBase):
+    """STEP/DIR with STEP generated by PIO for stable pulse spacing."""
+
+    def __init__(self, cfg: dict):
+        if not _PIO_HAVE_STEP:
+            raise RuntimeError("PIO not available")
+        super().__init__(cfg)
+        pins = cfg["pins"]
+        if len(pins) < 2:
+            raise ValueError(f"stepdir PIO needs 2 pins, got {pins}")
+        self._step_pin_num = pins[0]
+        self._dir_pin_num = pins[1]
+        self._dir_pin = Pin(pins[1], Pin.OUT, value=0)
+        self.invert_dir = cfg.get("invert_dir", False)
+        self.dir_setup_us = int(cfg.get("dir_setup_us", 12))
+        self._last_phys_dir: int = -1
+        self._pio_fc = float(machine.freq())
+        sm_id = _pio_alloc_sm_id(cfg)
+        self._sm = StateMachine(
+            sm_id,
+            _pio_step_pulse_program,
+            freq=int(self._pio_fc),
+            set_base=Pin(pins[0]),
+        )
+        self._sm.active(1)
+
+    def _step(self, count: int, forward: bool) -> None:
+        try:
+            self._sm.active(1)
+        except Exception:
+            pass
+        physical_forward = (not forward) if self.invert_dir else forward
+        phys_dir = 1 if physical_forward else 0
+        self._dir_pin.value(phys_dir)
+        if phys_dir != self._last_phys_dir and self.dir_setup_us > 0:
+            time.sleep_us(self.dir_setup_us)
+        self._last_phys_dir = phys_dir
+        period = max(
+            64,
+            min(
+                0x7FFFFFFF,
+                int(self._pio_fc / max(1.0, 2.0 * max(1.0, abs(self._host_follow_vel))))),
+            ),
+        )
+        for _ in range(count):
+            self._sm.put(period)
+
+    def deenergise(self) -> None:
+        try:
+            self._sm.active(0)
+        except Exception:
+            pass
+        Pin(self._step_pin_num, Pin.OUT, value=0)
+
+    def get_pin_debug(self) -> str:
+        n = self._steps_since_report; self._steps_since_report = 0
+        return "GP{}(STEP)=PIO GP{}(DIR)={} sps~{}".format(
+            self._step_pin_num, self._dir_pin_num,
+            self._dir_pin.value(), n
+        )
+
+
+# ---------------------------------------------------------------------------
 # RC servo axis (PWM — single signal pin)
 # ---------------------------------------------------------------------------
 
@@ -716,6 +1226,10 @@ def _axis_wiring_line(ax) -> str:
         return "J{0} STEP=GP{1} DIR=GP{2} ({3})".format(
             ax.idx, ax._step_pin_num, ax._dir_pin_num, cls
         )
+    if cls == "StepperAxisStepDirPIO":
+        return "J{0} STEP=GP{1}(PIO) DIR=GP{2} ({3})".format(
+            ax.idx, ax._step_pin_num, ax._dir_pin_num, cls
+        )
     if cls == "StepperAxis28BYJ":
         return "J{0} ULN IN1..4 = GP{1} ({2})".format(ax.idx, ax._pin_nums, cls)
     if cls == "ServoAxis":
@@ -728,6 +1242,12 @@ def make_axis(cfg: dict):
     if driver == "28byj":
         return StepperAxis28BYJ(cfg)
     elif driver == "stepdir":
+        use_pio = cfg.get("pio_stepdir", True)
+        if use_pio and _PIO_HAVE_STEP:
+            try:
+                return StepperAxisStepDirPIO(cfg)
+            except Exception as e:
+                print("WARN: PIO stepdir failed for J{} — software STEP: {}".format(cfg.get("idx", "?"), e))
         return StepperAxisStepDir(cfg)
     elif driver == "servo":
         return ServoAxis(cfg)
@@ -759,6 +1279,143 @@ def _apply_host_follow_sps_cap(axes) -> None:
     for ax in steppers:
         ax.max_sps = int(round(float(ax.max_sps) * scale))
         ax.accel = float(ax.accel) * scale
+
+
+# ---------------------------------------------------------------------------
+# Host trajectory ring buffer (``T:`` timestamped joint samples)
+# ---------------------------------------------------------------------------
+
+
+class TrajectoryRing:
+    """Rolling buffer of (stream_time_s, pose_deg_tuple) for interpolation."""
+
+    def __init__(self):
+        self._times = []
+        self._poses = []
+
+    def clear(self):
+        self._times.clear()
+        self._poses.clear()
+
+    def empty(self):
+        return len(self._times) == 0
+
+    def push(self, t_s, pose_deg):
+        if self._times and t_s <= self._times[-1]:
+            self._times.pop()
+            self._poses.pop()
+        self._times.append(float(t_s))
+        self._poses.append(pose_deg)
+        while len(self._times) > TRAJ_RING_CAP:
+            self._times.pop(0)
+            self._poses.pop(0)
+
+    def interp_at(self, t_play):
+        if not self._times:
+            return None
+        if t_play <= self._times[0]:
+            return self._poses[0]
+        if t_play >= self._times[-1]:
+            return self._poses[-1]
+        for i in range(len(self._times) - 1):
+            t0 = self._times[i]
+            t1 = self._times[i + 1]
+            if t0 <= t_play <= t1:
+                q0 = self._poses[i]
+                q1 = self._poses[i + 1]
+                span = t1 - t0
+                if span <= 1e-9:
+                    alpha = 0.0
+                else:
+                    alpha = (t_play - t0) / span
+                return tuple(q0[j] + alpha * (q1[j] - q0[j]) for j in range(len(q0)))
+        return self._poses[-1]
+
+
+def _traj_merge_pose(cmd_dict, prev_deg, n_slots):
+    out = [float(prev_deg[i]) if i < len(prev_deg) else 0.0 for i in range(n_slots)]
+    for k, val in cmd_dict.items():
+        ki = int(k)
+        if 0 <= ki < n_slots:
+            out[ki] = float(val)
+    return tuple(out)
+
+
+def _traj_reset():
+    global _traj_anchor_us
+    _traj_anchor_us = None
+    if _traj_ring is not None:
+        _traj_ring.clear()
+
+
+def _parse_trajectory_prefix(line: str):
+    """Return (t_seconds_or_None, remainder_after_comma)."""
+    s = line.strip()
+    if len(s) < 4:
+        return None, s
+    if s[0] != "T" and s[0] != "t":
+        return None, s
+    if s[1] != ":":
+        return None, s
+    i = 2
+    while i < len(s) and s[i].isspace():
+        i += 1
+    j = i
+    while j < len(s) and s[j] != ",":
+        j += 1
+    if j >= len(s):
+        return None, s
+    try:
+        t_val = float(s[i:j])
+    except ValueError:
+        return None, s
+    rest = s[j + 1 :].strip()
+    return t_val, rest
+
+
+def _traj_feed_sample(t_s, cmd_dict, axes):
+    """Append a host trajectory knot; set wall-clock anchor on first sample."""
+    global _traj_anchor_us, _traj_prev_deg, _traj_ring, _traj_slots
+    if _traj_ring is None or _traj_slots <= 0:
+        return
+    merged = _traj_merge_pose(cmd_dict, _traj_prev_deg, _traj_slots)
+    _traj_prev_deg = merged
+    _traj_ring.push(t_s, merged)
+    if _traj_anchor_us is None:
+        _traj_anchor_us = time.ticks_us() - int(t_s * 1e6)
+
+
+def _playback_traj_to_axes(axes):
+    """Drive ``set_target_angle`` from interpolated ring playback time."""
+    global _traj_anchor_us, _traj_ring
+    if (
+        _traj_ring is None
+        or _traj_anchor_us is None
+        or _traj_ring.empty()
+        or not axes
+    ):
+        return
+    t_stream_s = time.ticks_diff(time.ticks_us(), _traj_anchor_us) / 1e6
+    t_play = t_stream_s - TRAJ_LOOKAHEAD_S
+    pose = _traj_ring.interp_at(t_play)
+    if pose is None:
+        return
+    for ax in axes:
+        if hasattr(ax, "set_target_angle") and ax.idx < len(pose):
+            ax.set_target_angle(pose[ax.idx])
+
+
+def _traj_capture_prev_from_axes(axes):
+    """After SYNC, seed interpolation tail from measured joint angles."""
+    global _traj_prev_deg, _traj_slots
+    if _traj_slots <= 0:
+        _traj_prev_deg = ()
+        return
+    slot = [0.0] * _traj_slots
+    for ax in axes:
+        if ax.idx < _traj_slots and hasattr(ax, "idx"):
+            slot[ax.idx] = _axis_angle_deg(ax)
+    _traj_prev_deg = tuple(slot)
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1589,23 @@ def main():
 
     _apply_host_follow_sps_cap(axes)
 
+    global _traj_ring, _traj_slots, _traj_prev_deg, _traj_anchor_us
+    _traj_slots = max((ax.idx for ax in axes), default=-1) + 1 if axes else 0
+    _traj_prev_deg = tuple([0.0] * _traj_slots)
+    _traj_anchor_us = None
+    _traj_ring = TrajectoryRing()
+
+    global _http_axes_ref
+    _http_axes_ref = axes
+    if ENABLE_WIFI and WIFI_SSID:
+        try:
+            import _thread
+
+            _thread.start_new_thread(_web_http_server_thread, ())
+            print("HTTP dashboard (same LAN): http://<pico-ip>:{}".format(WEB_HTTP_PORT))
+        except Exception as _we:
+            print("WARN: web dashboard:", _we)
+
     buf = ""
     idle_ticks = 0
     # Control period target (µs); actual inter-tick time is measured below so host-follow
@@ -1014,11 +1688,11 @@ def main():
             _homing_active = False
             _pos_stream_enabled = False
             _pin_stream_enabled = False
+            _traj_reset()
             for axis in axes:
                 axis._homing_mode = False
                 axis._homing_stage = "approach"
-                if hasattr(axis, "_homing_step_accum"):
-                    axis._homing_step_accum = 0.0
+                if hasattr(axis, "_homing_last_stage"):
                     axis._homing_last_stage = ""
                 if hasattr(axis, "clear_host_follow_rates"):
                     axis.clear_host_follow_rates()
@@ -1033,9 +1707,9 @@ def main():
                 if axis._home_pin is not None:
                     axis._homing_mode = True
                     axis._homing_stage = "approach"
-                    if hasattr(axis, "_homing_step_accum"):
-                        axis._homing_step_accum = 0.0
-                        axis._homing_last_stage = ""
+                    axis._homing_last_stage = ""
+                    if hasattr(axis, "clear_host_follow_rates"):
+                        axis.clear_host_follow_rates()
                     axis.at_home = False
                     reply_fn("HOME J{}: pin={} dir={} search={} fine={} backup={}\n".format(
                         axis.idx, axis.home_pin_num, axis.home_direction,
@@ -1073,9 +1747,9 @@ def main():
                             target_axis.home_speed_sps = v_search
                     target_axis._homing_mode = True
                     target_axis._homing_stage = "approach"
-                    if hasattr(target_axis, "_homing_step_accum"):
-                        target_axis._homing_step_accum = 0.0
-                        target_axis._homing_last_stage = ""
+                    target_axis._homing_last_stage = ""
+                    if hasattr(target_axis, "clear_host_follow_rates"):
+                        target_axis.clear_host_follow_rates()
                     target_axis.at_home = False
                     _homing_active = True
                     idle_ticks = 0
@@ -1101,14 +1775,14 @@ def main():
                     if cmd is None:
                         reply_fn("ERR:bad SYNC\n")
                     else:
+                        _traj_reset()
                         for axis in axes:
                             if axis.idx not in cmd:
                                 continue
                             a = cmd[axis.idx]
                             axis._homing_mode = False
                             axis._homing_stage = "approach"
-                            if hasattr(axis, "_homing_step_accum"):
-                                axis._homing_step_accum = 0.0
+                            if hasattr(axis, "_homing_last_stage"):
                                 axis._homing_last_stage = ""
                             if hasattr(axis, "angle_to_steps"):
                                 s = axis.angle_to_steps(a)
@@ -1122,6 +1796,7 @@ def main():
                                 axis.set_target_angle(a)
                         _homing_active = False
                         idle_ticks = 0
+                        _traj_capture_prev_from_axes(axes)
                         reply_fn("OK\n")
             except Exception as e:
                 reply_fn("ERR:SYNC:%s\n" % e)
@@ -1138,7 +1813,15 @@ def main():
             )
             reply_fn(_cap_note)
             reply_fn(
-                "NOTE:host-follow ramps with JOINTS accel (steps/s²) and max_sps — smoother than step bursts.\n"
+                "NOTE:host-follow ramps with JOINTS accel (steps/s²), optional jerk (steps/s³), and max_sps.\n"
+            )
+            reply_fn(
+                "NOTE:host may stream ``T:<stream_s>,J0:…`` for buffered interpolation (~{:g} ms lookahead).\n".format(
+                    TRAJ_LOOKAHEAD_S * 1000.0
+                )
+            )
+            reply_fn(
+                "NOTE:STEP/DIR axes use PIO STEP when ``pio_stepdir`` is true (see PRINTAXES wiring).\n"
             )
             reply_fn(
                 "NOTE:burst ceiling ≤{0} steps/tick/axis; STEP_US={1}µs main period (raise STEP_US if overruns).\n".format(
@@ -1181,6 +1864,10 @@ def main():
                             _ps = "STEP=GP{} DIR=GP{}".format(
                                 _a._step_pin_num, _a._dir_pin_num
                             )
+                        elif _t == "StepperAxisStepDirPIO":
+                            _ps = "STEP=GP{}(PIO) DIR=GP{}".format(
+                                _a._step_pin_num, _a._dir_pin_num
+                            )
                         elif _t == "StepperAxis28BYJ":
                             _ps = "28BYJ IN={}".format(_a._pin_nums)
                         else:
@@ -1191,24 +1878,34 @@ def main():
             except (ValueError, IndexError) as e:
                 reply_fn("ERR:STEPT: {}\n".format(e))
         else:
-            cmd = parse_command(line)
-            if cmd is not None:
-                loaded = {a.idx for a in axes}
-                for jn in cmd:
-                    if jn not in loaded and jn not in _SEEN_UNLOADED_J_CMD:
-                        _SEEN_UNLOADED_J_CMD.add(jn)
-                        print(
-                            "WARN: host sends J{0} but no motor for that index "
-                            "(see boot for 'skipping joint' or Deploy with all joints; "
-                            "STEPT {0} 50 to test if axis exists)\n".format(jn)
-                        )
-                for axis in axes:
-                    if axis.idx in cmd:
-                        axis.set_target_angle(cmd[axis.idx])
-                idle_ticks = 0
-                reply_fn("OK\n")
+            t_stream, rest = _parse_trajectory_prefix(line)
+            if t_stream is not None:
+                cmd = parse_command(rest)
+                if cmd is not None:
+                    _traj_feed_sample(t_stream, cmd, axes)
+                    idle_ticks = 0
+                    reply_fn("OK\n")
+                else:
+                    reply_fn("ERR:bad trajectory sample\n")
             else:
-                reply_fn("ERR:bad command\n")
+                cmd = parse_command(line)
+                if cmd is not None:
+                    loaded = {a.idx for a in axes}
+                    for jn in cmd:
+                        if jn not in loaded and jn not in _SEEN_UNLOADED_J_CMD:
+                            _SEEN_UNLOADED_J_CMD.add(jn)
+                            print(
+                                "WARN: host sends J{0} but no motor for that index "
+                                "(see boot for 'skipping joint' or Deploy with all joints; "
+                                "STEPT {0} 50 to test if axis exists)\n".format(jn)
+                            )
+                    for axis in axes:
+                        if axis.idx in cmd:
+                            axis.set_target_angle(cmd[axis.idx])
+                    idle_ticks = 0
+                    reply_fn("OK\n")
+                else:
+                    reply_fn("ERR:bad command\n")
 
     while True:
         try:
@@ -1230,6 +1927,8 @@ def main():
             _t_max_s = _t_nom_s * _MOTION_DT_MAX_MULT
             if tdt > _t_max_s:
                 tdt = _t_max_s
+
+            _playback_traj_to_axes(axes)
 
             # ── 1. Advance all motor axes (28BYJ: GPIO; NEMA _step uses short sleep_us)
             any_moving = False
@@ -1296,6 +1995,12 @@ def main():
                 while _wifi_rx:
                     line = _wifi_rx.pop(0)
                     _handle_line(line, _wifi_tx.append)
+
+            while _web_cmd_queue:
+                try:
+                    _apply_web_command(_web_cmd_queue.pop(0), axes)
+                except Exception:
+                    pass
 
             # ── 3. Optional 1 Hz POS / PINS (skip ticks_ms when both off) ─────────
             if _pos_stream_enabled or _pin_stream_enabled:

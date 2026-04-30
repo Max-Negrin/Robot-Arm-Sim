@@ -2,13 +2,26 @@
 
 A desktop 3D robotic arm simulator with analytical inverse kinematics, real-time animation, and a full constraint system. Built with PyQt6 and pyqtgraph/OpenGL.
 
+## Documentation
+
+Long-form documentation lives in **[`docs/`](docs/)**:
+
+| Document | Description |
+|----------|-------------|
+| **[`docs/README.md`](docs/README.md)** | Index of everything in this folder |
+| [**NETWORKING\_AND\_COMMUNICATIONS.md**](docs/NETWORKING_AND_COMMUNICATIONS.md) | Fab Academy Week 11 — **student narrative** (wireless goals, AI disclosure, links) |
+| [**FAB\_WEEK11\_ASSIGNMENT.md**](docs/FAB_WEEK11_ASSIGNMENT.md) | Fab Academy Week 11 — **criteria vs repo** (nodes, addressing, local I/O) |
+| [**FAB\_PROJECT\_DOCUMENTATION.md**](docs/FAB_PROJECT_DOCUMENTATION.md) | Full project documentation |
+| [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) | Technical architecture |
+| [**AI\_HANDOFF.md**](docs/AI_HANDOFF.md) | Developer / AI handoff |
+
 ## Installation
 
 ### From Source
 
 ```bash
 cd Robot-Arm-Sim
-pip install -r text\ files/requirements.txt
+pip install -r ../requirements.txt
 python main.py
 ```
 
@@ -136,4 +149,4 @@ Expected: 10/10 acceptance tests pass, all integration tests pass.
 
 ## Architecture
 
-See `AI_HANDOFF.md` for the full system architecture, mathematical foundations, and extension guide.
+See [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) for the full system architecture, mathematical foundations, and extension guide.

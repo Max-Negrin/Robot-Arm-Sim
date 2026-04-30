@@ -26,8 +26,13 @@ import time
 from typing import Optional
 
 from .protocol import (
-    BAUD_RATE, PICO_VID, UPDATE_THRESHOLD_RAD,
-    angles_changed, encode_angles, encode_sync_line,
+    BAUD_RATE,
+    PICO_VID,
+    UPDATE_THRESHOLD_RAD,
+    angles_changed,
+    encode_angles,
+    encode_sync_line,
+    encode_trajectory_sample,
 )
 
 logger = logging.getLogger(__name__)
@@ -523,6 +528,24 @@ class PicoInterface:
             self._last_angles = list(angles_rad)
         except queue.Full:
             pass  # Silently drop frame
+
+    def send_joint_trajectory_sample(
+        self, angles_rad: list[float], stream_time_s: float
+    ) -> None:
+        """Queue a timestamped pose for CNC-style buffering on the Pico (``T:``, …)."""
+        if not self._connected:
+            return
+        msg = encode_trajectory_sample(angles_rad, stream_time_s)
+        try:
+            if self._tx_queue.full():
+                try:
+                    self._tx_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self._tx_queue.put_nowait(msg)
+            self._last_angles = list(angles_rad)
+        except queue.Full:
+            pass
 
     def seed_pose_to_match_host(self, angles_rad: list[float]) -> None:
         """Tell the firmware current mechanical pose matches the simulator (see ``SYNC:`` in firmware).

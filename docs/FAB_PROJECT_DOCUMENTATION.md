@@ -36,7 +36,12 @@ The simulator is suitable as a **final project deliverable** artifact: runnable 
 Robot Arm Sim/
 ├── README.md                 # Quick install & feature list
 ├── requirements.txt          # Python dependencies (repo root)
-├── FAB_PROJECT_DOCUMENTATION.md   # This file
+├── docs/
+│   ├── FAB_PROJECT_DOCUMENTATION.md   # This file
+│   ├── FAB_WEEK11_ASSIGNMENT.md      # Fab Academy Week 11 (networking / I/O)
+│   ├── ARCHITECTURE.md
+│   ├── future_improvements.md
+│   └── AI_HANDOFF.md
 └── Robot-Arm-Sim/
     ├── main.py               # Entry point: logging, dependency check, QApplication
     ├── gui.py                # Main window: viewport, panels, timer (~1 kHz sim loop)
@@ -269,7 +274,7 @@ Always treat deployed firmware as **beta** until validated on **your** mechanics
 
 ## 14. Extending the project (ideas)
 
-Documented elsewhere (for example `Robot-Arm-Sim/text files/ARCHITECTURE.md`, `future_improvements.md`): Jacobian-based impedance (not implemented), richer waypoint blending, closed-loop feedback from encoders, ROS bridges, etc. Use those files for deeper roadmap detail when present in your checkout.
+Documented elsewhere in this repo under **`docs/`** (`ARCHITECTURE.md`, `future_improvements.md`): Jacobian-based impedance (not implemented), richer waypoint blending, closed-loop feedback from encoders, ROS bridges, etc. Use those files for deeper roadmap detail when present in your checkout.
 
 ---
 
@@ -291,7 +296,7 @@ Documented elsewhere (for example `Robot-Arm-Sim/text files/ARCHITECTURE.md`, `f
 | Project name | Robot Arm Simulator |
 | Primary codebase path | `Robot-Arm-Sim/` |
 | Firmware artifact | `Robot-Arm-Sim/firmware/pico_control_script.py` |
-| This document | `FAB_PROJECT_DOCUMENTATION.md` (repository root) |
+| This document | `docs/FAB_PROJECT_DOCUMENTATION.md` |
 
 ---
 

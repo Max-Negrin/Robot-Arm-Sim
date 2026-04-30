@@ -21,6 +21,7 @@ Errors are reported with human-readable descriptions and suggested fixes.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -387,6 +388,76 @@ def _inject_host_follow_max_sps(firmware_text: str, host_follow_max_sps: int) ->
     return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
 
 
+def _generate_web_arm_block(arm_config: dict | None) -> str:
+    """Python source for WEB_ARM_CONFIG — FK/IK geometry matching the simulator arm panel."""
+    port = 8080
+    if not arm_config:
+        ll: list = []
+        jpo: list = []
+        jlx: list = []
+        jly: list = []
+        bvo = 0.0
+        limits_rad: list[tuple[float, float]] = []
+        elbow_down = True
+    else:
+        ll = list(arm_config.get("link_lengths") or [])
+        jpo = list(arm_config.get("joint_plane_offsets") or [])
+        jlx = list(arm_config.get("joint_lateral_x") or [])
+        jly = list(arm_config.get("joint_lateral_y") or [])
+        bvo = float(arm_config.get("base_vertical_offset") or 0.0)
+        limits_rad = []
+        for pair in arm_config.get("joint_limits") or []:
+            if len(pair) >= 2:
+                limits_rad.append((math.radians(float(pair[0])), math.radians(float(pair[1]))))
+        elbow_down = int(arm_config.get("elbow", 0)) == 0
+
+    n = len(ll)
+    while len(jpo) < n:
+        jpo.append(0.0)
+    while len(jlx) < n:
+        jlx.append(0.0)
+    while len(jly) < n:
+        jly.append(0.0)
+    while len(limits_rad) < n:
+        limits_rad.append((-math.pi * 0.999, math.pi * 0.999))
+
+    def _fmt_pair(p: tuple[float, float]) -> str:
+        return "(%.12g, %.12g)" % (p[0], p[1])
+
+    lim_repr = "[" + ", ".join(_fmt_pair(p) for p in limits_rad[:n]) + "]" if n else "[]"
+    ll_repr = repr(list(ll))
+    jpo_repr = repr(list(jpo[:n]))
+    jlx_repr = repr(list(jlx[:n]))
+    jly_repr = repr(list(jly[:n]))
+
+    return (
+        "# <<BEGIN_WEB_ARM_CONFIG>>\n"
+        "# Injected at Deploy from the PC Arm Configuration (matches simulator FK/IK).\n"
+        f"WEB_HTTP_PORT = {int(port)}\n"
+        f"ARM_LINK_LENGTHS = {ll_repr}\n"
+        f"ARM_JOINT_PLANE_OFFSETS = {jpo_repr}\n"
+        f"ARM_JOINT_LATERAL_X = {jlx_repr}\n"
+        f"ARM_JOINT_LATERAL_Y = {jly_repr}\n"
+        f"ARM_BASE_VERTICAL_OFFSET = {bvo:.12g}\n"
+        f"ARM_JOINT_LIMITS_RAD = {lim_repr}\n"
+        f"IK_USE_ELBOW_DOWN = {str(bool(elbow_down))}\n"
+        "# <<END_WEB_ARM_CONFIG>>"
+    )
+
+
+def _inject_web_arm_config(firmware_text: str, arm_config: dict | None) -> str:
+    """Replace WEB_ARM_CONFIG block (FK geometry + HTTP port for WiFi dashboard)."""
+    begin_marker = "# <<BEGIN_WEB_ARM_CONFIG>>"
+    end_marker = "# <<END_WEB_ARM_CONFIG>>"
+    start = firmware_text.find(begin_marker)
+    end = firmware_text.find(end_marker)
+    if start == -1 or end == -1:
+        logger.warning("WEB_ARM_CONFIG sentinels not found — web dashboard geometry not injected")
+        return firmware_text
+    new_block = _generate_web_arm_block(arm_config)
+    return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
+
+
 def _deploy_via_wifi(host: str, port: int, firmware_text: str,
                      progress_cb=None) -> tuple[bool, str]:
     """Upload firmware to the Pico over the existing WiFi TCP connection.
@@ -497,6 +568,7 @@ class MicroPythonDeployer:
                wifi_ssid: str = "", wifi_password: str = "", wifi_port: int = 8888,
                step_us: int = 250,
                host_follow_max_sps: int = 0,
+               arm_config: dict | None = None,
                progress_cb=None) -> tuple[bool, str]:
         """Deploy ``firmware/pico_control_script.py`` to the Pico on *port*.
 
@@ -563,6 +635,9 @@ class MicroPythonDeployer:
             logger.info("Injected WiFi: SSID=%r port=%d", wifi_ssid, wifi_port)
         else:
             _prog("Firmware WiFi disabled (ENABLE_WIFI=False; fastest control loop)")
+
+        firmware_text = _inject_web_arm_config(firmware_text, arm_config)
+        _prog("Injected WEB_ARM_CONFIG (link lengths + joint limits for onboard FK/IK dashboard)")
 
         # Deploy via raw serial REPL (no external tools needed)
         _prog("Deploying via raw serial REPL...")
@@ -635,5 +710,8 @@ class MicroPythonDeployer:
         )
         if wifi_ssid and str(wifi_ssid).strip():
             _prog(f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, port={tcp_port}")
+
+        firmware_text = _inject_web_arm_config(firmware_text, arm_config)
+        _prog("Injected WEB_ARM_CONFIG (link lengths + joint limits for onboard FK/IK dashboard)")
 
         return _deploy_via_wifi(host, tcp_port, firmware_text, progress_cb=progress_cb)

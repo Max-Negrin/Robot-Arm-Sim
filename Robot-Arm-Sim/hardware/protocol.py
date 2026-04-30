@@ -7,6 +7,12 @@ Message format (host → Pico):
 Each Jn value is a joint angle in degrees. The base rotation is J0; planar
 joints follow sequentially. Update rate is throttled by the caller.
 
+Trajectory mode (CNC-style buffering on firmware):
+    T:<stream_seconds>,J0:45.00,J1:32.50,...\n
+    ``stream_seconds`` is monotonic time in seconds on the host stream timeline
+    (starts at 0 after connect / SYNC seed). The Pico interpolates samples and
+    plays with a short lookahead.
+
     SYNC:J0:0.00,J1:0.00,…\n
         — (firmware) set logical position to these angles with no large catch-up
         step burst; used right after connect so the real arm is not told to
@@ -17,7 +23,11 @@ Message format (Pico → host, optional status):
     ERR:<msg>\n  — error from Pico
 """
 
+from __future__ import annotations
+
 import math
+import re
+from typing import Optional
 
 # Minimum angle change (radians) before a new update is sent to hardware.
 # Keep small so 60 fps animation matches the real arm: a high value (e.g. 0.005)
@@ -28,8 +38,21 @@ UPDATE_THRESHOLD_RAD: float = 1e-5  # ~0.0006°; still skips identical floats
 BAUD_RATE: int = 115200
 TERMINATOR: str = "\n"
 
+# Steady trajectory streaming rate (Hz) when hardware sync uses ``T:`` samples.
+TRAJECTORY_STREAM_HZ: float = 100.0
+TRAJECTORY_STREAM_HZ_MIN: float = 50.0
+TRAJECTORY_STREAM_HZ_MAX: float = 200.0
+
 # Pico USB vendor IDs that identify a Raspberry Pi device
 PICO_VID: int = 0x2E8A   # Raspberry Pi
+
+# Optional leading ``T:<float>,`` on trajectory lines (fractional seconds).
+_TRAJ_PREFIX_RE = re.compile(r"^\s*T:\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*,", re.I)
+
+
+def clamp_trajectory_stream_hz(hz: float) -> float:
+    """Clamp desired trajectory stream rate to the supported band."""
+    return max(TRAJECTORY_STREAM_HZ_MIN, min(TRAJECTORY_STREAM_HZ_MAX, float(hz)))
 
 
 def encode_sync_line(angles_rad: list[float]) -> str:
@@ -53,6 +76,30 @@ def encode_angles(angles_rad: list[float]) -> bytes:
     """
     parts = [f"J{i}:{math.degrees(a):.4f}" for i, a in enumerate(angles_rad)]
     return (",".join(parts) + TERMINATOR).encode("utf-8")
+
+
+def encode_trajectory_sample(angles_rad: list[float], stream_time_s: float) -> bytes:
+    """Encode timestamped joint pose for firmware trajectory ring buffer.
+
+    Parameters
+    ----------
+    angles_rad:
+        Joint angles in radians (same order as ``encode_angles``).
+    stream_time_s:
+        Host stream timeline position in seconds (monotonic within session).
+    """
+    parts = [f"J{i}:{math.degrees(a):.4f}" for i, a in enumerate(angles_rad)]
+    body = ",".join(parts)
+    line = f"T:{float(stream_time_s):.6f},{body}{TERMINATOR}"
+    return line.encode("utf-8")
+
+
+def split_trajectory_prefix(line: str) -> tuple[Optional[float], str]:
+    """If ``line`` starts with ``T:<seconds>,``, return ``(t_s, rest)`` else ``(None, line)``."""
+    m = _TRAJ_PREFIX_RE.match(line.strip())
+    if not m:
+        return None, line.strip()
+    return float(m.group(1)), line.strip()[m.end() :]
 
 
 def decode_response(raw: bytes) -> dict:

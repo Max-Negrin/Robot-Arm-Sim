@@ -92,44 +92,22 @@ def motor_rad_limits_from_joint_cfgs(
 ) -> list[tuple[float, float]]:
     """(omega_max, alpha_max) in rad/s and rad/s^2 per joint, from motor_config panel dicts.
 
-    ``joint_cfgs`` must be ordered J0, J1, …; steppers use max_sps/accel; servos
-    get conservative stand-ins (no rate fields in the UI).
-
-    When ``host_follow_max_sps`` > 0, the same proportional scaling as Pico firmware is applied:
-    peak stepper ``max_sps`` is capped to that value and every stepper/accel scales by the same
-    factor (no scale-up when already under the cap).
+    Delegates scaling and per-joint limits to :mod:`hardware.motion_limits` so animation
+    timing matches Pico ``HOST_FOLLOW_MAX_SPS`` + ``max_sps`` / ``accel`` semantics.
+    Servos use conservative stand-ins (no rate fields in the UI).
     """
-    two_pi = 2.0 * math.pi
-    cap = 0.0
-    if host_follow_max_sps is not None:
-        try:
-            cap = max(0.0, float(host_follow_max_sps))
-        except (TypeError, ValueError):
-            cap = 0.0
-    peak = 0.0
-    for cfg in joint_cfgs:
-        if (cfg.get("driver") or "stepdir").lower() == "servo":
-            continue
-        peak = max(peak, float(cfg.get("max_sps", 500)))
-    scale = 1.0
-    if cap > 0 and peak > 0:
-        scale = min(1.0, cap / peak)
+    from hardware.motion_limits import rad_velocity_accel_from_step_limits, step_motion_limits_per_joint
 
+    lims = step_motion_limits_per_joint(joint_cfgs, host_follow_max_sps)
     out: list[tuple[float, float]] = []
-    for cfg in joint_cfgs:
+    for cfg, lim in zip(joint_cfgs, lims):
         driver = (cfg.get("driver") or "stepdir").lower()
         if driver == "servo":
             out.append((5.0, 20.0))
             continue
         spr = float(cfg.get("steps_per_rev", 4096))
         gr = float(cfg.get("gear_ratio", 1.0))
-        steps_out = max(1.0, spr * gr)
-        max_sps = float(cfg.get("max_sps", 500)) * scale
-        accel = float(cfg.get("accel", 1000)) * scale
-        out.append((
-            max_sps * two_pi / steps_out,
-            accel * two_pi / steps_out,
-        ))
+        out.append(rad_velocity_accel_from_step_limits(lim, spr, gr))
     return out
 
 
