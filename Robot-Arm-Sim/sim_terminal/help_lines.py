@@ -78,7 +78,7 @@ TERMINAL_HELP_LINES = [
     "  CONNECT                  — connect (uses panel settings)",
     "  DISCONNECT               — disconnect from hardware",
     "  RECONNECT                — disconnect then reconnect",
-    "  WIFI                     — show WiFi config / forward to Pico",
+    "  WIFI                     — panel summary; if connected, Pico runs WIFI → prints WiFi connected: IP",
     "  SETPORT <n>              — change TCP port",
     "  BROADCAST                — scan subnet for Pico on port 8888",
     "  DEPLOY                   — trigger firmware deploy",

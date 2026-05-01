@@ -326,8 +326,15 @@ def _inject_wifi_config(
     ssid: str,
     password: str,
     port: int = 8888,
+    *,
+    embed_wifi: bool = True,
+    wifi_country: str = "US",
 ) -> str:
-    """Replace the WiFi config block. ENABLE_WIFI is True only when *ssid* is non-empty."""
+    """Replace the WiFi config block.
+
+    When *embed_wifi* is False, ``ENABLE_WIFI`` is always False (USB-only firmware).
+    When True, ``ENABLE_WIFI`` is True only when *ssid* is non-empty.
+    """
     begin_marker = "# <<BEGIN_WIFI_CONFIG>>"
     end_marker   = "# <<END_WIFI_CONFIG>>"
     start = firmware_text.find(begin_marker)
@@ -335,7 +342,16 @@ def _inject_wifi_config(
     if start == -1 or end == -1:
         logger.warning("WiFi sentinels not found in firmware — WiFi config not injected")
         return firmware_text
-    enable = bool(ssid and str(ssid).strip())
+    if embed_wifi:
+        enable = bool(ssid and str(ssid).strip())
+    else:
+        enable = False
+    if embed_wifi and enable:
+        cc = str(wifi_country or "").strip().upper()[:2]
+        if len(cc) != 2:
+            cc = "US"
+    else:
+        cc = ""
     # repr() for safe escaping of quotes/backslashes in SSID/password
     new_block = (
         f"# <<BEGIN_WIFI_CONFIG>>\n"
@@ -343,6 +359,7 @@ def _inject_wifi_config(
         f"WIFI_SSID = {repr(ssid)}\n"
         f"WIFI_PASSWORD = {repr(password)}\n"
         f"TCP_PORT = {int(port)}\n"
+        f"WIFI_COUNTRY = {repr(cc)}\n"
         f"# <<END_WIFI_CONFIG>>"
     )
     return firmware_text[:start] + new_block + firmware_text[end + len(end_marker):]
@@ -525,9 +542,18 @@ def _deploy_via_wifi(host: str, port: int, firmware_text: str,
                     break
             return ""
 
-        # Send UPLOAD_BEGIN
+        # Send UPLOAD_BEGIN — server may have pushed WiFi welcome banner first; read until UPLOAD_READY.
         sock.sendall(f"UPLOAD_BEGIN {total}\n".encode())
-        resp = _readline()
+        deadline_ul = time.monotonic() + 15.0
+        resp = ""
+        while time.monotonic() < deadline_ul:
+            resp = _readline(timeout=min(2.0, max(0.2, deadline_ul - time.monotonic())))
+            if resp == "UPLOAD_READY":
+                break
+            # Ignore boot banners / stray lines before the upload handshake completes.
+            if resp in ("", "Robot Arm Pico Controller ready", "firmware ready"):
+                continue
+            return False, f"ERROR: Expected UPLOAD_READY, got {resp!r}"
         if resp != "UPLOAD_READY":
             return False, f"ERROR: Expected UPLOAD_READY, got {resp!r}"
 
@@ -569,6 +595,8 @@ class MicroPythonDeployer:
                step_us: int = 250,
                host_follow_max_sps: int = 0,
                arm_config: dict | None = None,
+               embed_wifi: bool = True,
+               wifi_country: str = "US",
                progress_cb=None) -> tuple[bool, str]:
         """Deploy ``firmware/pico_control_script.py`` to the Pico on *port*.
 
@@ -628,13 +656,27 @@ class MicroPythonDeployer:
         else:
             _prog("HOST_FOLLOW_MAX_SPS = 0 (no global cap on host-follow rates)")
 
-        # Always refresh WiFi block: ENABLE_WIFI True only when SSID is set (else USB-only firmware)
-        firmware_text = _inject_wifi_config(firmware_text, wifi_ssid, wifi_password, wifi_port)
-        if wifi_ssid and str(wifi_ssid).strip():
-            _prog(f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, port={wifi_port}")
-            logger.info("Injected WiFi: SSID=%r port=%d", wifi_ssid, wifi_port)
+        firmware_text = _inject_wifi_config(
+            firmware_text,
+            wifi_ssid,
+            wifi_password,
+            wifi_port,
+            embed_wifi=embed_wifi,
+            wifi_country=wifi_country,
+        )
+        if embed_wifi and wifi_ssid and str(wifi_ssid).strip():
+            cc = str(wifi_country or "").strip().upper()[:2]
+            if len(cc) != 2:
+                cc = "US"
+            _prog(
+                f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, "
+                f"CYW43 country={cc!r}, port={wifi_port}"
+            )
+            logger.info("Injected WiFi: SSID=%r country=%r port=%d", wifi_ssid, cc, wifi_port)
+        elif embed_wifi:
+            _prog("Firmware WiFi disabled (no SSID; ENABLE_WIFI=False)")
         else:
-            _prog("Firmware WiFi disabled (ENABLE_WIFI=False; fastest control loop)")
+            _prog("USB-only firmware (WiFi / HTTP dashboard disabled; ENABLE_WIFI=False)")
 
         firmware_text = _inject_web_arm_config(firmware_text, arm_config)
         _prog("Injected WEB_ARM_CONFIG (link lengths + joint limits for onboard FK/IK dashboard)")
@@ -662,6 +704,9 @@ class MicroPythonDeployer:
                     wifi_ssid: str = "", wifi_password: str = "",
                     step_us: int = 250,
                     host_follow_max_sps: int = 0,
+                    arm_config: dict | None = None,
+                    embed_wifi: bool = True,
+                    wifi_country: str = "US",
                     progress_cb=None) -> tuple[bool, str]:
         """Deploy firmware to the Pico over WiFi TCP (no USB required).
 
@@ -674,7 +719,7 @@ class MicroPythonDeployer:
             Pico IP address.
         tcp_port:
             TCP port the Pico listens on (default 8888).
-        joints_config, wifi_ssid, wifi_password:
+        joints_config, wifi_ssid, wifi_password, arm_config, embed_wifi:
             Same as ``deploy()`` — injected into the firmware before upload.
         """
         def _prog(msg):
@@ -706,10 +751,25 @@ class MicroPythonDeployer:
             _prog(f"Injected HOST_FOLLOW_MAX_SPS = {_hf}")
 
         firmware_text = _inject_wifi_config(
-            firmware_text, wifi_ssid or "", wifi_password or "", tcp_port
+            firmware_text,
+            wifi_ssid or "",
+            wifi_password or "",
+            tcp_port,
+            embed_wifi=embed_wifi,
+            wifi_country=wifi_country,
         )
-        if wifi_ssid and str(wifi_ssid).strip():
-            _prog(f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, port={tcp_port}")
+        if embed_wifi and wifi_ssid and str(wifi_ssid).strip():
+            cc = str(wifi_country or "").strip().upper()[:2]
+            if len(cc) != 2:
+                cc = "US"
+            _prog(
+                f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, "
+                f"CYW43 country={cc!r}, port={tcp_port}"
+            )
+        elif embed_wifi:
+            _prog("Firmware WiFi disabled (no SSID; ENABLE_WIFI=False)")
+        else:
+            _prog("USB-only firmware (WiFi / HTTP dashboard disabled; ENABLE_WIFI=False)")
 
         firmware_text = _inject_web_arm_config(firmware_text, arm_config)
         _prog("Injected WEB_ARM_CONFIG (link lengths + joint limits for onboard FK/IK dashboard)")

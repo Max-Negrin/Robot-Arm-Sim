@@ -40,7 +40,7 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8888
-CONNECT_TIMEOUT = 30.0    # seconds — Pico may still be booting / joining WiFi
+CONNECT_TIMEOUT = 45.0    # seconds — Pico may still be booting / joining WiFi
 
 
 class PicoWifiInterface:
@@ -64,6 +64,8 @@ class PicoWifiInterface:
         self._last_angles: list[float] = []
         self.last_error: str = ""
         self.rx_callback = None   # callable(str) — called with each line from Pico
+        # Bytes read past the firmware-ready marker during connect; seeded into _rx_loop.
+        self._rx_carryover: bytes = b""
         # Not UART speed — used only by MainWindow to estimate safe J0:… line rate (LAN TCP).
         self._baud: int = 921600
 
@@ -105,6 +107,7 @@ class PicoWifiInterface:
 
         self._host = host
         self._port = port
+        self._rx_carryover = b""
 
         # Try to connect, retrying until timeout (Pico WiFi join can take ~5 s)
         sock = None
@@ -140,6 +143,7 @@ class PicoWifiInterface:
         ready = self._wait_for_banner(sock, remaining)
 
         if not ready:
+            self._rx_carryover = b""
             try:
                 sock.close()
             except Exception:
@@ -148,7 +152,7 @@ class PicoWifiInterface:
                 self._sock = None
             msg = (
                 f"ERROR: firmware not responding at {host}:{port}\n"
-                "CAUSE: Did not see 'firmware ready' or 'Robot Arm Pico Controller ready'\n"
+                "CAUSE: Did not see a line containing 'firmware ready'\n"
                 "       within the connection timeout (board still booting or wrong server)\n"
                 "FIX:   Deploy the Robot Arm firmware, confirm the correct IP, then try again"
             )
@@ -157,6 +161,7 @@ class PicoWifiInterface:
             return False, msg
 
         if not self._wifi_angle_probe(sock):
+            self._rx_carryover = b""
             try:
                 sock.close()
             except Exception:
@@ -191,9 +196,14 @@ class PicoWifiInterface:
         return True, f"Connected to {host}:{port} — Pico firmware ready ✓"
 
     def _wifi_angle_probe(self, sock: socket.socket) -> bool:
-        """Send a minimal J0 line and require ``OK`` (same as USB protocol probe)."""
+        """Send a minimal J0 line and require ``OK`` (same as USB protocol probe).
+
+        Preserves any bytes already read after the banner (``_rx_carryover``) plus a
+        short kernel drain so boot chatter is not dropped before the RX thread runs.
+        """
+        buf = self._rx_carryover
+        self._rx_carryover = b""
         try:
-            # Drain any banner tail still in the receive buffer
             sock.settimeout(0.05)
             for _ in range(30):
                 try:
@@ -202,6 +212,7 @@ class PicoWifiInterface:
                     break
                 if not chunk:
                     break
+                buf += chunk
         except OSError:
             return False
         try:
@@ -224,27 +235,54 @@ class PicoWifiInterface:
                 if chunk:
                     acc += chunk
                 if b"OK" in acc:
+                    self._rx_carryover = buf + acc
                     return True
         finally:
             try:
                 sock.settimeout(None)
             except OSError:
                 pass
-        return b"OK" in acc
+        return False
 
     def _wait_for_banner(self, sock: socket.socket, timeout: float) -> bool:
         """Read from sock until the firmware-ready banner arrives or timeout."""
         sock.settimeout(0.5)
         deadline = time.monotonic() + timeout
         buf = b""
+        ping_sent = False
+        t0 = time.monotonic()
+        marker = b"firmware ready"
         try:
             while time.monotonic() < deadline:
+                if (
+                    not ping_sent
+                    and (time.monotonic() - t0) >= 3.0
+                    and marker not in buf
+                ):
+                    ping_sent = True
+                    try:
+                        sock.sendall(b"PING\n")
+                    except OSError:
+                        pass
                 try:
                     chunk = sock.recv(256)
                     if chunk:
                         buf += chunk
-                        if b"firmware ready" in buf or b"Robot Arm Pico Controller ready" in buf:
-                            logger.info("Pico WiFi firmware ready at %s:%d", self._host, self._port)
+                        if marker in buf:
+                            pos = buf.find(marker) + len(marker)
+                            tail = buf[pos:]
+                            if tail.startswith(b"\r\n"):
+                                tail = tail[2:]
+                            elif tail.startswith(b"\n"):
+                                tail = tail[1:]
+                            elif tail.startswith(b"\r"):
+                                tail = tail[1:]
+                            self._rx_carryover = tail
+                            logger.info(
+                                "Pico WiFi firmware ready at %s:%d",
+                                self._host,
+                                self._port,
+                            )
                             sock.settimeout(None)
                             return True
                 except socket.timeout:
@@ -270,6 +308,7 @@ class PicoWifiInterface:
                     pass
                 self._sock = None
                 self._host = None
+        self._rx_carryover = b""
         logger.info("Pico WiFi disconnected")
 
     def send_joint_angles(self, angles_rad: list[float]) -> None:
@@ -365,7 +404,8 @@ class PicoWifiInterface:
 
     def _rx_loop(self) -> None:
         """Background thread: reads response lines and fires rx_callback."""
-        buf = b""
+        buf = self._rx_carryover
+        self._rx_carryover = b""
         while self._running:
             with self._lock:
                 sock = self._sock

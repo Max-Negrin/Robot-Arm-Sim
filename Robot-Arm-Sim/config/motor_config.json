@@ -3,58 +3,58 @@
     {
       "idx": 0,
       "name": "Base",
-      "driver": "stepdir",
-      "steps_per_rev": 800,
-      "gear_ratio": 6.0,
-      "max_sps": 6000,
-      "accel": 2000,
-      "jerk": 14000,
+      "driver": "28byj",
+      "steps_per_rev": 4096,
+      "gear_ratio": 1.0,
+      "max_sps": 500,
+      "accel": 1000,
+      "jerk": 0,
       "zero_offset_deg": 0.0,
       "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
-      "invert_dir": true,
-      "dir_setup_us": 5,
       "pins": [
-        8,
-        7
+        2,
+        3,
+        4,
+        5
       ]
     },
     {
       "idx": 1,
       "name": "Joint 1",
-      "driver": "stepdir",
-      "steps_per_rev": 1600,
-      "gear_ratio": 20.0,
-      "max_sps": 10000,
-      "accel": 6000,
-      "jerk": 14000,
+      "driver": "28byj",
+      "steps_per_rev": 4096,
+      "gear_ratio": 1.0,
+      "max_sps": 500,
+      "accel": 1000,
+      "jerk": 0,
       "zero_offset_deg": 0.0,
-      "backlash_steps": 30,
+      "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
-      "invert_dir": false,
-      "dir_setup_us": 20,
       "pins": [
-        4,
-        3
+        6,
+        7,
+        8,
+        9
       ]
     },
     {
       "idx": 2,
       "name": "Joint 2",
-      "driver": "stepdir",
-      "steps_per_rev": 1600,
-      "gear_ratio": 70.0,
-      "max_sps": 36000,
-      "accel": 22000,
-      "jerk": 48000,
-      "zero_offset_deg": 90.0,
-      "backlash_steps": 104,
+      "driver": "28byj",
+      "steps_per_rev": 4096,
+      "gear_ratio": 1.0,
+      "max_sps": 500,
+      "accel": 1000,
+      "jerk": 0,
+      "zero_offset_deg": 0.0,
+      "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
-      "invert_dir": true,
-      "dir_setup_us": 20,
       "pins": [
-        6,
-        5
+        10,
+        11,
+        12,
+        13
       ]
     }
   ]

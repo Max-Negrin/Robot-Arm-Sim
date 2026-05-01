@@ -172,7 +172,7 @@ def _is_likely_firmware_status_line(t: str) -> bool:
         return True
     if t.startswith("WARN:"):
         return True
-    if t.startswith("WiFi "):
+    if t.startswith("WiFi ") or t.startswith("WiFi:"):
         return True
     if t.startswith("MPY:") or t.startswith("MicroPython "):
         return True

@@ -168,13 +168,15 @@
   },
   "hardware": {
     "wifi_mode": false,
-    "wifi_host": "",
+    "wifi_host": "192.168.86.133",
     "wifi_port": 8888,
-    "wifi_ssid": "",
-    "wifi_password": "",
+    "wifi_ssid": "Greens",
+    "wifi_password": "7047126302",
+    "wifi_country": "US",
     "usb_port": "COM5",
     "baud": 115200,
     "hardware_sync": true,
+    "firmware_include_wifi": true,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0
   }
