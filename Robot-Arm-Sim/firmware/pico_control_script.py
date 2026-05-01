@@ -420,12 +420,14 @@ def _apply_web_command(item, axes):
                 return
     elif item[0] == "JE":
         dx = float(item[1])
+        dy = float(item[2]) if len(item) > 2 else 0.0
+        dz = float(item[3]) if len(item) > 3 else 0.0
         bd, pd = _angles_deg_bundle(axes)
         pos = _fk_positions_deg(bd, pd)
         if not pos:
             return
         ee = pos[-1]
-        sol = _ik_try_world(ee[0] + dx, ee[1], ee[2])
+        sol = _ik_try_world(ee[0] + dx, ee[1] + dy, ee[2] + dz)
         if sol is None:
             return
         base_deg, planar_deg = sol
@@ -492,38 +494,76 @@ h1{font-size:1.1rem;margin:0 0 8px;}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;}
 .dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle;}
 .dot.on{background:#0f0;box-shadow:0 0 6px #0f0;}.dot.off{background:#644;}.dot.na{background:#333;}
-svg{background:#1a1a1a;border:1px solid #333;display:block;max-width:100%;}button{margin:2px;padding:6px 10px;cursor:pointer;}
+svg{background:#1a1a1a;border:1px solid #333;display:block;max-width:100%;}button{margin:2px;padding:6px 10px;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;}
 .ee{font-family:monospace;font-size:14px;}small{color:#888;}
+.hdr{margin:10px 0 4px;color:#aaa;font-size:11px;}
 </style></head><body>
 <h1>Pico arm dashboard</h1>
 <p><small>TCP """ + str(TCP_PORT) + """ · HTTP """ + str(WEB_HTTP_PORT) + """</small></p>
 <div class="row" id="sw"></div>
 <svg id="sv" width="320" height="240" viewBox="-110 -110 220 220"><path id="armPath" stroke="#6cf" stroke-width="3" fill="none" d=""/></svg>
 <p class="ee" id="ee"></p>
+<p class="hdr">End-effector jog — world XYZ (mm, hold)</p>
+<div class="row">
+<button type="button" id="exm">EE −X</button><button type="button" id="exp">EE +X</button>
+<button type="button" id="eym">EE −Y</button><button type="button" id="eyp">EE +Y</button>
+<button type="button" id="ezm">EE −Z</button><button type="button" id="ezp">EE +Z</button>
+</div>
+<p class="hdr">Joint jog — degrees (hold)</p>
 <div class="row" id="jb"></div>
-<div class="row"><button type="button" id="em">EE −X</button><button type="button" id="ep">EE +X</button>
-<small> EE jog uses onboard IK (Deploy injects arm geometry)</small></div>
 <script>
 function armLine(points){if(points.length<2)return '';
 let mx=0,my=0,Mx=0,My=0;for(const p of points){mx=Math.min(mx,p[0]);Mx=Math.max(Mx,p[0]);my=Math.min(my,p[1]);My=Math.max(My,p[1]);}
 const rw=Math.max(Mx-mx,1e-6),rh=Math.max(My-my,1e-6),sc=Math.min(180/rw,180/rh)*0.85,cx=(mx+Mx)/2,cy=(my+My)/2;
 let d='';for(let i=0;i<points.length;i++){const x=(points[i][0]-cx)*sc,y=-(points[i][1]-cy)*sc;d+=(i?'L':'M')+x+','+y;}
 return d;}
-async function poll(){try{const r=await fetch('/api/state');const j=await r.json();
+var jbBuiltSig='',swBuiltSig='',holdIv=null,holdUrl=null;
+var stateBusy=false,statePending=false;
+function rebuildSwitches(swArr){var el=document.getElementById('sw'),h='';for(var i=0;i<swArr.length;i++){h+='<span><span class="dot na"></span>J'+swArr[i].idx+' limit</span> ';}el.innerHTML=h.trimEnd();}
+function updateSwitchDots(swArr){var el=document.getElementById('sw');for(var i=0;i<swArr.length;i++){var span=el.children[i];if(!span)return false;var dot=span.querySelector('.dot');if(!dot)return false;var s=swArr[i];dot.className='dot '+(s.pressed?'on':(s.wired?'off':'na'));}return true;}
+function rebuildJointButtons(joints){var el=document.getElementById('jb');el.innerHTML='';for(var i=0;i<joints.length;i++){var jo=joints[i];var bm=document.createElement('button');bm.type='button';bm.textContent='J'+jo.idx+' −';bindHold(bm,'/api/jog_joint?j='+jo.idx+'&delta=-0.5');el.appendChild(bm);var bp=document.createElement('button');bp.type='button';bp.textContent='J'+jo.idx+' +';bindHold(bp,'/api/jog_joint?j='+jo.idx+'&delta=0.5');el.appendChild(bp);el.appendChild(document.createTextNode(' '));}}
+async function refreshState(){
+if(stateBusy){statePending=true;return;}
+stateBusy=true;
+try{
+var r=await fetch('/api/state',{cache:'no-store'});
+var j=await r.json();
 document.getElementById('ee').textContent='EE X='+j.ee.x+' Y='+j.ee.y+' Z='+j.ee.z+(j.fk_ok?'':' (FK off)');
-let h='';for(const s of j.switches){const cls=s.pressed?'on':(s.wired?'off':'na');
-h+='<span><span class="dot '+cls+'"></span>J'+s.idx+' limit</span> ';}
-document.getElementById('sw').innerHTML=h;
-let b='';for(const jo of j.joints){b+='<button type="button" data-j="'+jo.idx+'" data-d="-0.5">J'+jo.idx+' −</button>';
-b+='<button type="button" data-j="'+jo.idx+'" data-d="0.5">J'+jo.idx+' +</button> ';}
-document.getElementById('jb').innerHTML=b;
-document.querySelectorAll('#jb button').forEach(function(bt){bt.onclick=function(){
-fetch('/api/jog_joint?j='+bt.dataset.j+'&delta='+bt.dataset.d);};});
-const pts=j.polyline_xy||[];document.getElementById('armPath').setAttribute('d',pts.length?armLine(pts):'');}
-catch(e){console.warn(e);}}
-setInterval(poll,250);poll();
-document.getElementById('em').onclick=function(){fetch('/api/jog_ee?dx=-0.35');};
-document.getElementById('ep').onclick=function(){fetch('/api/jog_ee?dx=0.35');};
+var swSig=j.switches.map(function(s){return s.idx;}).join('|');
+if(swSig!==swBuiltSig){rebuildSwitches(j.switches);swBuiltSig=swSig;}else if(!updateSwitchDots(j.switches)){rebuildSwitches(j.switches);}
+var jbSig=j.joints.map(function(x){return x.idx;}).join('|');
+if(jbSig!==jbBuiltSig){rebuildJointButtons(j.joints);jbBuiltSig=jbSig;}
+var pts=j.polyline_xy||[];document.getElementById('armPath').setAttribute('d',pts.length?armLine(pts):'');
+}catch(e){console.warn(e);}
+finally{
+stateBusy=false;
+if(statePending){statePending=false;refreshState();}
+}
+}
+async function pollLoop(){
+while(true){
+try{await refreshState();await new Promise(function(r){setTimeout(r,14);});}
+catch(e){console.warn(e);await new Promise(function(r){setTimeout(r,80);});}
+}
+}
+pollLoop();
+function stopHold(){if(holdIv){clearInterval(holdIv);holdIv=null;}holdUrl=null;}
+function fireHold(){
+if(!holdUrl)return;
+fetch(holdUrl,{cache:'no-store',keepalive:true}).then(function(){refreshState();}).catch(function(){});
+}
+function startHold(url){stopHold();holdUrl=url;fireHold();holdIv=setInterval(fireHold,28);}
+function bindHold(el,url){
+el.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();try{el.setPointerCapture(e.pointerId);}catch(x){}startHold(url);});
+el.addEventListener('pointerup',stopHold);el.addEventListener('pointercancel',stopHold);el.addEventListener('lostpointercapture',stopHold);}
+bindHold(document.getElementById('exm'),'/api/jog_ee?dx=-0.35');
+bindHold(document.getElementById('exp'),'/api/jog_ee?dx=0.35');
+bindHold(document.getElementById('eym'),'/api/jog_ee?dy=-0.35');
+bindHold(document.getElementById('eyp'),'/api/jog_ee?dy=0.35');
+bindHold(document.getElementById('ezm'),'/api/jog_ee?dz=-0.35');
+bindHold(document.getElementById('ezp'),'/api/jog_ee?dz=0.35');
+window.addEventListener('blur',stopHold);
+window.addEventListener('pointerup',stopHold);
 </script>
 </body></html>"""
 
@@ -597,6 +637,8 @@ document.getElementById('ep').onclick=function(){fetch('/api/jog_ee?dx=0.35');};
                         jn = int(pr.get("j", "-1"))
                         delta = float(pr.get("delta", "0"))
                         _web_cmd_queue.append(("JJ", jn, delta))
+                        while len(_web_cmd_queue) > 64:
+                            _web_cmd_queue.pop(0)
                         body = '{"ok":true}'
                     except Exception:
                         body = '{"ok":false}'
@@ -609,7 +651,11 @@ document.getElementById('ep').onclick=function(){fetch('/api/jog_ee?dx=0.35');};
                             pr[k] = v
                     try:
                         dx = float(pr.get("dx", "0"))
-                        _web_cmd_queue.append(("JE", dx))
+                        dy = float(pr.get("dy", "0"))
+                        dz = float(pr.get("dz", "0"))
+                        _web_cmd_queue.append(("JE", dx, dy, dz))
+                        while len(_web_cmd_queue) > 64:
+                            _web_cmd_queue.pop(0)
                         body = '{"ok":true}'
                     except Exception:
                         body = '{"ok":false}'

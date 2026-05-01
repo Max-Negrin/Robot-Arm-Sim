@@ -2149,24 +2149,19 @@ class HomingPanel(QGroupBox):
 class HardwarePanel(QGroupBox):
     """Raspberry Pi Pico 2W hardware connection panel.
 
-    Provides:
-    - USB mode: serial port selector, baud rate, Connect/Deploy buttons
-    - WiFi mode: IP address + port fields, SSID/password for firmware deploy
-    - Connection type radio buttons to switch between USB and WiFi
-    - Connection status display (red/green)
+    The simulator talks to the Pico over **USB serial only** (Connect).
 
-    When connected, joint angles are streamed at a serial-safe rate (see
-    ``_hardware_angle_stream_min_interval_s``), not at the full 1 kHz sim tick.
+    Wi‑Fi + HTTP are compiled into the firmware when requested; **wireless jogging and
+    live pose** use the Pico's built-in **browser dashboard** (HTTP), not a TCP link
+    from this desktop app.
     """
 
     # Emitted when user changes hardware enable state
     hardware_enabled = pyqtSignal(bool)
     # USB: port string + baud rate
     connect_requested = pyqtSignal(str, int)
-    # WiFi: host IP string + TCP port
-    wifi_connect_requested = pyqtSignal(str, int)
     disconnect_requested = pyqtSignal()
-    # USB port for deploy; WiFi: empty string signals WiFi deploy mode
+    # Serial port name for firmware deploy (always USB REPL / mpremote)
     deploy_requested = pyqtSignal(str)
     # Request to toggle the onboard LED
     led_toggle_requested = pyqtSignal()
@@ -2197,17 +2192,6 @@ class HardwarePanel(QGroupBox):
         self._set_status("disconnected")
         status_row.addWidget(self.status_lbl)
         layout.addLayout(status_row)
-
-        # ── Connection type toggle ──────────────────────────────────────────
-        mode_row = QHBoxLayout()
-        self.usb_radio = QRadioButton("USB")
-        self.wifi_radio = QRadioButton("WiFi")
-        self.usb_radio.setChecked(True)
-        mode_row.addWidget(QLabel("Connection:"))
-        mode_row.addWidget(self.usb_radio)
-        mode_row.addWidget(self.wifi_radio)
-        mode_row.addStretch()
-        layout.addLayout(mode_row)
 
         # ── USB fields ─────────────────────────────────────────────────────
         self._usb_widget = QWidget()
@@ -2265,36 +2249,42 @@ class HardwarePanel(QGroupBox):
 
         layout.addWidget(self._usb_widget)
 
-        # ── WiFi connect fields (IP + port — only needed when connecting via WiFi)
-        self._wifi_widget = QWidget()
-        wifi_layout = QVBoxLayout(self._wifi_widget)
-        wifi_layout.setContentsMargins(0, 0, 0, 0)
-
+        # ── Wireless bookmark (browser dashboard — not used by this app's Connect)
+        self._browser_hint_widget = QWidget()
+        bh_layout = QVBoxLayout(self._browser_hint_widget)
+        bh_layout.setContentsMargins(0, 6, 0, 0)
+        bh_tip = QLabel(
+            "Wireless control — jog joints and view pose in a browser at "
+            "http://<pico-ip>:8080 after the Pico joins Wi‑Fi. "
+            "This desktop app does not use Wi‑Fi TCP; use Connect above for USB serial only."
+        )
+        bh_tip.setWordWrap(True)
+        bh_tip.setStyleSheet("color: #aaa; font-size: 9px;")
+        bh_layout.addWidget(bh_tip)
         ip_row = QHBoxLayout()
-        ip_row.addWidget(QLabel("IP Address:"))
+        ip_row.addWidget(QLabel("Pico IP (bookmark):"))
         self.ip_edit = QLineEdit()
-        self.ip_edit.setPlaceholderText("192.168.1.xxx")
+        self.ip_edit.setPlaceholderText("from serial: WiFi connected: …")
         self.ip_edit.setToolTip(
-            "IP address of the Pico on your home network.\n"
-            "After a USB deploy the Pico prints its IP in the terminal\n"
-            "('WiFi connected: x.x.x.x') — copy it here."
+            "Optional — paste the Pico's LAN IP to remember it.\n"
+            "Boot prints 'WiFi connected: x.x.x.x' over USB, or send WIFI when connected."
         )
         ip_row.addWidget(self.ip_edit)
-        wifi_layout.addLayout(ip_row)
-
+        bh_layout.addLayout(ip_row)
         tcp_row = QHBoxLayout()
-        tcp_row.addWidget(QLabel("TCP Port:"))
+        tcp_row.addWidget(QLabel("Firmware TCP port:"))
         self.tcp_port_spin = QSpinBox()
         self.tcp_port_spin.setRange(1024, 65535)
         self.tcp_port_spin.setValue(8888)
+        self.tcp_port_spin.setToolTip(
+            "Written into Pico firmware (LAN command port).\n"
+            "The simulator does not connect over Wi‑Fi; use USB Connect or the HTTP dashboard."
+        )
         tcp_row.addWidget(self.tcp_port_spin)
-        wifi_layout.addLayout(tcp_row)
-
-        self._wifi_widget.setVisible(False)
-        layout.addWidget(self._wifi_widget)
+        bh_layout.addLayout(tcp_row)
+        layout.addWidget(self._browser_hint_widget)
 
         # ── WiFi credentials (always visible — embedded in firmware at deploy time)
-        # These are required whether deploying via USB or re-deploying via WiFi.
         creds_lbl = QLabel("WiFi credentials (embedded at deploy time):")
         creds_lbl.setStyleSheet("color: #aaa; font-size: 9px;")
         layout.addWidget(creds_lbl)
@@ -2307,7 +2297,7 @@ class HardwarePanel(QGroupBox):
             "Your home WiFi network name.\n"
             "This is written into the Pico firmware when you click Deploy.\n"
             "The Pico 2 W radio is 2.4 GHz only — the AP must offer 2.4 GHz (not 5 GHz–only).\n"
-            "Required for both USB first-deploy AND WiFi re-deploy."
+            "Required whenever Deploy embeds Wi‑Fi (checked “Wi‑Fi + web server in firmware”)."
         )
         ssid_row.addWidget(self.ssid_edit)
         layout.addLayout(ssid_row)
@@ -2341,11 +2331,9 @@ class HardwarePanel(QGroupBox):
         self.include_wifi_deploy_cb.setChecked(True)
         self.include_wifi_deploy_cb.setToolTip(
             "When checked, Deploy injects ENABLE_WIFI from your SSID/password "
-            "(onboard Wi‑Fi, TCP control, HTTP dashboard).\n"
-            "Uncheck for USB-only firmware (no wireless stack / web server).\n"
-            "Over-the-air Deploy (WiFi mode) requires this option enabled.\n\n"
-            "After wireless deploy: the Pico must stay powered if you unplug USB "
-            "(use a separate 5 V supply on VSYS or keep USB power)."
+            "(onboard Wi‑Fi, optional LAN TCP listener, HTTP dashboard in browser).\n"
+            "Uncheck for USB-only firmware (no wireless stack).\n\n"
+            "Wireless jogging uses the browser dashboard — not a TCP connection from this app."
         )
         layout.addWidget(self.include_wifi_deploy_cb)
 
@@ -2361,13 +2349,10 @@ class HardwarePanel(QGroupBox):
 
         self.deploy_btn = QPushButton("Deploy Firmware")
         self.deploy_btn.setToolTip(
-            "Upload pico_control_script.py to the Pico as main.py.\n\n"
-            "Use “Wi‑Fi + web server in firmware” to choose wireless + HTTP\n"
-            "  versus USB-only (no ENABLE_WIFI).\n\n"
-            "First deploy: SSID + Password if using Wi‑Fi firmware, USB mode,\n"
-            "  plug in USB, click Deploy. The Pico prints its IP after boot;\n"
-            "  copy it into IP Address, then switch to WiFi mode.\n\n"
-            "WiFi mode + IP: Deploy over the air (requires Wi‑Fi firmware enabled)."
+            "Upload pico_control_script.py to the Pico as main.py over USB (mpremote or REPL).\n\n"
+            "Enable “Wi‑Fi + web server in firmware” with SSID/password to serve the HTTP dashboard "
+            "and LAN TCP on the Pico — open http://<ip>:8080 in a browser for wireless jog.\n\n"
+            "This app always deploys via USB; it never flashes over Wi‑Fi from the GUI."
         )
         self.deploy_btn.clicked.connect(self._on_deploy_clicked)
         btn_row.addWidget(self.deploy_btn)
@@ -2410,17 +2395,11 @@ class HardwarePanel(QGroupBox):
         self.log_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.log_lbl)
 
-        # Wire mode toggle
-        self.usb_radio.toggled.connect(self._on_mode_changed)
-
         # Initial port population
         self._refresh_ports()
         self._connected = False
 
     # ── Public API ─────────────────────────────────────────────────────────
-
-    def is_wifi_mode(self) -> bool:
-        return self.wifi_radio.isChecked()
 
     def is_hardware_sync_enabled(self) -> bool:
         """When True, the main loop calls ``send_joint_angles`` to the Pico."""
@@ -2428,10 +2407,6 @@ class HardwarePanel(QGroupBox):
 
     def restore(self, data: dict) -> None:
         """Restore hardware panel state from a saved dict."""
-        if data.get("wifi_mode"):
-            self.wifi_radio.setChecked(True)
-        else:
-            self.usb_radio.setChecked(True)
         if "wifi_host" in data:
             self.ip_edit.setText(data["wifi_host"])
         if "wifi_port" in data:
@@ -2464,7 +2439,6 @@ class HardwarePanel(QGroupBox):
     def save_state(self) -> dict:
         """Return current hardware panel state as a JSON-serializable dict."""
         return {
-            "wifi_mode": self.is_wifi_mode(),
             "wifi_host": self.get_wifi_host(),
             "wifi_port": self.get_wifi_port(),
             "wifi_ssid": self.get_wifi_ssid(),
@@ -2566,10 +2540,6 @@ class HardwarePanel(QGroupBox):
             + "\nLower value = faster loop but more CPU load; raise if steps miss or timing jitters."
         )
 
-    def _on_mode_changed(self, usb_checked: bool) -> None:
-        self._usb_widget.setVisible(usb_checked)
-        self._wifi_widget.setVisible(not usb_checked)
-
     def _set_status(self, state: str) -> None:
         if state == "connected":
             self.status_lbl.setText("Connected")
@@ -2600,22 +2570,14 @@ class HardwarePanel(QGroupBox):
         else:
             self._set_status("connecting")
             self.connect_btn.setEnabled(False)
-            if self.is_wifi_mode():
-                self.wifi_connect_requested.emit(self.get_wifi_host(), self.get_wifi_port())
-            else:
-                self.connect_requested.emit(self.get_port(), self.get_baud())
+            self.connect_requested.emit(self.get_port(), self.get_baud())
 
     def _on_deploy_clicked(self) -> None:
         self.log_lbl.setStyleSheet("color: #ffaa00;")
         self.deploy_btn.setEnabled(False)
-        if self.is_wifi_mode():
-            # Signal with empty string tells MainWindow to use WiFi deploy path
-            self.log_lbl.setText("Starting WiFi firmware deploy...")
-            self.deploy_requested.emit("")
-        else:
-            port = self.get_port()
-            self.log_lbl.setText(f"Starting deploy to {port}...")
-            self.deploy_requested.emit(port)
+        port = self.get_port()
+        self.log_lbl.setText(f"Starting deploy to {port}…")
+        self.deploy_requested.emit(port)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3507,7 +3469,6 @@ class MainWindow(QMainWindow):
 
         # Wire hardware panel signals
         self.hardware_panel.connect_requested.connect(self._on_hardware_connect)
-        self.hardware_panel.wifi_connect_requested.connect(self._on_hardware_wifi_connect)
         self.hardware_panel.disconnect_requested.connect(self._on_hardware_disconnect)
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
         self.hardware_panel.led_toggle_requested.connect(self._on_led_toggle)
@@ -4992,66 +4953,6 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, _poll_connect)
 
-    def _on_hardware_wifi_connect(self, host: str, port: int) -> None:
-        """Handle WiFi Connect: open TCP link to the Pico."""
-        if not host:
-            self.hardware_panel.set_connected(False, "ERROR: Enter the Pico's IP address first")
-            return
-
-        from hardware.pico_wifi_interface import PicoWifiInterface
-
-        if self._hardware is not None:
-            self._hardware.disconnect()
-            self._hardware = None
-        if self._connecting_iface is not None:
-            self._connecting_iface.disconnect()
-            self._connecting_iface = None
-
-        self.hardware_panel.deploy_btn.setEnabled(False)
-
-        import queue as _queue
-        _connect_result: _queue.Queue = _queue.Queue()
-
-        def _worker():
-            iface = PicoWifiInterface()
-            self._connecting_iface = iface
-            ok, msg = iface.connect(host, port)
-            _connect_result.put((ok, msg, iface))
-
-        import threading as _threading
-        _threading.Thread(target=_worker, name="pico-wifi-connect", daemon=True).start()
-
-        def _poll_connect():
-            try:
-                ok, msg, iface = _connect_result.get_nowait()
-            except _queue.Empty:
-                QTimer.singleShot(100, _poll_connect)
-                return
-            self._connecting_iface = None
-            self.hardware_panel.deploy_btn.setEnabled(True)
-            if ok:
-                self._hw_sync_nudge_shown = False
-                self._hardware = iface
-                iface.rx_callback = self._on_pico_rx_threadsafe
-                self.hardware_panel.set_connected(True, msg)
-                self.terminal.set_connected(True, f"WiFi {host}:{port}")
-                self.terminal.log(f"Connected via WiFi ({host}:{port})", "info")
-                self.terminal.log(
-                    "If a joint (e.g. J2) never moves: PRINTAXES, or STEPT 2 200 — see HELP. "
-                    "Re-Deploy if a joint is missing at boot ('skipping joint').",
-                    "info",
-                )
-                self.status_bar.showMessage(msg.split("\n")[0])
-                logger.info("Hardware WiFi connected: %s", msg)
-                QTimer.singleShot(0, self._seed_hardware_pose_from_sim)
-            else:
-                self.hardware_panel.set_connected(False, msg)
-                self.terminal.log(f"WiFi connection failed: {msg.splitlines()[0]}", "error")
-                self.status_bar.showMessage("Pico WiFi connection failed — see Hardware panel")
-                logger.error("Hardware WiFi connect failed: %s", msg)
-
-        QTimer.singleShot(100, _poll_connect)
-
     def _on_hw_sync_toggled(self, checked: bool) -> None:
         """Allow the sync-off nudge to fire again if the user disables streaming."""
         if not checked:
@@ -5187,11 +5088,7 @@ class MainWindow(QMainWindow):
             conn = "connected" if (self._hardware and self._hardware.is_connected) else "not connected"
             conn_detail = ""
             if self._hardware and self._hardware.is_connected:
-                from hardware.pico_wifi_interface import PicoWifiInterface
-                if isinstance(self._hardware, PicoWifiInterface):
-                    conn_detail = f" (WiFi {self._hardware.host})"
-                else:
-                    conn_detail = " (USB)"
+                conn_detail = " (USB)"
             positions = forward_kinematics(self.arm_config, self.arm_state)
             ee = positions[-1]
             n = self.arm_config.num_planar_joints
@@ -5546,16 +5443,10 @@ class MainWindow(QMainWindow):
 
         # ── CONNECT / DISCONNECT ──────────────────────────────────────────
         elif upper == "CONNECT":
-            if self.hardware_panel.is_wifi_mode():
-                host = self.hardware_panel.get_wifi_host()
-                port = self.hardware_panel.get_wifi_port()
-                self.terminal.log(f"Connecting via WiFi to {host}:{port}…", "info")
-                self._on_hardware_wifi_connect(host, port)
-            else:
-                p = self.hardware_panel.get_port()
-                b = self.hardware_panel.get_baud()
-                self.terminal.log(f"Connecting via USB ({p})…", "info")
-                self._on_hardware_connect(p, b)
+            p = self.hardware_panel.get_port()
+            b = self.hardware_panel.get_baud()
+            self.terminal.log(f"Connecting via USB ({p})…", "info")
+            self._on_hardware_connect(p, b)
 
         elif upper == "DISCONNECT":
             self._on_hardware_disconnect()
@@ -6174,19 +6065,27 @@ class MainWindow(QMainWindow):
                 if not (1024 <= port_num <= 65535):
                     raise ValueError
                 self.hardware_panel.tcp_port_spin.setValue(port_num)
-                self.terminal.log(f"TCP port set to {port_num}", "info")
+                self.terminal.log(
+                    f"Firmware TCP port → {port_num} (injected on Deploy; desktop stays USB)",
+                    "info",
+                )
             except ValueError:
                 self.terminal.log("SETPORT: usage  SETPORT <1024-65535>", "error")
 
         # ── BROADCAST ─────────────────────────────────────────────────────
         elif upper == "BROADCAST":
             import ipaddress, socket as _sock, threading as _thr, queue as _bq
-            self.terminal.log("Scanning local subnet for Pico (port 8888)… (~5 s)", "info")
+            fw_tcp = self.hardware_panel.get_wifi_port()
+            self.terminal.log(
+                f"Scanning subnet for Pico firmware TCP :{fw_tcp} (~5 s) — LAN discovery "
+                "only; wireless control from this machine uses http://<ip>:8080 in a browser.",
+                "info",
+            )
             found_q: _bq.Queue = _bq.Queue()
 
-            def _check(ip: str) -> None:
+            def _check(ip: str, tcp_port: int) -> None:
                 try:
-                    s = _sock.create_connection((ip, 8888), timeout=0.25)
+                    s = _sock.create_connection((ip, tcp_port), timeout=0.25)
                     s.close()
                     found_q.put(ip)
                 except Exception:
@@ -6199,7 +6098,10 @@ class MainWindow(QMainWindow):
                 except Exception:
                     found_q.put(None)
                     return
-                threads = [_thr.Thread(target=_check, args=(str(h),), daemon=True) for h in net.hosts()]
+                threads = [
+                    _thr.Thread(target=_check, args=(str(h), fw_tcp), daemon=True)
+                    for h in net.hosts()
+                ]
                 for t in threads:
                     t.start()
                 for t in threads:
@@ -6214,12 +6116,14 @@ class MainWindow(QMainWindow):
                     item = found_q.get_nowait()
                     if item is not None:
                         hits.append(item)
-                        self.terminal.log(f"  Found: {item}:8888", "info")
+                        self.terminal.log(f"  Found: {item}:{fw_tcp}", "info")
                     else:
                         if hits:
                             self.terminal.log(f"Broadcast complete — {len(hits)} device(s) found", "info")
                         else:
-                            self.terminal.log("Broadcast complete — no devices found on port 8888", "info")
+                            self.terminal.log(
+                                f"Broadcast complete — no devices found on port {fw_tcp}", "info"
+                            )
                         return
                 QTimer.singleShot(100, _poll_broadcast)
 
@@ -6344,13 +6248,13 @@ class MainWindow(QMainWindow):
 
         # ── WIFI (show panel info / forward to hardware) ───────────────────
         elif upper == "WIFI":
-            if self.hardware_panel.is_wifi_mode():
-                host = self.hardware_panel.get_wifi_host()
-                port = self.hardware_panel.get_wifi_port()
-                ssid = self.hardware_panel.get_wifi_ssid()
-                self.terminal.log(f"WiFi mode  —  IP {host}:{port}  SSID: {ssid or '(not set)'}", "info")
-            else:
-                self.terminal.log("USB mode — switch to WiFi in Hardware panel for WiFi info", "info")
+            bm = self.hardware_panel.get_wifi_host().strip()
+            ssid = self.hardware_panel.get_wifi_ssid()
+            self.terminal.log(
+                f"Bookmark IP: {bm or '(empty)'}  SSID: {ssid or '(not set)'} — "
+                "browser dashboard http://<ip>:8080",
+                "info",
+            )
             if self._hardware is not None:
                 self._hardware.send_raw("WIFI\n")
                 self.terminal.log("WIFI (forwarded to Pico)", "tx")
@@ -6369,14 +6273,7 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"Unknown command '{raw}' — type HELP for command list", "error")
 
     def _on_hardware_deploy(self, port: str) -> None:
-        """Handle Deploy Firmware button: upload pico_control_script.py.
-
-        Three paths:
-        - USB mode: upload over serial REPL (requires USB port).
-        - WiFi mode, already connected via WiFi: upload over the existing
-          TCP connection — no USB needed.
-        - WiFi mode, not connected: still needs a USB port (initial flash).
-        """
+        """Upload ``pico_control_script.py`` to the Pico as ``main.py`` via USB only."""
         try:
             from hardware.micropython_deployer import MicroPythonDeployer
         except ImportError as exc:
@@ -6386,8 +6283,7 @@ class MainWindow(QMainWindow):
             return
 
         joints_config = self._get_full_joint_configs()
-        # Always read credentials — they're embedded at deploy time regardless of
-        # whether the current connection mode is USB or WiFi.
+        # Always read credentials — they're embedded at deploy time when Wi‑Fi is included.
         wifi_ssid = self.hardware_panel.get_wifi_ssid()
         wifi_pw   = self.hardware_panel.get_wifi_password()
         wifi_port = self.hardware_panel.get_wifi_port()
@@ -6396,90 +6292,15 @@ class MainWindow(QMainWindow):
         embed_wifi = self.hardware_panel.include_wifi_in_deploy()
         wifi_cc = self.hardware_panel.get_wifi_country()
 
-        # ── WiFi deploy: use IP from panel (connection not required) ────────
-        from hardware.pico_wifi_interface import PicoWifiInterface
-        if self.hardware_panel.is_wifi_mode():
-            wifi_host = self.hardware_panel.get_wifi_host()
-            if not wifi_host:
-                msg = (
-                    "ERROR: No IP address entered\n"
-                    "FIX:   Enter the Pico's IP address in the WiFi IP field"
-                )
-                self.hardware_panel.log_lbl.setText(msg)
-                self.hardware_panel.deploy_btn.setEnabled(True)
-                return
-            if not embed_wifi:
-                QMessageBox.warning(
-                    self,
-                    "WiFi deploy",
-                    "Over-the-air deploy needs firmware with Wi‑Fi enabled.\n\n"
-                    "Turn on “Wi‑Fi + web server in firmware”, or use USB mode "
-                    "and Deploy over serial.",
-                )
-                self.hardware_panel.deploy_btn.setEnabled(True)
-                return
-            self.hardware_panel.log_lbl.setText(f"Deploying over WiFi to {wifi_host}:{wifi_port}...")
-            self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
-
-            # Disconnect any active connection so the deployer has exclusive TCP access
-            if self._hardware is not None:
-                self._hardware.disconnect()
-                self._hardware = None
-                self.hardware_panel.set_connected(False, "Disconnected for WiFi deploy…")
-            self.hardware_panel.deploy_btn.setEnabled(True)
-
-            import threading, queue as _queue
-            _msg_queue: _queue.Queue = _queue.Queue()
-
-            def _progress(msg: str) -> None:
-                _msg_queue.put(("progress", msg))
-
-            def _deploy():
-                deployer = MicroPythonDeployer()
-                ok, result_msg = deployer.deploy_wifi(
-                    wifi_host,
-                    tcp_port=wifi_port,
-                    joints_config=joints_config,
-                    wifi_ssid=wifi_ssid,
-                    wifi_password=wifi_pw,
-                    step_us=step_us,
-                    host_follow_max_sps=host_cap,
-                    arm_config=self._get_arm_config_dict(),
-                    embed_wifi=embed_wifi,
-                    wifi_country=wifi_cc,
-                    progress_cb=_progress,
-                )
-                _msg_queue.put(("done", ok, result_msg))
-
-            threading.Thread(target=_deploy, daemon=True, name="pico-deploy").start()
-            logger.info("WiFi firmware deployment started to %s:%d", wifi_host, wifi_port)
-
-            def _poll_wifi():
-                try:
-                    while True:
-                        item = _msg_queue.get_nowait()
-                        if item[0] == "progress":
-                            self._on_deploy_progress(item[1])
-                        elif item[0] == "done":
-                            self._on_deploy_finished_wifi(item[1], item[2], wifi_host, wifi_port)
-                            return
-                except _queue.Empty:
-                    pass
-                QTimer.singleShot(50, _poll_wifi)
-
-            QTimer.singleShot(50, _poll_wifi)
-            return
-
-        # ── USB deploy (or WiFi mode without an active WiFi connection) ──────
+        # ── USB serial deploy only ───────────────────────────────────────────
         target_port = port or self.hardware_panel.get_port()
         if not target_port:
             from hardware.pico_interface import find_pico_port
             target_port = find_pico_port()
         if not target_port:
             msg = (
-                "ERROR: No port specified\n"
-                "FIX:   Select a serial port, or connect via WiFi first to\n"
-                "       deploy wirelessly without USB"
+                "ERROR: No USB serial port specified\n"
+                "FIX:   Select a COM port in the Hardware panel, then Deploy again"
             )
             self.hardware_panel.log_lbl.setText(msg)
             self.hardware_panel.deploy_btn.setEnabled(True)
@@ -6557,69 +6378,35 @@ class MainWindow(QMainWindow):
         if ok:
             embed = self.hardware_panel.include_wifi_in_deploy()
             ssid_ok = bool(self.hardware_panel.get_wifi_ssid().strip())
-            wifi_host = self.hardware_panel.get_wifi_host().strip()
-            wifi_port = self.hardware_panel.get_wifi_port()
-            wifi_gui = self.hardware_panel.is_wifi_mode()
 
             if embed and ssid_ok:
                 self.terminal.log(
-                    "Wi‑Fi credentials embedded — after reboot the Pico joins your LAN, "
-                    "serves TCP :{} and HTTP dashboard :8080 (check serial for the printed IP).".format(
-                        wifi_port
-                    ),
+                    "Wi‑Fi is embedded — HTTP dashboard at http://<pico-ip>:8080 "
+                    "(browser for wireless jog/pose). Resolve IP from USB serial "
+                    "(`WiFi connected:` or WIFI). Firmware may still expose TCP port "
+                    + str(self.hardware_panel.get_wifi_port())
+                    + "; this app uses USB serial only. Wi‑Fi/HTTP keep running if USB "
+                    "data is unplugged while the Pico stays powered.",
                     "info",
                 )
 
-            # USB serial mode: always reconnect COM after flash so the terminal stays usable.
-            # Wi‑Fi + web server run on the Pico in parallel; browser does not require unplugging USB.
-            if not wifi_gui:
-                self.hardware_panel.log_lbl.setText(
-                    f"Deploy OK — reconnecting USB ({port}) in ~4 s…"
-                )
-                self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-                self.terminal.log(
-                    "Deploy OK — waiting ~4 s for USB re-enumeration after reset…", "deploy"
-                )
-                self.status_bar.showMessage(
-                    "Firmware deployed — reconnecting USB serial…"
-                )
-                logger.info("Deploy succeeded: %s — scheduling USB reconnect", msg)
-                QTimer.singleShot(
-                    4000,
-                    lambda p=port: self._on_hardware_connect(p, 115200),
-                )
-
-            # Wi‑Fi transport mode: reconnect TCP to the saved IP after radio is up.
-            if wifi_gui and wifi_host:
-                self.hardware_panel.log_lbl.setText(
-                    "Deploy OK — connecting via Wi‑Fi in ~12 s…"
-                )
-                self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-                self.terminal.log(
-                    f"Pico rebooting — TCP connect to {wifi_host}:{wifi_port} in ~12 s.",
-                    "deploy",
-                )
-                self.status_bar.showMessage(
-                    "Firmware deployed — waiting for Wi‑Fi, then TCP…"
-                )
-                logger.info("Deploy succeeded: %s — scheduling WiFi connect", msg)
-                QTimer.singleShot(
-                    12000,
-                    lambda h=wifi_host, p=wifi_port: self._on_hardware_wifi_connect(h, p),
-                )
-            elif wifi_gui and not wifi_host:
-                self.hardware_panel.log_lbl.setText(
-                    "Deploy OK — set Wi‑Fi IP, then Connect (or use USB radio + reconnect)."
-                )
-                self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-                self.terminal.log(
-                    "Deploy OK — Wi‑Fi mode needs an IP in the Hardware panel for Connect.",
-                    "info",
-                )
-                QTimer.singleShot(
-                    4000,
-                    lambda p=port: self._on_hardware_connect(p, 115200),
-                )
+            # Always restore USB serial after REPL deploy so the terminal stays live while
+            # still plugged in; wireless jogging uses the browser dashboard, not this app.
+            self.hardware_panel.log_lbl.setText(
+                f"Deploy OK — reconnecting USB ({port}) in ~4 s…"
+            )
+            self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+            self.terminal.log(
+                "Deploy OK — waiting ~4 s for USB re-enumeration after reset…", "deploy"
+            )
+            self.status_bar.showMessage(
+                "Firmware deployed — reconnecting USB serial…"
+            )
+            logger.info("Deploy succeeded: %s — scheduling USB reconnect", msg)
+            QTimer.singleShot(
+                4000,
+                lambda p=port: self._on_hardware_connect(p, 115200),
+            )
         else:
             # Show full error — truncate only if very long
             self.hardware_panel.log_lbl.setText(msg[:500])
@@ -6627,34 +6414,6 @@ class MainWindow(QMainWindow):
             self.terminal.log(f"Deploy FAILED: {msg.splitlines()[0]}", "error")
             self.status_bar.showMessage("Firmware deployment failed — see Hardware panel")
             logger.error("Deploy failed: %s", msg)
-
-    def _on_deploy_finished_wifi(self, ok: bool, msg: str,
-                                  host: str, port: int) -> None:
-        """Called in the main thread when WiFi deployment completes."""
-        self.hardware_panel.deploy_btn.setEnabled(True)
-        if ok:
-            self.hardware_panel.log_lbl.setText(
-                f"WiFi deploy OK — waiting for Pico reboot (~12 s)…"
-            )
-            self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
-            self.terminal.log(
-                "WiFi deploy OK — Pico is rebooting. "
-                "Waiting 12 s for boot + WiFi join before reconnecting…", "info"
-            )
-            self.terminal.log(
-                "Do NOT click Connect manually — auto-reconnect will fire shortly.", "info"
-            )
-            self.status_bar.showMessage("Firmware deployed over WiFi — waiting for Pico reboot…")
-            logger.info("WiFi deploy succeeded: %s", msg)
-            # Wait for Pico to boot MicroPython + join WiFi (~10-12 s typical) before connecting.
-            # CONNECT_TIMEOUT (30 s) then gives a generous window for slow routers.
-            QTimer.singleShot(12000, lambda: self._on_hardware_wifi_connect(host, port))
-        else:
-            self.hardware_panel.log_lbl.setText(msg[:500])
-            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
-            self.terminal.log(f"WiFi deploy FAILED: {msg.splitlines()[0]}", "error")
-            self.status_bar.showMessage("WiFi firmware deployment failed — see Hardware panel")
-            logger.error("WiFi deploy failed: %s", msg)
 
     def closeEvent(self, event) -> None:
         """Clean up hardware on window close."""
