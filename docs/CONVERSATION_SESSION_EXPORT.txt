@@ -1,0 +1,185 @@
+================================================================================
+CONVERSATION EXPORT — Robot Arm Sim project session
+Compiled from chat: desktop ↔ Pico networking, web dashboard, firmware internals,
+threading/cores, and related Q&A.
+================================================================================
+
+NOTE: This is a structured transcript/summary. Verbatim code blocks from the
+chat are omitted except where short; implementation detail lives in source files
+(e.g. Robot-Arm-Sim/firmware/pico_control_script.py, gui.py).
+
+
+────────────────────────────────────────────────────────────────────────────────
+1. DESKTOP APP VS WIRELESS (ARCHITECTURE DECISION)
+────────────────────────────────────────────────────────────────────────────────
+
+Goal: The desktop simulator should NOT open a wireless TCP connection to the
+Pico for hardware sync. Wireless interaction should go through the Pico HTTP
+web dashboard in a browser.
+
+Implementation direction (gui.py and related):
+- Hardware Connect uses USB serial only (not PicoWifiInterface from GUI).
+- Wi‑Fi OTA deploy path removed from GUI; firmware deploy is USB-only.
+- Panel keeps Pico IP / firmware TCP port as bookmarks/tooltips for firmware
+  injection and discovery (e.g. BROADCAST), not for GUI transport.
+- Simulator ↔ Pico: USB serial; wireless jog/pose: http://<pico-ip>:8080 in
+  browser.
+
+PicoWifiInterface and deploy_wifi may remain for scripts/other tools.
+
+
+────────────────────────────────────────────────────────────────────────────────
+2. HOW THE BROWSER CONNECTS TO THE WEB SERVER
+────────────────────────────────────────────────────────────────────────────────
+
+The desktop app does NOT connect to the Pico HTTP server.
+
+Flow:
+- Pico firmware runs an HTTP listener on WEB_HTTP_PORT (default 8080).
+- User opens http://<pico-ip>:8080 in a normal browser.
+- Page JavaScript uses fetch() against paths such as /api/state,
+  /api/jog_joint, /api/jog_ee.
+
+Simulator stays on USB serial when using the GUI.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3. HOW THE COMPUTER CONNECTS TO THE TCP COMMAND PORT
+────────────────────────────────────────────────────────────────────────────────
+
+Mechanism: Standard TCP client — e.g. Python socket.create_connection((host,
+port)) in PicoWifiInterface (default port often 8888, configurable at deploy).
+
+After GUI changes: the simulator GUI does not use this path for Connect.
+TCP remains for optional tooling, deploy_wifi, BROADCAST discovery, etc.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4. WEB SERVER VS TCP COMMAND PORT (TWO SEPARATE LISTENERS)
+────────────────────────────────────────────────────────────────────────────────
+
+The HTTP dashboard does NOT open the command TCP port. Two independent sockets:
+
+- HTTP (_web_http_server_thread): binds WEB_HTTP_PORT (~8080), serves HTML and
+  JSON API for the dashboard.
+
+- Command TCP (_wifi_tcp_loop): binds TCP_PORT (~8888), line-oriented protocol,
+  upload OTA, LAN clients.
+
+Both are started as separate _thread workers after Wi‑Fi STA has an IP.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5. BROWSER → PICO HTTP API (COMMANDS / READS)
+────────────────────────────────────────────────────────────────────────────────
+
+Typical GET routes:
+- / or /index.html — dashboard page
+- /api/state — JSON snapshot (joints, EE, switches, polyline, ports metadata)
+- /api/jog_joint?j=<n>&delta=<deg> — joint jog
+- /api/jog_ee?dx=&dy=&dz= — incremental EE world jog (mm); omitted axes default 0
+
+Other paths return plain “Not found”. Serial/TCP-style commands are not exposed
+as arbitrary HTTP text.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. DASHBOARD BUTTONS (BASELINE UI)
+────────────────────────────────────────────────────────────────────────────────
+
+- EE world jog: EE −X / EE +X, EE −Y / EE +Y, EE −Z / EE +Z (incremental mm steps).
+- Joint jog: per joint J<n> − and J<n> + (degree deltas), built from /api/state.
+
+Limit indicators are dots (not jog buttons). SVG shows arm projection.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. DASHBOARD UX IMPROVEMENTS (JS IN FIRMWARE HTML STRING)
+────────────────────────────────────────────────────────────────────────────────
+
+Hold-to-move:
+- pointerdown starts repeated fetch while held; pointerup/blur/window pointerup
+  stops; optional pointer capture.
+
+Avoid rebuilding buttons every poll:
+- Joint/switch rows rebuilt only when joint index signature changes; otherwise
+  update dots/path/EE text in place.
+
+Faster feedback:
+- Sequential poll loop with short delay between /api/state fetches; cache:
+  no-store; refresh after each jog fetch completes.
+- Hold repeat interval tuned (~tens of ms); poll interval tuned for smooth SVG.
+
+Firmware safeguard:
+- _web_cmd_queue trimmed (e.g. max length) when HTTP floods jog commands.
+
+Coordinate “Go to X,Y,Z” + /api/goto_ee was added then removed per user request;
+motion via buttons only.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8. PIO VS CPU FOR STEP PULSES (FIRMWARE)
+────────────────────────────────────────────────────────────────────────────────
+
+- driver 28byj: four GPIO coils, half-step table in Python — no PIO for steps.
+- driver stepdir + pio_stepdir true (default): STEP from PIO state machine; DIR
+  and setup delays from CPU; FIFO puts schedule pulse spacing.
+- driver stepdir + pio_stepdir false: GPIO STEP with sleep_us bit-bang.
+
+Main loop (STEP_US) does planning; _step() emits pulses or enqueues PIO.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9. MULTI-THREADING IN FIRMWARE (MicroPython)
+────────────────────────────────────────────────────────────────────────────────
+
+Main thread: Wi‑Fi STA association (blocking helper), then main motion loop,
+USB stdin, draining _wifi_rx and _web_cmd_queue, stepping.
+
+Worker threads (if ENABLE_WIFI + SSID):
+- TCP server loop → appends lines to _wifi_rx; sends _wifi_tx replies.
+- HTTP server loop → appends web commands to _web_cmd_queue.
+
+Motion hardware is driven only from the main loop; workers use lists as queues
+(informal locking).
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. “REGULAR” MICROPYTHON FIRMWARE AND BOTH CORES
+────────────────────────────────────────────────────────────────────────────────
+
+RP2040 / RP2350 (ARM) has two cores. Default MicroPython main program runs on
+core 0. _thread.start_new_thread typically runs worker code on the second core,
+so spawning network threads can use both cores. Without _thread, Python-side
+work is effectively single-core.
+
+Robot firmware: Wi‑Fi enabled uses two workers → both cores can be busy; Wi‑Fi
+off → no those threads → effectively one core for Python.
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. USING THREADING TO SPEED PERFORMANCE (GENERAL + OUR FIRMWARE)
+────────────────────────────────────────────────────────────────────────────────
+
+General: Partition work — I/O/parsing on workers; motion/planning on main;
+bounded queues and locks for shared state.
+
+Our firmware already benefits when Wi‑Fi is on: TCP/HTTP blocking stays off the
+STEP_US path. Further gains: reduce main-loop work, allocations/GC, tune
+STEP_US and traffic — not parallelizing the step loop itself.
+
+
+────────────────────────────────────────────────────────────────────────────────
+KEY FILES REFERENCED IN THIS THREAD
+────────────────────────────────────────────────────────────────────────────────
+
+Robot-Arm-Sim/firmware/pico_control_script.py — HTTP dashboard HTML/JS, JE/JJ,
+_web_http_server_thread, _wifi_tcp_loop, PIO stepdir, main loop.
+Robot-Arm-Sim/gui.py — USB-only hardware connect; Wi‑Fi OTA removed from deploy.
+Robot-Arm-Sim/hardware/pico_wifi_interface.py — TCP client (optional).
+Robot-Arm-Sim/sim_terminal/help_lines.py — HELP text updates for CONNECT/WIFI/etc.
+
+
+────────────────────────────────────────────────────────────────────────────────
+END OF EXPORT
+────────────────────────────────────────────────────────────────────────────────
