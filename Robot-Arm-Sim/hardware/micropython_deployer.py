@@ -121,6 +121,8 @@ def _deploy_via_serial_repl(port: str, firmware_path: str,
 def _deploy_via_serial_repl_text(port: str, script_text: str,
                                   progress_cb=None) -> tuple[bool, str]:
     """Upload a script string via the MicroPython raw REPL (chunked, reliable)."""
+    from .pico_interface import exclusive_serial_access
+
     try:
         import serial as _serial_mod
     except ImportError:
@@ -129,127 +131,121 @@ def _deploy_via_serial_repl_text(port: str, script_text: str,
             "FIX:   pip install pyserial"
         )
 
-    try:
-        ser = _serial_mod.Serial(port, 115200, timeout=3)
-    except _serial_mod.SerialException as exc:
-        return False, (
-            f"ERROR: Cannot open {port}\n"
-            f"CAUSE: {exc}\n"
-            "FIX:   Ensure the port is not in use by another program"
-        )
-
-    def _read_until(marker: bytes, timeout: float = 5.0) -> bytes:
-        buf = b""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            chunk = ser.read(ser.in_waiting or 1)
-            if chunk:
-                buf += chunk
-                if marker in buf:
-                    break
-        return buf
-
-    def _raw_exec(cmd: str, timeout: float = 8.0) -> bytes:
-        """Send one command in raw REPL mode and return the response."""
-        ser.write(cmd.encode("utf-8") + b"\x04")
-        resp = _read_until(b"\x04", timeout=timeout)
-        return resp
-
-    def _prog(msg):
-        if progress_cb:
-            progress_cb(msg)
-        logger.info(msg)
-
-    try:
-        # --- Step 1: reach >>> prompt regardless of current state ---
-        # Ctrl+B exits raw REPL → normal REPL
-        # Ctrl+C interrupts any running user code
-        _prog(f"[1/4] Interrupting Pico on {port}...")
-        ser.write(b"\x02")       # exit raw REPL if stuck there
-        time.sleep(0.2)
-        for _ in range(3):
-            ser.write(b"\x03")   # Ctrl+C: interrupt user code
-            time.sleep(0.1)
-        resp = _read_until(b">>>", timeout=3.0)
-        if b">>>" not in resp:
-            # Try a soft reset as a last resort
-            _prog("[1/4] No >>> yet, trying soft reset...")
-            ser.write(b"\x04")
-            resp = _read_until(b">>>", timeout=5.0)
-        if b">>>" not in resp:
-            return False, (
-                "ERROR: Could not reach MicroPython REPL (>>> prompt not seen)\n"
-                "FIX:   Unplug and replug the Pico USB cable, then try Deploy again"
-            )
-        _prog("[1/4] MicroPython >>> prompt reached")
-
-        # --- Step 2: enter raw REPL (Ctrl+A) ---
-        _prog("[2/4] Entering raw REPL mode...")
-        ser.write(b"\x01")
-        resp = _read_until(b"raw REPL", timeout=3.0)
-        if b"raw REPL" not in resp:
-            return False, (
-                "ERROR: Could not enter raw REPL\n"
-                "CAUSE: Board did not respond to Ctrl+A\n"
-                "FIX:   Ensure MicroPython firmware is installed on the Pico"
-            )
-        _prog("[2/4] Raw REPL entered")
-
-        # --- Step 3: write the file in 512-byte hex chunks ---
-        # Larger chunks mean fewer REPL round-trips (each round-trip is ~30ms
-        # at 115200 baud + Pico processing time).  512 bytes = 1024 hex chars
-        # per command — well within MicroPython's raw REPL compile limits.
-        # The file is opened once and kept open across all writes to eliminate
-        # flash filesystem open/close overhead on every chunk.
-        script_bytes = script_text.encode("utf-8")
-        CHUNK = 512
-        total = len(script_bytes)
-        n_chunks = (total + CHUNK - 1) // CHUNK
-        _prog(f"[3/4] Writing firmware: {total} bytes in {n_chunks} chunks...")
-        logger.info("Writing %d bytes in %d chunks", total, n_chunks)
-
-        # Open file once
-        resp = _raw_exec("f = open('main.py', 'wb')")
-        if b"Error" in resp or b"Traceback" in resp:
-            return False, f"ERROR: Could not open main.py for writing\nCAUSE: {resp[:200]!r}"
-
-        for i in range(0, total, CHUNK):
-            chunk = script_bytes[i : i + CHUNK]
-            hex_str = chunk.hex()
-            cmd = f"f.write(bytes.fromhex('{hex_str}'))"
-            resp = _raw_exec(cmd)
-            if b"Error" in resp or b"Traceback" in resp:
-                _raw_exec("f.close()")   # best-effort cleanup
-                return False, (
-                    f"ERROR: Write failed at byte {i}\n"
-                    f"CAUSE: {resp[:200]!r}"
-                )
-            chunk_num = i // CHUNK + 1
-            if chunk_num % 5 == 0 or chunk_num == n_chunks:
-                _prog(f"[3/4] chunk {chunk_num}/{n_chunks}...")
-
-        # Close file once
-        _raw_exec("f.close()")
-        _prog(f"[3/4] All {n_chunks} chunks written OK")
-        logger.info("File write complete")
-
-        # --- Step 4: exit raw REPL and soft reset ---
-        _prog("[4/4] Soft resetting board — firmware starting...")
-        ser.write(b"\x02")   # Ctrl+B: back to normal REPL
-        time.sleep(0.2)
-        ser.write(b"\x04")   # Ctrl+D: soft reset → runs the new main.py
-        time.sleep(0.5)
-
-        logger.info("Serial REPL deployment succeeded on %s", port)
-        return True, "Deployed via serial REPL successfully"
-
-    except Exception as exc:
-        return False, f"Serial REPL deployment error: {exc}"
-    finally:
+    with exclusive_serial_access(port):
         try:
-            ser.close()
-        except Exception:
-            pass
+            ser = _serial_mod.Serial(port, 115200, timeout=3)
+        except _serial_mod.SerialException as exc:
+            return False, (
+                f"ERROR: Cannot open {port}\n"
+                f"CAUSE: {exc}\n"
+                "FIX:   Ensure the port is not in use by another program"
+            )
+
+        def _read_until(marker: bytes, timeout: float = 5.0) -> bytes:
+            buf = b""
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                chunk = ser.read(ser.in_waiting or 1)
+                if chunk:
+                    buf += chunk
+                    if marker in buf:
+                        break
+            return buf
+
+        def _raw_exec(cmd: str, timeout: float = 8.0) -> bytes:
+            """Send one command in raw REPL mode and return the response."""
+            ser.write(cmd.encode("utf-8") + b"\x04")
+            resp = _read_until(b"\x04", timeout=timeout)
+            return resp
+
+        def _prog(msg):
+            if progress_cb:
+                progress_cb(msg)
+            logger.info(msg)
+
+        try:
+            # --- Step 1: reach >>> prompt regardless of current state ---
+            # Ctrl+B exits raw REPL → normal REPL
+            # Ctrl+C interrupts any running user code
+            _prog(f"[1/4] Interrupting Pico on {port}...")
+            ser.write(b"\x02")       # exit raw REPL if stuck there
+            time.sleep(0.2)
+            for _ in range(3):
+                ser.write(b"\x03")   # Ctrl+C: interrupt user code
+                time.sleep(0.1)
+            resp = _read_until(b">>>", timeout=3.0)
+            if b">>>" not in resp:
+                # Try a soft reset as a last resort
+                _prog("[1/4] No >>> yet, trying soft reset...")
+                ser.write(b"\x04")
+                resp = _read_until(b">>>", timeout=5.0)
+            if b">>>" not in resp:
+                return False, (
+                    "ERROR: Could not reach MicroPython REPL (>>> prompt not seen)\n"
+                    "FIX:   Unplug and replug the Pico USB cable, then try Deploy again"
+                )
+            _prog("[1/4] MicroPython >>> prompt reached")
+
+            # --- Step 2: enter raw REPL (Ctrl+A) ---
+            _prog("[2/4] Entering raw REPL mode...")
+            ser.write(b"\x01")
+            resp = _read_until(b"raw REPL", timeout=3.0)
+            if b"raw REPL" not in resp:
+                return False, (
+                    "ERROR: Could not enter raw REPL\n"
+                    "CAUSE: Board did not respond to Ctrl+A\n"
+                    "FIX:   Ensure MicroPython firmware is installed on the Pico"
+                )
+            _prog("[2/4] Raw REPL entered")
+
+            # --- Step 3: write the file in 512-byte hex chunks ---
+            script_bytes = script_text.encode("utf-8")
+            CHUNK = 512
+            total = len(script_bytes)
+            n_chunks = (total + CHUNK - 1) // CHUNK
+            _prog(f"[3/4] Writing firmware: {total} bytes in {n_chunks} chunks...")
+            logger.info("Writing %d bytes in %d chunks", total, n_chunks)
+
+            resp = _raw_exec("f = open('main.py', 'wb')")
+            if b"Error" in resp or b"Traceback" in resp:
+                return False, f"ERROR: Could not open main.py for writing\nCAUSE: {resp[:200]!r}"
+
+            for i in range(0, total, CHUNK):
+                chunk = script_bytes[i : i + CHUNK]
+                hex_str = chunk.hex()
+                cmd = f"f.write(bytes.fromhex('{hex_str}'))"
+                resp = _raw_exec(cmd)
+                if b"Error" in resp or b"Traceback" in resp:
+                    _raw_exec("f.close()")   # best-effort cleanup
+                    return False, (
+                        f"ERROR: Write failed at byte {i}\n"
+                        f"CAUSE: {resp[:200]!r}"
+                    )
+                chunk_num = i // CHUNK + 1
+                if chunk_num % 5 == 0 or chunk_num == n_chunks:
+                    _prog(f"[3/4] chunk {chunk_num}/{n_chunks}...")
+
+            _raw_exec("f.close()")
+            _prog(f"[3/4] All {n_chunks} chunks written OK")
+            logger.info("File write complete")
+
+            # --- Step 4: exit raw REPL and soft reset ---
+            _prog("[4/4] Soft resetting board — firmware starting...")
+            ser.write(b"\x02")   # Ctrl+B: back to normal REPL
+            time.sleep(0.2)
+            ser.write(b"\x04")   # Ctrl+D: soft reset → runs the new main.py
+            time.sleep(0.5)
+
+            logger.info("Serial REPL deployment succeeded on %s", port)
+            return True, "Deployed via serial REPL successfully"
+
+        except Exception as exc:
+            return False, f"Serial REPL deployment error: {exc}"
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +277,14 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
             # gravity_offset_deg is applied by the PC before sending angles;
             # it is NOT injected into the firmware JOINTS block.
         ]
-        # Optional homing/limit switch config
-        if "home_pin" in j:
-            parts.append(f'"home_pin": {j.get("home_pin")}')
+        # Optional homing/limit switch config (negative home_pin = disabled — omit from firmware JOINTS)
+        _hp = j.get("home_pin")
+        try:
+            _hp_ok = _hp is not None and int(_hp) >= 0
+        except (TypeError, ValueError):
+            _hp_ok = False
+        if _hp_ok:
+            parts.append(f'"home_pin": {int(_hp)}')
             parts.append(f'"home_pin_polarity": "{j.get("home_pin_polarity", "NO")}"')
             parts.append(f'"home_direction": {j.get("home_direction", 1)}')
             _hsp = j.get("home_speed_sps", 100)
@@ -329,11 +330,15 @@ def _inject_wifi_config(
     *,
     embed_wifi: bool = True,
     wifi_country: str = "US",
+    wifi_ap_mode: bool = False,
+    wifi_ap_ssid: str = "PicoArm",
+    wifi_ap_password: str = "",
 ) -> str:
     """Replace the WiFi config block.
 
     When *embed_wifi* is False, ``ENABLE_WIFI`` is always False (USB-only firmware).
-    When True, ``ENABLE_WIFI`` is True only when *ssid* is non-empty.
+    When True: STA mode enables Wi‑Fi when *ssid* is non-empty; AP mode enables when
+    *wifi_ap_mode* is True (hotspot SSID defaults to ``PicoArm`` if blank).
     """
     begin_marker = "# <<BEGIN_WIFI_CONFIG>>"
     end_marker   = "# <<END_WIFI_CONFIG>>"
@@ -342,22 +347,36 @@ def _inject_wifi_config(
     if start == -1 or end == -1:
         logger.warning("WiFi sentinels not found in firmware — WiFi config not injected")
         return firmware_text
+
+    ap_ssid = str(wifi_ap_ssid or "").strip() or "PicoArm"
+    ap_pw = str(wifi_ap_password or "")
+
     if embed_wifi:
-        enable = bool(ssid and str(ssid).strip())
+        if wifi_ap_mode:
+            enable = True
+        else:
+            enable = bool(ssid and str(ssid).strip())
     else:
         enable = False
+
     if embed_wifi and enable:
         cc = str(wifi_country or "").strip().upper()[:2]
         if len(cc) != 2:
             cc = "US"
     else:
         cc = ""
+
+    ap_mode_lit = "True" if (embed_wifi and enable and wifi_ap_mode) else "False"
+
     # repr() for safe escaping of quotes/backslashes in SSID/password
     new_block = (
         f"# <<BEGIN_WIFI_CONFIG>>\n"
         f"ENABLE_WIFI = {enable}\n"
+        f"WIFI_AP_MODE = {ap_mode_lit}\n"
         f"WIFI_SSID = {repr(ssid)}\n"
         f"WIFI_PASSWORD = {repr(password)}\n"
+        f"WIFI_AP_SSID = {repr(ap_ssid)}\n"
+        f"WIFI_AP_PASSWORD = {repr(ap_pw)}\n"
         f"TCP_PORT = {int(port)}\n"
         f"WIFI_COUNTRY = {repr(cc)}\n"
         f"# <<END_WIFI_CONFIG>>"
@@ -597,6 +616,9 @@ class MicroPythonDeployer:
                arm_config: dict | None = None,
                embed_wifi: bool = True,
                wifi_country: str = "US",
+               wifi_ap_mode: bool = False,
+               wifi_ap_ssid: str = "PicoArm",
+               wifi_ap_password: str = "",
                progress_cb=None) -> tuple[bool, str]:
         """Deploy ``firmware/pico_control_script.py`` to the Pico on *port*.
 
@@ -663,18 +685,42 @@ class MicroPythonDeployer:
             wifi_port,
             embed_wifi=embed_wifi,
             wifi_country=wifi_country,
+            wifi_ap_mode=wifi_ap_mode,
+            wifi_ap_ssid=wifi_ap_ssid,
+            wifi_ap_password=wifi_ap_password,
         )
-        if embed_wifi and wifi_ssid and str(wifi_ssid).strip():
+        _wifi_on = embed_wifi and (
+            wifi_ap_mode or (wifi_ssid and str(wifi_ssid).strip())
+        )
+        if _wifi_on:
             cc = str(wifi_country or "").strip().upper()[:2]
             if len(cc) != 2:
                 cc = "US"
-            _prog(
-                f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, "
-                f"CYW43 country={cc!r}, port={wifi_port}"
-            )
-            logger.info("Injected WiFi: SSID=%r country=%r port=%d", wifi_ssid, cc, wifi_port)
+            if wifi_ap_mode:
+                _apn = str(wifi_ap_ssid or "").strip() or "PicoArm"
+                _prog(
+                    f"Injected WiFi: AP (hotspot) SSID={_apn!r}, "
+                    f"CYW43 country={cc!r}, TCP={wifi_port}, HTTP=8080"
+                )
+                logger.info(
+                    "Injected WiFi AP SSID=%r country=%r tcp_port=%d",
+                    _apn,
+                    cc,
+                    wifi_port,
+                )
+            else:
+                _prog(
+                    f"Injected WiFi: STA SSID={wifi_ssid!r}, "
+                    f"CYW43 country={cc!r}, port={wifi_port}"
+                )
+                logger.info(
+                    "Injected WiFi: SSID=%r country=%r port=%d",
+                    wifi_ssid,
+                    cc,
+                    wifi_port,
+                )
         elif embed_wifi:
-            _prog("Firmware WiFi disabled (no SSID; ENABLE_WIFI=False)")
+            _prog("Firmware WiFi disabled (no STA SSID and not AP mode; ENABLE_WIFI=False)")
         else:
             _prog("USB-only firmware (WiFi / HTTP dashboard disabled; ENABLE_WIFI=False)")
 
@@ -707,6 +753,9 @@ class MicroPythonDeployer:
                     arm_config: dict | None = None,
                     embed_wifi: bool = True,
                     wifi_country: str = "US",
+                    wifi_ap_mode: bool = False,
+                    wifi_ap_ssid: str = "PicoArm",
+                    wifi_ap_password: str = "",
                     progress_cb=None) -> tuple[bool, str]:
         """Deploy firmware to the Pico over WiFi TCP (no USB required).
 
@@ -757,17 +806,28 @@ class MicroPythonDeployer:
             tcp_port,
             embed_wifi=embed_wifi,
             wifi_country=wifi_country,
+            wifi_ap_mode=wifi_ap_mode,
+            wifi_ap_ssid=wifi_ap_ssid,
+            wifi_ap_password=wifi_ap_password,
         )
-        if embed_wifi and wifi_ssid and str(wifi_ssid).strip():
+        _wifi_on = embed_wifi and (
+            wifi_ap_mode or (wifi_ssid and str(wifi_ssid).strip())
+        )
+        if _wifi_on:
             cc = str(wifi_country or "").strip().upper()[:2]
             if len(cc) != 2:
                 cc = "US"
-            _prog(
-                f"Injected WiFi: ENABLE_WIFI=True, SSID={wifi_ssid!r}, "
-                f"CYW43 country={cc!r}, port={tcp_port}"
-            )
+            if wifi_ap_mode:
+                _apn = str(wifi_ap_ssid or "").strip() or "PicoArm"
+                _prog(
+                    f"Injected WiFi: AP SSID={_apn!r}, CYW43 country={cc!r}, TCP={tcp_port}"
+                )
+            else:
+                _prog(
+                    f"Injected WiFi: STA SSID={wifi_ssid!r}, CYW43 country={cc!r}, port={tcp_port}"
+                )
         elif embed_wifi:
-            _prog("Firmware WiFi disabled (no SSID; ENABLE_WIFI=False)")
+            _prog("Firmware WiFi disabled (no STA SSID and not AP mode; ENABLE_WIFI=False)")
         else:
             _prog("USB-only firmware (WiFi / HTTP dashboard disabled; ENABLE_WIFI=False)")
 

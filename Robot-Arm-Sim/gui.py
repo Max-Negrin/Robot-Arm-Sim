@@ -25,8 +25,8 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QGridLayout, QPlainTextEdit, QSizePolicy, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPalette, QColor, QFont, QKeyEvent
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
+from PyQt6.QtGui import QPalette, QColor, QFont, QKeyEvent, QDesktopServices
 
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
@@ -1952,9 +1952,14 @@ class HomingPanel(QGroupBox):
             "post_home_cmds": QLineEdit(),
         }
 
-        row["home_pin"].setRange(0, 28)
+        row["home_pin"].setMinimum(-1)
+        row["home_pin"].setMaximum(28)
+        row["home_pin"].setSpecialValueText("Disabled")
         row["home_pin"].setValue(20 + idx)
-        row["home_pin"].setToolTip("GPIO pin for home switch")
+        row["home_pin"].setToolTip(
+            "GPIO pin for home switch (Pico GP0–GP28). Set to Disabled (−1) to turn off homing "
+            "for this joint; any negative value in JSON also disables on the Pico."
+        )
         row["home_pin"].valueChanged.connect(self._on_changed)
 
         row["polarity"].addItems(["NO (active-high)", "NC (active-low)"])
@@ -2092,7 +2097,16 @@ class HomingPanel(QGroupBox):
                 continue
 
             row["home_pin"].blockSignals(True)
-            row["home_pin"].setValue(config.get("home_pin", 20 + idx))
+            _hp = config.get("home_pin", 20 + idx)
+            try:
+                _hv = int(_hp)
+            except (TypeError, ValueError):
+                _hv = 20 + idx
+            if _hv < 0:
+                _hv = -1
+            elif _hv > 28:
+                _hv = 28
+            row["home_pin"].setValue(_hv)
             row["home_pin"].blockSignals(False)
 
             polarity = config.get("home_pin_polarity", "NO")
@@ -2256,7 +2270,10 @@ class HardwarePanel(QGroupBox):
         bh_tip = QLabel(
             "Wireless control — jog joints and view pose in a browser at "
             "http://<pico-ip>:8080 after the Pico joins Wi‑Fi. "
-            "This desktop app does not use Wi‑Fi TCP; use Connect above for USB serial only."
+            "This desktop app does not use Wi‑Fi TCP; use Connect above for USB serial only.\n\n"
+            "Phone hotspot: many hotspots isolate clients — your laptop may not reach the Pico "
+            "even though Wi‑Fi connected. Try opening that URL on the phone itself, switch to a "
+            "normal router, or disable “AP isolation” / “client isolation” if the hotspot has it."
         )
         bh_tip.setWordWrap(True)
         bh_tip.setStyleSheet("color: #aaa; font-size: 9px;")
@@ -2264,7 +2281,7 @@ class HardwarePanel(QGroupBox):
         ip_row = QHBoxLayout()
         ip_row.addWidget(QLabel("Pico IP (bookmark):"))
         self.ip_edit = QLineEdit()
-        self.ip_edit.setPlaceholderText("from serial: WiFi connected: …")
+        self.ip_edit.setPlaceholderText("from serial — STA: WiFi connected … / AP: WiFi AP ready …")
         self.ip_edit.setToolTip(
             "Optional — paste the Pico's LAN IP to remember it.\n"
             "Boot prints 'WiFi connected: x.x.x.x' over USB, or send WIFI when connected."
@@ -2289,6 +2306,22 @@ class HardwarePanel(QGroupBox):
         creds_lbl.setStyleSheet("color: #aaa; font-size: 9px;")
         layout.addWidget(creds_lbl)
 
+        self.wifi_ap_mode_cb = QCheckBox(
+            "Pico creates Wi‑Fi network (hotspot) — join the Pico from phone or PC"
+        )
+        self.wifi_ap_mode_cb.setToolTip(
+            "When checked, the Pico runs a soft access point (no home router).\n"
+            "Set the hotspot name and password below, deploy, then join that SSID from your "
+            "phone or laptop and open http://192.168.4.1:8080 (or the IP printed over USB).\n"
+            "Password: use at least 8 characters for WPA2, or leave empty for an open network "
+            "(if your MicroPython build supports open AP)."
+        )
+        self.wifi_ap_mode_cb.toggled.connect(self._update_wifi_mode_widgets)
+        layout.addWidget(self.wifi_ap_mode_cb)
+
+        self._wifi_sta_widget = QWidget()
+        _sta_form = QVBoxLayout(self._wifi_sta_widget)
+        _sta_form.setContentsMargins(0, 0, 0, 0)
         ssid_row = QHBoxLayout()
         ssid_row.addWidget(QLabel("SSID:"))
         self.ssid_edit = QLineEdit()
@@ -2297,10 +2330,13 @@ class HardwarePanel(QGroupBox):
             "Your home WiFi network name.\n"
             "This is written into the Pico firmware when you click Deploy.\n"
             "The Pico 2 W radio is 2.4 GHz only — the AP must offer 2.4 GHz (not 5 GHz–only).\n"
-            "Required whenever Deploy embeds Wi‑Fi (checked “Wi‑Fi + web server in firmware”)."
+            "Required for STA mode whenever Deploy embeds Wi‑Fi.\n\n"
+            "Phone hotspot: association can succeed while laptops/other devices still cannot "
+            "open the dashboard (client isolation). Use the phone browser to http://<pico-ip>:8080 "
+            "or a router that allows LAN traffic between Wi‑Fi clients."
         )
         ssid_row.addWidget(self.ssid_edit)
-        layout.addLayout(ssid_row)
+        _sta_form.addLayout(ssid_row)
 
         pw_row = QHBoxLayout()
         pw_row.addWidget(QLabel("Password:"))
@@ -2308,7 +2344,13 @@ class HardwarePanel(QGroupBox):
         self.wifi_pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.wifi_pw_edit.setPlaceholderText("Network password")
         pw_row.addWidget(self.wifi_pw_edit)
-        layout.addLayout(pw_row)
+        self.wifi_pw_show_btn = QPushButton("Show")
+        self.wifi_pw_show_btn.setCheckable(True)
+        self.wifi_pw_show_btn.setMaximumWidth(60)
+        self.wifi_pw_show_btn.setToolTip("Temporarily show the Wi‑Fi password (click again to hide)")
+        self.wifi_pw_show_btn.toggled.connect(self._on_wifi_pw_show_toggled)
+        pw_row.addWidget(self.wifi_pw_show_btn)
+        _sta_form.addLayout(pw_row)
 
         country_row = QHBoxLayout()
         country_row.addWidget(QLabel("Wi‑Fi country:"))
@@ -2319,19 +2361,54 @@ class HardwarePanel(QGroupBox):
         self.wifi_country_edit.setMaximumWidth(52)
         self.wifi_country_edit.setToolTip(
             "Two-letter ISO country code for the CYW43 radio (e.g. US, GB, DE).\n"
-            "MicroPython calls rp2.country() before joining Wi‑Fi — without this, "
+            "MicroPython calls rp2.country() before Wi‑Fi — without this, "
             "many Pico W / Pico 2 W boards never complete association.\n"
-            "Your router must expose a 2.4 GHz WPA2 network (most „Wi‑Fi“ SSIDs are dual-band)."
+            "STA: your router must expose 2.4 GHz. AP mode: still set country for regulatory domain."
         )
         country_row.addWidget(self.wifi_country_edit)
         country_row.addStretch()
-        layout.addLayout(country_row)
+        _sta_form.addLayout(country_row)
+        layout.addWidget(self._wifi_sta_widget)
+
+        self._wifi_ap_widget = QWidget()
+        _ap_form = QVBoxLayout(self._wifi_ap_widget)
+        _ap_form.setContentsMargins(0, 0, 0, 0)
+        ap_ssid_row = QHBoxLayout()
+        ap_ssid_row.addWidget(QLabel("Hotspot name:"))
+        self.wifi_ap_ssid_edit = QLineEdit()
+        self.wifi_ap_ssid_edit.setPlaceholderText("e.g. PicoArm")
+        self.wifi_ap_ssid_edit.setText("PicoArm")
+        self.wifi_ap_ssid_edit.setToolTip(
+            "SSID broadcast by the Pico — you join this network from Wi‑Fi settings."
+        )
+        ap_ssid_row.addWidget(self.wifi_ap_ssid_edit)
+        _ap_form.addLayout(ap_ssid_row)
+
+        ap_pw_row = QHBoxLayout()
+        ap_pw_row.addWidget(QLabel("Hotspot password:"))
+        self.wifi_ap_pw_edit = QLineEdit()
+        self.wifi_ap_pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.wifi_ap_pw_edit.setPlaceholderText("≥8 chars for WPA2, or empty for open AP")
+        self.wifi_ap_pw_edit.setToolTip(
+            "Minimum 8 characters for WPA2 personal; leave empty to try an open hotspot "
+            "(MicroPython / CYW43 must support AUTH_OPEN)."
+        )
+        ap_pw_row.addWidget(self.wifi_ap_pw_edit)
+        self.wifi_ap_pw_show_btn = QPushButton("Show")
+        self.wifi_ap_pw_show_btn.setCheckable(True)
+        self.wifi_ap_pw_show_btn.setMaximumWidth(60)
+        self.wifi_ap_pw_show_btn.setToolTip("Show or hide the hotspot password")
+        self.wifi_ap_pw_show_btn.toggled.connect(self._on_wifi_ap_pw_show_toggled)
+        ap_pw_row.addWidget(self.wifi_ap_pw_show_btn)
+        _ap_form.addLayout(ap_pw_row)
+        layout.addWidget(self._wifi_ap_widget)
 
         self.include_wifi_deploy_cb = QCheckBox("Wi‑Fi + web server in firmware")
         self.include_wifi_deploy_cb.setChecked(True)
         self.include_wifi_deploy_cb.setToolTip(
-            "When checked, Deploy injects ENABLE_WIFI from your SSID/password "
-            "(onboard Wi‑Fi, optional LAN TCP listener, HTTP dashboard in browser).\n"
+            "When checked, Deploy enables onboard Wi‑Fi: join-home mode (STA + SSID above) "
+            "or Pico hotspot mode if that box is checked.\n"
+            "Includes LAN TCP port + HTTP dashboard in the browser.\n"
             "Uncheck for USB-only firmware (no wireless stack).\n\n"
             "Wireless jogging uses the browser dashboard — not a TCP connection from this app."
         )
@@ -2357,6 +2434,29 @@ class HardwarePanel(QGroupBox):
         self.deploy_btn.clicked.connect(self._on_deploy_clicked)
         btn_row.addWidget(self.deploy_btn)
         layout.addLayout(btn_row)
+
+        wifi_browser_row = QHBoxLayout()
+        self.deploy_wifi_browser_btn = QPushButton("Flash Wi‑Fi / browser firmware")
+        self.deploy_wifi_browser_btn.setToolTip(
+            "One-click preset for wireless-only control:\n"
+            "• Turns ON ‘Wi‑Fi + web server in firmware’\n"
+            "• Turns OFF ‘Enable hardware synchronization’ so this PC does not stream joint angles "
+            "over USB (those streams override the HTTP dashboard).\n"
+            "• Starts the same USB Deploy as above.\n\n"
+            "Fill STA (SSID/password) or Pico hotspot fields first."
+        )
+        self.deploy_wifi_browser_btn.clicked.connect(self._on_deploy_wifi_browser_clicked)
+        wifi_browser_row.addWidget(self.deploy_wifi_browser_btn)
+
+        self.open_dashboard_btn = QPushButton("Open dashboard")
+        self.open_dashboard_btn.setToolTip(
+            "Open http://<Pico IP>:8080 in your browser.\n"
+            "Uses ‘Pico IP (bookmark)’ if set; otherwise tries 192.168.4.1 (typical Pico AP mode)."
+        )
+        self.open_dashboard_btn.clicked.connect(self._on_open_dashboard_clicked)
+        wifi_browser_row.addWidget(self.open_dashboard_btn)
+        wifi_browser_row.addStretch()
+        layout.addLayout(wifi_browser_row)
 
         # LED toggle and Homing — only usable when connected
         control_row = QHBoxLayout()
@@ -2397,9 +2497,15 @@ class HardwarePanel(QGroupBox):
 
         # Initial port population
         self._refresh_ports()
+        self._update_wifi_mode_widgets()
         self._connected = False
 
     # ── Public API ─────────────────────────────────────────────────────────
+
+    def set_deploy_buttons_enabled(self, enabled: bool) -> None:
+        """USB deploy + Wi‑Fi/browser preset (exclusive access to serial during flash)."""
+        self.deploy_btn.setEnabled(enabled)
+        self.deploy_wifi_browser_btn.setEnabled(enabled)
 
     def is_hardware_sync_enabled(self) -> bool:
         """When True, the main loop calls ``send_joint_angles`` to the Pico."""
@@ -2435,6 +2541,13 @@ class HardwarePanel(QGroupBox):
             self.host_follow_max_sps_spin.setValue(
                 int(max(0, min(200_000, int(data["firmware_host_follow_max_sps"]))))
             )
+        if "wifi_ap_mode" in data:
+            self.wifi_ap_mode_cb.setChecked(bool(data["wifi_ap_mode"]))
+        if "wifi_ap_ssid" in data:
+            self.wifi_ap_ssid_edit.setText(str(data["wifi_ap_ssid"]))
+        if "wifi_ap_password" in data:
+            self.wifi_ap_pw_edit.setText(str(data["wifi_ap_password"]))
+        self._update_wifi_mode_widgets()
 
     def save_state(self) -> dict:
         """Return current hardware panel state as a JSON-serializable dict."""
@@ -2450,6 +2563,9 @@ class HardwarePanel(QGroupBox):
             "firmware_include_wifi": self.include_wifi_in_deploy(),
             "firmware_step_us": self.get_step_us(),
             "firmware_host_follow_max_sps": self.get_host_follow_max_sps(),
+            "wifi_ap_mode": self.wifi_ap_mode_deploy(),
+            "wifi_ap_ssid": self.get_wifi_ap_ssid(),
+            "wifi_ap_password": self.get_wifi_ap_password(),
         }
 
     def get_step_us(self) -> int:
@@ -2512,6 +2628,16 @@ class HardwarePanel(QGroupBox):
     def get_wifi_ssid(self) -> str:
         return self.ssid_edit.text().strip()
 
+    def wifi_ap_mode_deploy(self) -> bool:
+        """When True, firmware joins Wi‑Fi by hosting a hotspot (AP), not STA."""
+        return self.wifi_ap_mode_cb.isChecked()
+
+    def get_wifi_ap_ssid(self) -> str:
+        return self.wifi_ap_ssid_edit.text().strip()
+
+    def get_wifi_ap_password(self) -> str:
+        return self.wifi_ap_pw_edit.text()
+
     def get_wifi_password(self) -> str:
         return self.wifi_pw_edit.text()
 
@@ -2521,10 +2647,27 @@ class HardwarePanel(QGroupBox):
         return t if len(t) == 2 else "US"
 
     def include_wifi_in_deploy(self) -> bool:
-        """When True, Deploy sets ENABLE_WIFI from SSID (wireless + HTTP stack)."""
+        """When True, Deploy enables wireless stack (STA join-home or Pico hotspot AP)."""
         return self.include_wifi_deploy_cb.isChecked()
 
     # ── Internal ───────────────────────────────────────────────────────────
+
+    def _on_wifi_pw_show_toggled(self, checked: bool) -> None:
+        self.wifi_pw_edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+        )
+        self.wifi_pw_show_btn.setText("Hide" if checked else "Show")
+
+    def _on_wifi_ap_pw_show_toggled(self, checked: bool) -> None:
+        self.wifi_ap_pw_edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+        )
+        self.wifi_ap_pw_show_btn.setText("Hide" if checked else "Show")
+
+    def _update_wifi_mode_widgets(self) -> None:
+        ap_on = self.wifi_ap_mode_cb.isChecked()
+        self._wifi_sta_widget.setVisible(not ap_on)
+        self._wifi_ap_widget.setVisible(ap_on)
 
     def _update_step_us_tooltip(self) -> None:
         """Show STEP_US and the corresponding target loop frequency (updates live)."""
@@ -2574,10 +2717,59 @@ class HardwarePanel(QGroupBox):
 
     def _on_deploy_clicked(self) -> None:
         self.log_lbl.setStyleSheet("color: #ffaa00;")
-        self.deploy_btn.setEnabled(False)
+        self.set_deploy_buttons_enabled(False)
         port = self.get_port()
         self.log_lbl.setText(f"Starting deploy to {port}…")
         self.deploy_requested.emit(port)
+
+    def _on_deploy_wifi_browser_clicked(self) -> None:
+        """Preset for Wi‑Fi dashboard use: embed wireless stack, stop USB angle streaming."""
+        self.include_wifi_deploy_cb.setChecked(True)
+        self.enable_cb.blockSignals(True)
+        self.enable_cb.setChecked(False)
+        self.enable_cb.blockSignals(False)
+
+        if self.wifi_ap_mode_deploy():
+            if not self.get_wifi_ap_ssid().strip():
+                QMessageBox.warning(
+                    self,
+                    "Wi‑Fi / browser firmware",
+                    "Set a hotspot name (SSID) for Pico AP mode, or switch off "
+                    "‘Pico creates Wi‑Fi network’ and enter your home Wi‑Fi SSID.",
+                )
+                return
+        else:
+            if not self.get_wifi_ssid().strip():
+                QMessageBox.warning(
+                    self,
+                    "Wi‑Fi / browser firmware",
+                    "Enter your Wi‑Fi network name (SSID), or enable "
+                    "‘Pico creates Wi‑Fi network’ and set the hotspot name.",
+                )
+                return
+
+        self.log_lbl.setStyleSheet("color: #ffaa00;")
+        self.log_lbl.setText(
+            "Wi‑Fi dashboard preset: hardware sync OFF (browser drives arm). Deploying…"
+        )
+        self._on_deploy_clicked()
+
+    def _on_open_dashboard_clicked(self) -> None:
+        host = self.get_wifi_host().strip()
+        if not host:
+            if self.wifi_ap_mode_deploy():
+                host = "192.168.4.1"
+            else:
+                host = "192.168.4.1"
+                QMessageBox.information(
+                    self,
+                    "Open dashboard",
+                    "No Pico IP in ‘Pico IP (bookmark)’ — opening http://192.168.4.1:8080 "
+                    "(typical Pico hotspot). For home Wi‑Fi, paste the IP from serial "
+                    "(WiFi connected: …) into that field first.",
+                )
+        url = QUrl("http://{}:8080/".format(host))
+        QDesktopServices.openUrl(url)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4906,34 +5098,68 @@ class MainWindow(QMainWindow):
             self._connecting_iface = None
 
         # Disable Deploy while connect thread holds the port
-        self.hardware_panel.deploy_btn.setEnabled(False)
+        self.hardware_panel.set_deploy_buttons_enabled(False)
 
         import queue as _queue
         _connect_result: _queue.Queue = _queue.Queue()
 
+        iface = PicoInterface()
+        self._connecting_iface = iface
+        poll_deadline = time.monotonic() + 110.0
+
         def _worker():
-            iface = PicoInterface()
-            self._connecting_iface = iface
-            ok, msg = iface.connect(port=port or None, baud=baud)
-            _connect_result.put((ok, msg, iface))
+            ok, msg = False, ""
+            try:
+                ok, msg = iface.connect(port=port or None, baud=baud)
+            except Exception as exc:
+                logger.exception("Connect worker failed")
+                ok = False
+                msg = (
+                    "ERROR: Connect failed unexpectedly\n"
+                    f"CAUSE: {exc}\n"
+                    "FIX:   See log for details; unplug/replug the Pico and try again."
+                )
+            try:
+                _connect_result.put((ok, msg))
+            except Exception:
+                pass
 
         import threading as _threading
         _threading.Thread(target=_worker, name="pico-connect", daemon=True).start()
 
         def _poll_connect():
             try:
-                ok, msg, iface = _connect_result.get_nowait()
+                ok, msg = _connect_result.get_nowait()
             except _queue.Empty:
+                if time.monotonic() > poll_deadline:
+                    try:
+                        iface.disconnect()
+                    except Exception:
+                        pass
+                    self._connecting_iface = None
+                    self.hardware_panel.set_deploy_buttons_enabled(True)
+                    tout = (
+                        "ERROR: Connect timed out (110s)\n"
+                        "CAUSE: USB open or firmware handshake did not finish (port busy, "
+                        "wrong board, or stuck Deploy).\n"
+                        "FIX:   Try Deploy, confirm COM port, unplug USB 10s, restart the app."
+                    )
+                    self.hardware_panel.set_connected(False, tout)
+                    self.terminal.log(tout.split("\n")[0], "error")
+                    self.status_bar.showMessage("Connect timed out — see Hardware panel")
+                    logger.error("Hardware connect poll timed out waiting for worker")
+                    return
                 QTimer.singleShot(100, _poll_connect)
                 return
+            iface_done = self._connecting_iface
             self._connecting_iface = None
-            self.hardware_panel.deploy_btn.setEnabled(True)
+            self.hardware_panel.set_deploy_buttons_enabled(True)
             if ok:
                 self._hw_sync_nudge_shown = False
-                self._hardware = iface
+                self._hardware = iface_done
                 # rx_callback is called from the RX background thread;
                 # use a queue+poll to safely update the GUI label.
-                iface.rx_callback = self._on_pico_rx_threadsafe
+                iface_done.rx_callback = self._on_pico_rx_threadsafe
                 self.hardware_panel.set_connected(True, msg)
                 self.terminal.set_connected(True, f"USB {port}")
                 self.terminal.log(f"Connected via USB ({port})", "info")
@@ -4946,6 +5172,10 @@ class MainWindow(QMainWindow):
                 logger.info("Hardware connected: %s", msg)
                 QTimer.singleShot(0, self._seed_hardware_pose_from_sim)
             else:
+                try:
+                    iface_done.disconnect()
+                except Exception:
+                    pass
                 self.hardware_panel.set_connected(False, msg)
                 self.terminal.log(f"Connection failed: {msg.splitlines()[0]}", "error")
                 self.status_bar.showMessage("Pico connection failed — see Hardware panel")
@@ -4960,6 +5190,12 @@ class MainWindow(QMainWindow):
 
     def _on_hardware_disconnect(self) -> None:
         """Handle Disconnect button."""
+        if self._connecting_iface is not None:
+            try:
+                self._connecting_iface.disconnect()
+            except Exception:
+                pass
+            self._connecting_iface = None
         if self._hardware is not None:
             self._hardware.disconnect()
             self._hardware = None
@@ -5663,7 +5899,6 @@ class MainWindow(QMainWindow):
 
         # ── DEPLOY ────────────────────────────────────────────────────────
         elif upper == "DEPLOY":
-            self.hardware_panel.deploy_btn.setEnabled(False)
             self.hardware_panel._on_deploy_clicked()
             self.terminal.log("Firmware deploy started — check Hardware panel for progress", "info")
 
@@ -6272,6 +6507,12 @@ class MainWindow(QMainWindow):
             else:
                 self.terminal.log(f"Unknown command '{raw}' — type HELP for command list", "error")
 
+    def _set_hardware_usb_flash_busy(self, busy: bool) -> None:
+        """USB deploy owns the cable — disable Connect so users don't wait on the serial lock."""
+        hp = self.hardware_panel
+        hp.set_deploy_buttons_enabled(not busy)
+        hp.connect_btn.setEnabled(not busy)
+
     def _on_hardware_deploy(self, port: str) -> None:
         """Upload ``pico_control_script.py`` to the Pico as ``main.py`` via USB only."""
         try:
@@ -6279,7 +6520,7 @@ class MainWindow(QMainWindow):
         except ImportError as exc:
             msg = f"Cannot import deployer: {exc}"
             self.hardware_panel.log_lbl.setText(msg)
-            self.hardware_panel.deploy_btn.setEnabled(True)
+            self._set_hardware_usb_flash_busy(False)
             return
 
         joints_config = self._get_full_joint_configs()
@@ -6291,6 +6532,9 @@ class MainWindow(QMainWindow):
         host_cap  = self.hardware_panel.get_host_follow_max_sps()
         embed_wifi = self.hardware_panel.include_wifi_in_deploy()
         wifi_cc = self.hardware_panel.get_wifi_country()
+        wifi_ap_mode = self.hardware_panel.wifi_ap_mode_deploy()
+        wifi_ap_ssid = self.hardware_panel.get_wifi_ap_ssid()
+        wifi_ap_pw = self.hardware_panel.get_wifi_ap_password()
 
         # ── USB serial deploy only ───────────────────────────────────────────
         target_port = port or self.hardware_panel.get_port()
@@ -6303,7 +6547,7 @@ class MainWindow(QMainWindow):
                 "FIX:   Select a COM port in the Hardware panel, then Deploy again"
             )
             self.hardware_panel.log_lbl.setText(msg)
-            self.hardware_panel.deploy_btn.setEnabled(True)
+            self._set_hardware_usb_flash_busy(False)
             return
 
         # Release the port completely — deployer needs exclusive access
@@ -6316,7 +6560,10 @@ class MainWindow(QMainWindow):
             self._hardware = None
         if was_connected:
             self.hardware_panel.set_connected(False, "Disconnected for firmware deploy…")
-            self.hardware_panel.deploy_btn.setEnabled(True)
+
+        self._set_hardware_usb_flash_busy(True)
+        # Status text was set when Deploy was clicked; keep style consistent.
+        self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
 
         # Run deployment in a background thread so the GUI stays responsive.
         # Cross-thread UI updates use a queue polled by a main-thread QTimer —
@@ -6342,6 +6589,9 @@ class MainWindow(QMainWindow):
                 arm_config=self._get_arm_config_dict(),
                 embed_wifi=embed_wifi,
                 wifi_country=wifi_cc,
+                wifi_ap_mode=wifi_ap_mode,
+                wifi_ap_ssid=wifi_ap_ssid,
+                wifi_ap_password=wifi_ap_pw,
                 progress_cb=_progress,
             )
             _msg_queue.put(("done", ok, result_msg))
@@ -6374,19 +6624,21 @@ class MainWindow(QMainWindow):
     def _on_deploy_finished(self, ok: bool, msg: str,
                              port: str, _reconnect: bool) -> None:
         """Called in the main thread when USB deployment completes."""
-        self.hardware_panel.deploy_btn.setEnabled(True)
+        self._set_hardware_usb_flash_busy(False)
         if ok:
             embed = self.hardware_panel.include_wifi_in_deploy()
-            ssid_ok = bool(self.hardware_panel.get_wifi_ssid().strip())
-
-            if embed and ssid_ok:
+            sta_ok = bool(self.hardware_panel.get_wifi_ssid().strip())
+            ap_ok = self.hardware_panel.wifi_ap_mode_deploy() and bool(
+                self.hardware_panel.get_wifi_ap_ssid().strip()
+            )
+            if embed and (ap_ok or sta_ok):
                 self.terminal.log(
                     "Wi‑Fi is embedded — HTTP dashboard at http://<pico-ip>:8080 "
-                    "(browser for wireless jog/pose). Resolve IP from USB serial "
-                    "(`WiFi connected:` or WIFI). Firmware may still expose TCP port "
+                    "(browser for wireless jog/pose). AP mode: join the Pico hotspot, usually "
+                    "http://192.168.4.1:8080. STA: resolve IP from USB serial (`WiFi connected:` "
+                    "or WIFI). Firmware TCP port "
                     + str(self.hardware_panel.get_wifi_port())
-                    + "; this app uses USB serial only. Wi‑Fi/HTTP keep running if USB "
-                    "data is unplugged while the Pico stays powered.",
+                    + "; this app uses USB serial only.",
                     "info",
                 )
 

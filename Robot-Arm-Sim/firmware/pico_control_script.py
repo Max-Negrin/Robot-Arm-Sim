@@ -20,8 +20,9 @@ Supports three driver types per joint — mix and match as needed:
               Power servo from VBUS (5 V) — GPIO pin is signal only.
               Share GND between Pico and servo supply!
 
-Protocol: USB serial by default. Optional WiFi TCP only if ENABLE_WIFI is True in the
-deployed block (set when you deploy with an SSID, or edit ENABLE_WIFI manually).
+Protocol: USB serial by default. Optional WiFi if ENABLE_WIFI is True in the deployed block:
+either join your router (STA + WIFI_SSID) or run a Pico hotspot (AP + WIFI_AP_SSID) so you
+join the Pico directly — TCP + HTTP dashboard bind to that interface.
 When Wi‑Fi is enabled, the control loop serves the same commands over TCP — you can unplug
 USB from the laptop once the Pico has joined Wi‑Fi, provided the board still has power
 (USB to a charger, VSYS, etc.).
@@ -39,7 +40,7 @@ only for GPIO STEP debugging.
 Homing still uses a simple local open-loop move toward a limit switch.
 
 ──────────────────────────────────────────────────────────────────────────────
-CONFIGURATION — edit JOINTS; enable WiFi only via Deploy with SSID or ENABLE_WIFI=True
+CONFIGURATION — edit JOINTS; Wi‑Fi via Deploy (STA join home AP, or AP hotspot mode)
 ──────────────────────────────────────────────────────────────────────────────
 """
 
@@ -89,12 +90,15 @@ def _pio_alloc_sm_id(cfg: dict) -> int:
 # record indices here and print a one-time WARN (otherwise J2 is ignored silently).
 _SEEN_UNLOADED_J_CMD = set()
 
-# WiFi is OFF unless you deploy with an SSID (sets ENABLE_WIFI True) or edit here.
-# No network thread or TCP server — fastest control loop (USB serial only).
+# WiFi is OFF unless Deploy enables it (STA: non-empty SSID, or AP: hotspot mode).
+# No network thread — fastest control loop (USB serial only).
 # <<BEGIN_WIFI_CONFIG>>
 ENABLE_WIFI = False
+WIFI_AP_MODE = False
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
+WIFI_AP_SSID = "PicoArm"
+WIFI_AP_PASSWORD = ""
 TCP_PORT = 8888
 WIFI_COUNTRY = ""
 # <<END_WIFI_CONFIG>>
@@ -264,8 +268,12 @@ _traj_anchor_us = None
 _traj_prev_deg = ()
 _traj_slots = 0
 
-# Commands from WiFi HTTP dashboard → drained on main loop (thread-safe list append).
+# Commands from WiFi HTTP dashboard → drained on main loop (single LAN worker thread).
 _web_cmd_queue = []
+# After HTTP jog, skip host ``T:`` playback briefly so USB streaming cannot overwrite
+# dashboard targets every tick (repeated jog requests while holding buttons refresh this).
+_dashboard_jog_last_ms = None
+_DASHBOARD_SUPPRESS_HOST_TRAJ_MS = 900
 _http_axes_ref = None
 
 
@@ -411,6 +419,7 @@ def _ik_try_world(tx, ty, tz):
 
 
 def _apply_web_command(item, axes):
+    """Apply joint / EE jog from HTTP dashboard (runs on main loop only)."""
     if item[0] == "JJ":
         jn = int(item[1])
         ddeg = float(item[2])
@@ -440,54 +449,9 @@ def _apply_web_command(item, axes):
                 by_idx[ji].set_target_angle(pdeg)
 
 
-def _web_http_server_thread(sta_ip):
-    """HTTP dashboard on WEB_HTTP_PORT (STA mode only).
-
-    ``sta_ip`` is the WLAN IPv4 from ``ifconfig()``; binding that address first
-    avoids some lwIP/CYW43 setups where ``0.0.0.0`` never accepts LAN clients.
-    """
-    global _http_axes_ref
-    try:
-        import json
-        import socket
-
-        port = int(WEB_HTTP_PORT)
-        candidates = []
-        if sta_ip and sta_ip != "0.0.0.0":
-            candidates.append((sta_ip, port))
-        candidates.extend([("0.0.0.0", port), ("", port)])
-
-        srv = None
-        bound_addr = None
-        last_be = None
-        for addr in candidates:
-            sock = None
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(addr)
-                srv = sock
-                sock = None
-                bound_addr = addr
-                break
-            except OSError as be:
-                last_be = be
-                if sock is not None:
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
-
-        if srv is None:
-            raise OSError("HTTP bind failed: {}".format(last_be))
-
-        srv.listen(4)
-        srv.settimeout(1.0)
-        _show_ip = bound_addr[0] if bound_addr and bound_addr[0] else "0.0.0.0"
-        print("HTTP dashboard listening on {}:{}".format(_show_ip, port))
-        _flush_stdout()
-
-        html = """<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+def _build_dashboard_html():
+    """Static HTML for ``/`` (built once; TCP_PORT / WEB_HTTP_PORT interpolated)."""
+    return """<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Arm dashboard</title><style>
 body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:12px;}
 h1{font-size:1.1rem;margin:0 0 8px;}
@@ -521,7 +485,7 @@ var jbBuiltSig='',swBuiltSig='',holdIv=null,holdUrl=null;
 var stateBusy=false,statePending=false;
 function rebuildSwitches(swArr){var el=document.getElementById('sw'),h='';for(var i=0;i<swArr.length;i++){h+='<span><span class="dot na"></span>J'+swArr[i].idx+' limit</span> ';}el.innerHTML=h.trimEnd();}
 function updateSwitchDots(swArr){var el=document.getElementById('sw');for(var i=0;i<swArr.length;i++){var span=el.children[i];if(!span)return false;var dot=span.querySelector('.dot');if(!dot)return false;var s=swArr[i];dot.className='dot '+(s.pressed?'on':(s.wired?'off':'na'));}return true;}
-function rebuildJointButtons(joints){var el=document.getElementById('jb');el.innerHTML='';for(var i=0;i<joints.length;i++){var jo=joints[i];var bm=document.createElement('button');bm.type='button';bm.textContent='J'+jo.idx+' −';bindHold(bm,'/api/jog_joint?j='+jo.idx+'&delta=-0.5');el.appendChild(bm);var bp=document.createElement('button');bp.type='button';bp.textContent='J'+jo.idx+' +';bindHold(bp,'/api/jog_joint?j='+jo.idx+'&delta=0.5');el.appendChild(bp);el.appendChild(document.createTextNode(' '));}}
+function rebuildJointButtons(joints){var el=document.getElementById('jb');el.innerHTML='';for(var i=0;i<joints.length;i++){var jo=joints[i];var bm=document.createElement('button');bm.type='button';bm.textContent='J'+jo.idx+' −';bindHold(bm,'/api/jog_joint?j='+jo.idx+'&delta=-2');el.appendChild(bm);var bp=document.createElement('button');bp.type='button';bp.textContent='J'+jo.idx+' +';bindHold(bp,'/api/jog_joint?j='+jo.idx+'&delta=2');el.appendChild(bp);el.appendChild(document.createTextNode(' '));}}
 async function refreshState(){
 if(stateBusy){statePending=true;return;}
 stateBusy=true;
@@ -542,148 +506,197 @@ if(statePending){statePending=false;refreshState();}
 }
 async function pollLoop(){
 while(true){
-try{await refreshState();await new Promise(function(r){setTimeout(r,14);});}
-catch(e){console.warn(e);await new Promise(function(r){setTimeout(r,80);});}
+try{await refreshState();await new Promise(function(r){setTimeout(r,50);});}
+catch(e){console.warn(e);await new Promise(function(r){setTimeout(r,120);});}
 }
 }
 pollLoop();
 function stopHold(){if(holdIv){clearInterval(holdIv);holdIv=null;}holdUrl=null;}
 function fireHold(){
 if(!holdUrl)return;
-fetch(holdUrl,{cache:'no-store',keepalive:true}).then(function(){refreshState();}).catch(function(){});
+fetch(holdUrl,{cache:'no-store'}).then(function(){refreshState();}).catch(function(){});
 }
-function startHold(url){stopHold();holdUrl=url;fireHold();holdIv=setInterval(fireHold,28);}
+function startHold(url){stopHold();holdUrl=url;fireHold();holdIv=setInterval(fireHold,60);}
 function bindHold(el,url){
 el.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();try{el.setPointerCapture(e.pointerId);}catch(x){}startHold(url);});
 el.addEventListener('pointerup',stopHold);el.addEventListener('pointercancel',stopHold);el.addEventListener('lostpointercapture',stopHold);}
-bindHold(document.getElementById('exm'),'/api/jog_ee?dx=-0.35');
-bindHold(document.getElementById('exp'),'/api/jog_ee?dx=0.35');
-bindHold(document.getElementById('eym'),'/api/jog_ee?dy=-0.35');
-bindHold(document.getElementById('eyp'),'/api/jog_ee?dy=0.35');
-bindHold(document.getElementById('ezm'),'/api/jog_ee?dz=-0.35');
-bindHold(document.getElementById('ezp'),'/api/jog_ee?dz=0.35');
+bindHold(document.getElementById('exm'),'/api/jog_ee?dx=-1.25');
+bindHold(document.getElementById('exp'),'/api/jog_ee?dx=1.25');
+bindHold(document.getElementById('eym'),'/api/jog_ee?dy=-1.25');
+bindHold(document.getElementById('eyp'),'/api/jog_ee?dy=1.25');
+bindHold(document.getElementById('ezm'),'/api/jog_ee?dz=-1.25');
+bindHold(document.getElementById('ezp'),'/api/jog_ee?dz=1.25');
 window.addEventListener('blur',stopHold);
 window.addEventListener('pointerup',stopHold);
 </script>
 </body></html>"""
 
-        while True:
-            try:
-                conn, _addr = srv.accept()
-            except OSError:
-                continue
-            try:
-                conn.settimeout(3.0)
-                req = b""
-                while b"\r\n\r\n" not in req and len(req) < 4096:
-                    req += conn.recv(512)
-                if not req:
-                    conn.close()
-                    continue
-                head = req.split(b"\r\n\r\n", 1)[0].decode("utf-8", "replace")
-                lines = head.split("\r\n")
-                req_line = lines[0] if lines else ""
-                parts = req_line.split()
-                path_full = parts[1] if len(parts) > 1 else "/"
-                path = path_full
-                qs = ""
-                if "?" in path_full:
-                    path, qs = path_full.split("?", 1)
 
-                if path == "/" or path == "/index.html":
-                    body = html
-                    ctype = "text/html; charset=utf-8"
-                elif path == "/api/state":
-                    axes = _http_axes_ref
-                    bd, pd = _angles_deg_bundle(axes) if axes else (0.0, [])
-                    pts3 = _fk_positions_deg(bd, pd) if axes else []
-                    fk_ok = len(pts3) > 0
-                    poly_xy = [[round(p[0], 4), round(p[1], 4)] for p in pts3] if fk_ok else []
-                    joints_out = []
-                    sw_out = []
-                    for ax in sorted(axes or [], key=lambda a: a.idx):
-                        live = False
-                        if getattr(ax, "_home_pin", None) is not None:
-                            try:
-                                pv = ax._home_pin.value()
-                                live = (pv == 1) if ax.home_pin_polarity == "NC" else (pv == 0)
-                            except Exception:
-                                live = False
-                        joints_out.append({"idx": ax.idx, "deg": round(_axis_angle_deg(ax), 3)})
-                        sw_out.append({"idx": ax.idx, "pressed": live, "wired": getattr(ax, "_home_pin", None) is not None})
-                    ee = pts3[-1] if fk_ok else (0.0, 0.0, 0.0)
-                    doc = {
-                        "fk_ok": fk_ok,
-                        "joints": joints_out,
-                        "switches": sw_out,
-                        "ee": {
-                            "x": round(ee[0], 4),
-                            "y": round(ee[1], 4),
-                            "z": round(ee[2], 4),
-                        },
-                        "polyline_xy": poly_xy,
-                        "tcp_control_port": TCP_PORT,
-                        "http_port": WEB_HTTP_PORT,
-                    }
-                    body = json.dumps(doc)
-                    ctype = "application/json"
-                elif path == "/api/jog_joint":
-                    pr = {}
-                    for pair in qs.split("&"):
-                        if "=" in pair:
-                            k, v = pair.split("=", 1)
-                            pr[k] = v
-                    try:
-                        jn = int(pr.get("j", "-1"))
-                        delta = float(pr.get("delta", "0"))
-                        _web_cmd_queue.append(("JJ", jn, delta))
-                        while len(_web_cmd_queue) > 64:
-                            _web_cmd_queue.pop(0)
-                        body = '{"ok":true}'
-                    except Exception:
-                        body = '{"ok":false}'
-                    ctype = "application/json"
-                elif path == "/api/jog_ee":
-                    pr = {}
-                    for pair in qs.split("&"):
-                        if "=" in pair:
-                            k, v = pair.split("=", 1)
-                            pr[k] = v
-                    try:
-                        dx = float(pr.get("dx", "0"))
-                        dy = float(pr.get("dy", "0"))
-                        dz = float(pr.get("dz", "0"))
-                        _web_cmd_queue.append(("JE", dx, dy, dz))
-                        while len(_web_cmd_queue) > 64:
-                            _web_cmd_queue.pop(0)
-                        body = '{"ok":true}'
-                    except Exception:
-                        body = '{"ok":false}'
-                    ctype = "application/json"
-                else:
-                    body = "Not found"
-                    ctype = "text/plain"
+def _http_bind_listen(sta_ip):
+    """Bind HTTP dashboard socket. ``sta_ip`` from STA ``ifconfig()`` (same strategy as before)."""
+    import socket
 
-                raw_b = body.encode("utf-8")
-                hdr = (
-                    "HTTP/1.0 200 OK\r\nContent-Type: "
-                    + ctype
-                    + "\r\nConnection: close\r\nContent-Length: "
-                    + str(len(raw_b))
-                    + "\r\n\r\n"
-                )
-                conn.send(hdr.encode("utf-8") + raw_b)
-            except Exception:
-                pass
-            try:
-                conn.close()
-            except Exception:
-                pass
-    except Exception as exc:
+    port = int(WEB_HTTP_PORT)
+    candidates = []
+    if sta_ip and sta_ip != "0.0.0.0":
+        candidates.append((sta_ip, port))
+    candidates.extend([("0.0.0.0", port), ("", port)])
+
+    srv = None
+    bound_addr = None
+    last_be = None
+    for addr in candidates:
+        sock = None
         try:
-            print("WARN: web dashboard:", exc)
-        except Exception:
-            pass
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(addr)
+            srv = sock
+            sock = None
+            bound_addr = addr
+            break
+        except OSError as be:
+            last_be = be
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    if srv is None:
+        raise OSError("HTTP bind failed: {}".format(last_be))
+
+    srv.listen(4)
+    show_ip = bound_addr[0] if bound_addr and bound_addr[0] else "0.0.0.0"
+    return srv, show_ip
+
+
+def _http_serve_client(conn, html):
+    """Handle one HTTP connection (request → response, then close)."""
+    import json
+
+    try:
+        conn.settimeout(3.0)
+        req = b""
+        while b"\r\n\r\n" not in req and len(req) < 4096:
+            req += conn.recv(512)
+        if not req:
+            return
+        head = req.split(b"\r\n\r\n", 1)[0].decode("utf-8", "replace")
+        lines = head.split("\r\n")
+        req_line = lines[0] if lines else ""
+        parts = req_line.split()
+        path_full = parts[1] if len(parts) > 1 else "/"
+        path = path_full
+        qs = ""
+        if "?" in path_full:
+            path, qs = path_full.split("?", 1)
+
+        if path == "/" or path == "/index.html":
+            body = html
+            ctype = "text/html; charset=utf-8"
+        elif path == "/api/state":
+            axes = _http_axes_ref
+            bd, pd = _angles_deg_bundle(axes) if axes else (0.0, [])
+            pts3 = _fk_positions_deg(bd, pd) if axes else []
+            fk_ok = len(pts3) > 0
+            poly_xy = [[round(p[0], 4), round(p[1], 4)] for p in pts3] if fk_ok else []
+            joints_out = []
+            sw_out = []
+            for ax in sorted(axes or [], key=lambda a: a.idx):
+                live = False
+                if getattr(ax, "_home_pin", None) is not None:
+                    try:
+                        pv = ax._home_pin.value()
+                        live = (pv == 1) if ax.home_pin_polarity == "NC" else (pv == 0)
+                    except Exception:
+                        live = False
+                joints_out.append({"idx": ax.idx, "deg": round(_axis_angle_deg(ax), 3)})
+                sw_out.append({"idx": ax.idx, "pressed": live, "wired": getattr(ax, "_home_pin", None) is not None})
+            ee = pts3[-1] if fk_ok else (0.0, 0.0, 0.0)
+            doc = {
+                "fk_ok": fk_ok,
+                "joints": joints_out,
+                "switches": sw_out,
+                "ee": {
+                    "x": round(ee[0], 4),
+                    "y": round(ee[1], 4),
+                    "z": round(ee[2], 4),
+                },
+                "polyline_xy": poly_xy,
+                "tcp_control_port": TCP_PORT,
+                "http_port": WEB_HTTP_PORT,
+            }
+            body = json.dumps(doc)
+            ctype = "application/json"
+        elif path == "/api/jog_joint":
+            pr = {}
+            for pair in qs.split("&"):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    pr[k] = v
+            try:
+                jn = int(pr.get("j", "-1"))
+                delta = float(pr.get("delta", "0"))
+                _web_cmd_queue.append(("JJ", jn, delta))
+                while len(_web_cmd_queue) > 64:
+                    _web_cmd_queue.pop(0)
+                body = '{"ok":true}'
+            except Exception:
+                body = '{"ok":false}'
+            ctype = "application/json"
+        elif path == "/api/jog_ee":
+            pr = {}
+            for pair in qs.split("&"):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    pr[k] = v
+            try:
+                dx = float(pr.get("dx", "0"))
+                dy = float(pr.get("dy", "0"))
+                dz = float(pr.get("dz", "0"))
+                _web_cmd_queue.append(("JE", dx, dy, dz))
+                while len(_web_cmd_queue) > 64:
+                    _web_cmd_queue.pop(0)
+                body = '{"ok":true}'
+            except Exception:
+                body = '{"ok":false}'
+            ctype = "application/json"
+        else:
+            body = "Not found"
+            ctype = "text/plain"
+
+        raw_b = body.encode("utf-8")
+        hdr = (
+            "HTTP/1.0 200 OK\r\nContent-Type: "
+            + ctype
+            + "\r\nConnection: close\r\nContent-Length: "
+            + str(len(raw_b))
+            + "\r\n\r\n"
+        )
+        conn.send(hdr.encode("utf-8") + raw_b)
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _accept_nonblocking(sock):
+    """``accept()`` or ``None`` if no pending connection (EAGAIN / EWOULDBLOCK)."""
+    try:
+        return sock.accept()
+    except OSError as e:
+        _en = getattr(e, "errno", None)
+        if _en is None and e.args:
+            try:
+                _en = int(e.args[0])
+            except (TypeError, ValueError):
+                _en = None
+        if _en == errno.EAGAIN or _en == getattr(errno, "EWOULDBLOCK", -999) or _en in (11,):
+            return None
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -794,11 +807,18 @@ class _StepperBase:
         self._steps_since_report: int = 0  # physical steps taken since last pin_debug call
         self._steps_last_tick: int = 0
 
-        # Home/limit switch support (optional, can be used by both 28BYJ and StepDir)
+        # Home/limit switch support (optional, can be used by both 28BYJ and StepDir).
+        # Negative home_pin (or missing key) disables homing — no Pin() allocated.
         home_pin_num = cfg.get("home_pin")
-        self.home_pin_num = home_pin_num   # stored for diagnostics / HOMEJ reply
+        self.home_pin_num = home_pin_num   # stored for diagnostics / HOMEJ reply (may be negative)
+        _pin_use = False
         if home_pin_num is not None:
-            self._home_pin = Pin(home_pin_num, Pin.IN, pull=Pin.PULL_UP)
+            try:
+                _pin_use = int(home_pin_num) >= 0
+            except (TypeError, ValueError):
+                _pin_use = False
+        if _pin_use:
+            self._home_pin = Pin(int(home_pin_num), Pin.IN, pull=Pin.PULL_UP)
             self.home_pin_polarity = cfg.get("home_pin_polarity", "NO")  # "NO"=active-high, "NC"=active-low
         else:
             self._home_pin = None
@@ -1481,7 +1501,13 @@ def _traj_feed_sample(t_s, cmd_dict, axes):
 
 def _playback_traj_to_axes(axes):
     """Drive ``set_target_angle`` from interpolated ring playback time."""
-    global _traj_anchor_us, _traj_ring
+    global _traj_anchor_us, _traj_ring, _dashboard_jog_last_ms
+    if _dashboard_jog_last_ms is not None:
+        if (
+            time.ticks_diff(time.ticks_ms(), _dashboard_jog_last_ms)
+            < _DASHBOARD_SUPPRESS_HOST_TRAJ_MS
+        ):
+            return
     if (
         _traj_ring is None
         or _traj_anchor_us is None
@@ -1557,6 +1583,12 @@ def _poll_stdio_commands_nonblocking(poller, buf, handle_line_fn):
     except Exception:
         pass
     return buf
+
+
+# CYW43 AP usually reports ifconfig within ~1–3 s, but cold boots / some firmware builds
+# have been seen past 5 s. Keep the full ~15 s window so Pico W AP stays reliable; non‑W / dead
+# radios still hit the improved timeout message without blocking much longer than before.
+_WIFI_AP_IP_WAIT_ITER = 150  # × 0.1 s ≈ 15 s
 
 
 def _wifi_sta_connect_blocking(stdin_poller=None, handle_line_fn=None, usb_buf_cell=None):
@@ -1646,11 +1678,172 @@ def _wifi_sta_connect_blocking(stdin_poller=None, handle_line_fn=None, usb_buf_c
     return None
 
 
+def _wifi_ap_try_assign_ipv4(ap):
+    """SoftAP often stays 0.0.0.0 until ifconfig is set (seen on Pico W / Pico 2 W builds)."""
+    for tup in (
+        ("192.168.4.1", "255.255.255.0", "192.168.4.1", "8.8.8.8"),
+        ("192.168.4.1", "255.255.255.0", "192.168.4.1", "192.168.4.1"),
+        ("192.168.4.1", "255.255.255.0", "192.168.4.1", "0.0.0.0"),
+    ):
+        try:
+            ap.ifconfig(tup)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _wifi_ap_start_blocking(stdin_poller=None, handle_line_fn=None, usb_buf_cell=None):
+    """Bring up CYW43 **access point** on the main thread (same constraints as STA).
+
+    Clients join ``WIFI_AP_SSID`` / ``WIFI_AP_PASSWORD`` (WPA2 when password length ≥ 8,
+    otherwise MicroPython ``AUTH_OPEN`` if supported). Typical Pico AP address is 192.168.4.1.
+    """
+    import network as _net
+
+    _cc = str(WIFI_COUNTRY or "").strip().upper()
+    try:
+        import rp2
+
+        if len(_cc) == 2:
+            rp2.country(_cc)
+            print("WiFi: rp2.country(%r) OK" % (_cc,))
+        else:
+            print(
+                "WiFi: WARNING no WIFI_COUNTRY (need 2-letter ISO at Deploy: US, GB, DE, …)"
+            )
+    except Exception as _e:
+        print("WiFi: rp2.country skipped (%s)" % (_e,))
+
+    essid = str(WIFI_AP_SSID or "").strip() or "PicoArm"
+    key = str(WIFI_AP_PASSWORD or "")
+    print("WiFi: starting access point ssid=%r" % (essid,))
+    _flush_stdout()
+
+    try:
+        sta = _net.WLAN(_net.STA_IF)
+        sta.active(False)
+    except Exception:
+        pass
+    time.sleep_ms(150)
+
+    ap = _net.WLAN(_net.AP_IF)
+    try:
+        ap.active(False)
+    except Exception:
+        pass
+    time.sleep_ms(150)
+
+    try:
+        ap.active(True)
+    except Exception as _e:
+        print("WiFi AP: active(True) failed — %s" % (_e,))
+        _flush_stdout()
+        return None
+
+    time.sleep_ms(300)
+
+    _auth_wpa2 = getattr(_net, "AUTH_WPA2_PSK", None)
+    _auth_open = getattr(_net, "AUTH_OPEN", None)
+    _configured = False
+
+    def _try_cfg(fn):
+        nonlocal _configured
+        try:
+            fn()
+            _configured = True
+            return True
+        except Exception:
+            return False
+
+    if len(key) >= 8:
+        _try_cfg(lambda: ap.config(essid=essid, password=key))
+        _try_cfg(lambda: ap.config(ssid=essid, password=key))
+        if _auth_wpa2 is not None:
+            _try_cfg(lambda: ap.config(ssid=essid, key=key, security=_auth_wpa2))
+    elif len(key) == 0:
+        if _auth_open is not None:
+            _try_cfg(lambda: ap.config(ssid=essid, security=_auth_open))
+        if not _configured:
+            _try_cfg(lambda: ap.config(essid=essid, authmode=_auth_open))
+        if not _configured:
+            _try_cfg(lambda: ap.config(ssid=essid))
+    else:
+        print(
+            "WiFi AP: password length %d — use >= 8 chars for WPA2 or leave empty for open AP"
+            % (len(key),)
+        )
+        _flush_stdout()
+        try:
+            ap.active(False)
+        except Exception:
+            pass
+        return None
+
+    if not _configured:
+        print("WiFi AP: config() failed — check MicroPython CYW43 AP support")
+        _flush_stdout()
+        try:
+            ap.active(False)
+        except Exception:
+            pass
+        return None
+
+    if not _wifi_ap_try_assign_ipv4(ap):
+        print(
+            "WiFi AP: could not set SoftAP ifconfig (try MicroPython update). "
+            "Will keep polling for auto-assigned IP."
+        )
+        _flush_stdout()
+    else:
+        try:
+            print("WiFi AP: ifconfig %s" % (ap.ifconfig(),))
+        except Exception:
+            print("WiFi AP: ifconfig set (read failed)")
+        _flush_stdout()
+
+    if stdin_poller is not None and handle_line_fn is not None and usb_buf_cell is not None:
+        usb_buf_cell[0] = _poll_stdio_commands_nonblocking(
+            stdin_poller, usb_buf_cell[0], handle_line_fn
+        )
+
+    for i in range(_WIFI_AP_IP_WAIT_ITER):
+        if stdin_poller is not None and handle_line_fn is not None and usb_buf_cell is not None:
+            usb_buf_cell[0] = _poll_stdio_commands_nonblocking(
+                stdin_poller, usb_buf_cell[0], handle_line_fn
+            )
+        try:
+            ip = ap.ifconfig()[0]
+            if ip and ip != "0.0.0.0":
+                _flush_stdout()
+                return ap
+        except Exception:
+            pass
+        if i > 0 and i % 50 == 0:
+            print("WiFi AP: waiting for IP (%ds) …" % (i // 10,))
+            _flush_stdout()
+        time.sleep(0.1)
+
+    print(
+        "WiFi AP: no usable IP after timeout — USB serial still works.\n"
+        "On Pico W / Pico 2 W, flash MicroPython **for your exact board** (e.g. RPI_PICO2_W).\n"
+        "Note: ``[CYW43] Failed…`` often prints when Wi‑Fi is turned **off** after a failure — "
+        "it does not always mean the chip is missing."
+    )
+    _flush_stdout()
+    try:
+        ap.active(False)
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
+    global _dashboard_jog_last_ms
     # LEDs first — so they always blink even if motor config is bad
     # GP28 = last ADC pin, not used by any default motor config
     # NOTE: WiFi initialisation must come AFTER Pin("LED") is created.
@@ -1714,22 +1907,34 @@ def main():
             reply_fn("Robot Arm Pico Controller ready\n")
             reply_fn("firmware ready\n")
         elif line == "WIFI":
-            # Re-print association result if serial console missed boot-time logs.
+            # Re-print association / AP state if serial console missed boot-time logs.
             try:
                 import network as _wn
 
-                _w = _wn.WLAN(_wn.STA_IF)
-                if _w.isconnected():
-                    _ip = _w.ifconfig()[0]
+                ap = _wn.WLAN(_wn.AP_IF)
+                if ap.active():
+                    try:
+                        _aip = ap.ifconfig()[0]
+                        if _aip and _aip != "0.0.0.0":
+                            reply_fn("WiFi AP: join SSID from serial banner — Pico at %s\n" % _aip)
+                        else:
+                            reply_fn("WiFi AP: active ifconfig=%s\n" % (ap.ifconfig(),))
+                    except Exception as _ae:
+                        reply_fn("WiFi AP: active (%s)\n" % _ae)
+                sta = _wn.WLAN(_wn.STA_IF)
+                if sta.isconnected():
+                    _ip = sta.ifconfig()[0]
                     if _ip and _ip != "0.0.0.0":
-                        reply_fn("WiFi connected: %s\n" % _ip)
+                        reply_fn("WiFi STA connected: %s\n" % _ip)
                     else:
                         reply_fn(
-                            "WiFi: linked but no IP yet (ifconfig=%s) status=%s\n"
-                            % (_w.ifconfig(), _w.status())
+                            "WiFi STA: linked but no IP yet (ifconfig=%s) status=%s\n"
+                            % (sta.ifconfig(), sta.status())
                         )
-                else:
-                    reply_fn("WiFi: not connected status=%s\n" % _w.status())
+                elif not ap.active():
+                    reply_fn("WiFi STA: not connected status=%s\n" % sta.status())
+                reply_fn("OK\n")
+                _flush_stdout()
             except Exception as _e:
                 reply_fn("ERR:WIFI:%s\n" % _e)
         elif line == "LED_TOGGLE":
@@ -1967,6 +2172,7 @@ def main():
                     _traj_feed_sample(t_stream, cmd, axes)
                     idle_ticks = 0
                     reply_fn("OK\n")
+                    _flush_stdout()
                 else:
                     reply_fn("ERR:bad trajectory sample\n")
             else:
@@ -1986,6 +2192,7 @@ def main():
                             axis.set_target_angle(cmd[axis.idx])
                     idle_ticks = 0
                     reply_fn("OK\n")
+                    _flush_stdout()
                 else:
                     reply_fn("ERR:bad command\n")
 
@@ -1998,22 +2205,41 @@ def main():
             len(axes), " | ".join(_axis_wiring_line(a) for a in axes)))
     else:
         print("AXES_LOADED: 0 — no motors: fix JOINTS in main.py or Deploy from the PC GUI")
+    _flush_stdout()
 
-    if ENABLE_WIFI and WIFI_SSID:
+    if ENABLE_WIFI and (WIFI_AP_MODE or (WIFI_SSID and str(WIFI_SSID).strip())):
         import _thread as _thread_mod
         import socket as _socket
 
-        print("WiFi: joining {} …".format(WIFI_SSID))
-        _flush_stdout()
         usb_buf_cell = [buf]
-        wlan_sta = _wifi_sta_connect_blocking(_poller, _handle_line, usb_buf_cell)
+        wlan_net = None
+        if WIFI_AP_MODE:
+            print("WiFi: access-point mode (join the Pico from phone or PC)")
+            _flush_stdout()
+            wlan_net = _wifi_ap_start_blocking(_poller, _handle_line, usb_buf_cell)
+        else:
+            print("WiFi: joining {} …".format(WIFI_SSID))
+            _flush_stdout()
+            wlan_net = _wifi_sta_connect_blocking(_poller, _handle_line, usb_buf_cell)
         buf = usb_buf_cell[0]
-        if wlan_sta is not None:
-            _sta_ip = wlan_sta.ifconfig()[0]
-            print("WiFi connected: {}".format(_sta_ip))
+        if wlan_net is not None:
+            _sta_ip = wlan_net.ifconfig()[0]
+            if WIFI_AP_MODE:
+                print("WiFi AP ready: {}".format(_sta_ip))
+                print(
+                    "Join network SSID {!r} then open http://{}:{}".format(
+                        str(WIFI_AP_SSID or "").strip() or "PicoArm",
+                        _sta_ip,
+                        WEB_HTTP_PORT,
+                    )
+                )
+            else:
+                print("WiFi connected: {}".format(_sta_ip))
             _flush_stdout()
 
-            def _wifi_tcp_loop():
+            # MicroPython RP2040: only one ``_thread`` worker may run on core 1 — TCP :8888 and HTTP :8080
+            # share one loop (non-blocking accept + serve) so we never hit ``OSError: core1 in use``.
+            def _lan_services_loop():
                 port = TCP_PORT
                 tcp_candidates = []
                 if _sta_ip and _sta_ip != "0.0.0.0":
@@ -2051,7 +2277,40 @@ def main():
                     return
 
                 srv.listen(4)
-                srv.settimeout(1)
+                srv.setblocking(False)
+                _flush_stdout()
+
+                http_srv = None
+                try:
+                    http_srv, http_show = _http_bind_listen(_sta_ip)
+                    http_srv.setblocking(False)
+                    print(
+                        "HTTP dashboard listening on {}:{}".format(
+                            http_show,
+                            WEB_HTTP_PORT,
+                        )
+                    )
+                    print(
+                        "HTTP dashboard (same LAN): http://{}:{}".format(
+                            _sta_ip,
+                            WEB_HTTP_PORT,
+                        )
+                    )
+                    if not WIFI_AP_MODE:
+                        print(
+                            "NOTE: Phone hotspots often block Wi-Fi client-to-client traffic "
+                            "(your PC/phone may not reach this IP even though Wi-Fi is up). "
+                            "Try the phone's own browser to this URL, a home router, or disable "
+                            "AP/client isolation if your hotspot settings offer it."
+                        )
+                except Exception as _he:
+                    try:
+                        print("WARN: HTTP bind failed:", _he)
+                    except Exception:
+                        pass
+                    http_srv = None
+
+                html = _build_dashboard_html()
                 _flush_stdout()
 
                 conn = [None]
@@ -2104,10 +2363,23 @@ def main():
                             pass
 
                 while True:
-                    # Accept new connection if we have none
+                    did_work = False
+
+                    if http_srv is not None:
+                        for _ in range(24):
+                            ha = _accept_nonblocking(http_srv)
+                            if ha is None:
+                                break
+                            did_work = True
+                            _hc, _ = ha
+                            _http_serve_client(_hc, html)
+
+                    # Accept new TCP control connection if we have none
                     if conn[0] is None:
-                        try:
-                            c, _ = srv.accept()
+                        na = _accept_nonblocking(srv)
+                        if na is not None:
+                            did_work = True
+                            c, _ = na
                             c.settimeout(0.05)
                             try:
                                 # LAN clients (PicoWifiInterface) wait for this on TCP — USB prints differ.
@@ -2122,8 +2394,6 @@ def main():
                                 continue
                             conn[0] = c
                             tcp_buf[0] = ""
-                        except OSError:
-                            pass
 
                     if conn[0] is not None:
                         # Read incoming data. On RST or fatal errors, close the slot —
@@ -2189,32 +2459,14 @@ def main():
                                     conn[0] = None
                                     break
 
-            try:
-                _thread_mod.stack_size(12 * 1024)
-            except Exception:
-                pass
-            _thread_mod.start_new_thread(_wifi_tcp_loop, ())
-            try:
-                _thread_mod.stack_size(12 * 1024)
-            except Exception:
-                pass
-            try:
-                _thread_mod.start_new_thread(_web_http_server_thread, (_sta_ip,))
-                print(
-                    "HTTP dashboard (same LAN): http://{}:{}".format(
-                        _sta_ip,
-                        WEB_HTTP_PORT,
-                    )
-                )
-                _flush_stdout()
-            except Exception as _we:
-                print("WARN: web dashboard thread:", _we)
-                try:
-                    import sys as _sys
+                    if conn[0] is None and not did_work:
+                        time.sleep_ms(5)
 
-                    _sys.print_exception(_we)
-                except Exception:
-                    pass
+            try:
+                _thread_mod.stack_size(12 * 1024)
+            except Exception:
+                pass
+            _thread_mod.start_new_thread(_lan_services_loop, ())
 
     loop_prev_start = time.ticks_us()
     first_loop_iter = True
@@ -2242,6 +2494,46 @@ def main():
             _t_max_s = _t_nom_s * _MOTION_DT_MAX_MULT
             if tdt > _t_max_s:
                 tdt = _t_max_s
+
+            # ── 0. Serial / LAN commands & HTTP dashboard jog **before** traj playback.
+            # Playback reapplies host-streamed poses every tick; if it ran first, it would
+            # undo dashboard jog on the next iteration.
+            try:
+                while _poller.poll(0):
+                    ch = sys.stdin.read(1)
+                    if ch is None:
+                        break
+                    if ch == "\n":
+                        line = buf.strip()
+                        buf = ""
+                        _handle_line(line, sys.stdout.write)
+                    else:
+                        buf += ch
+                        if len(buf) > 256:
+                            buf = ""
+            except Exception:
+                pass
+
+            if ENABLE_WIFI and (WIFI_AP_MODE or (WIFI_SSID and str(WIFI_SSID).strip())):
+                while _wifi_rx:
+                    line = _wifi_rx.pop(0)
+                    _handle_line(line, _wifi_tx.append)
+
+            if _web_cmd_queue:
+                _traj_reset()
+            _had_web_jog = False
+            while _web_cmd_queue:
+                try:
+                    _apply_web_command(_web_cmd_queue.pop(0), axes)
+                    _had_web_jog = True
+                except Exception:
+                    pass
+            if _had_web_jog:
+                _dashboard_jog_last_ms = time.ticks_ms()
+                for _ax in axes:
+                    _clr = getattr(_ax, "clear_host_follow_rates", None)
+                    if _clr is not None:
+                        _clr()
 
             _playback_traj_to_axes(axes)
 
@@ -2286,34 +2578,6 @@ def main():
                     any_moving = True
                 elif hasattr(axis, "_steps_out") and abs(axis.target_pos - axis.current_pos) > 0.5:
                     any_moving = True
-
-            # ── 2. USB serial (non-blocking); WiFi only if ENABLE_WIFI ───────────
-            try:
-                while _poller.poll(0):
-                    ch = sys.stdin.read(1)
-                    if ch is None:
-                        break
-                    if ch == "\n":
-                        line = buf.strip()
-                        buf = ""
-                        _handle_line(line, sys.stdout.write)
-                    else:
-                        buf += ch
-                        if len(buf) > 256:
-                            buf = ""
-            except Exception:
-                pass
-
-            if ENABLE_WIFI and WIFI_SSID:
-                while _wifi_rx:
-                    line = _wifi_rx.pop(0)
-                    _handle_line(line, _wifi_tx.append)
-
-            while _web_cmd_queue:
-                try:
-                    _apply_web_command(_web_cmd_queue.pop(0), axes)
-                except Exception:
-                    pass
 
             # ── 3. Optional 1 Hz POS / PINS (skip ticks_ms when both off) ─────────
             if _pos_stream_enabled or _pin_stream_enabled:

@@ -23,7 +23,8 @@ import logging
 import queue
 import threading
 import time
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 from .protocol import (
     BAUD_RATE,
@@ -36,6 +37,47 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# One lock per ``COMn`` / ``/dev/ttyACM*`` so Connect, Deploy, and overlapping GUI
+# timers cannot open the same port twice (Windows → access denied).
+_serial_exclusive: dict[str, threading.Lock] = {}
+_serial_exclusive_mu = threading.Lock()
+
+
+@contextmanager
+def exclusive_serial_access(port: Optional[str]) -> Iterator[None]:
+    if not port:
+        yield
+        return
+    with _serial_exclusive_mu:
+        lk = _serial_exclusive.setdefault(port, threading.Lock())
+    # Never wait unbounded — a leaked/stuck lock otherwise freezes Connect forever.
+    wait_start = time.monotonic()
+    next_log = wait_start + 3.0
+    deadline = wait_start + 90.0
+    while time.monotonic() < deadline:
+        if lk.acquire(timeout=1.0):
+            break
+        now = time.monotonic()
+        if now >= next_log:
+            logger.warning(
+                "Waiting for USB serial %s (~%.0fs) — another Connect or Deploy is using this port.",
+                port,
+                now - wait_start,
+            )
+            next_log = now + 6.0
+    else:
+        raise TimeoutError(
+            "Timed out after {:.0f}s waiting for USB serial {} — close other serial tools, "
+            "wait for Deploy to finish, or restart this app.".format(
+                time.monotonic() - wait_start,
+                port,
+            )
+        )
+    try:
+        yield
+    finally:
+        lk.release()
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +125,16 @@ def list_serial_ports() -> list[str]:
         return []
 
 
+def _rx_has_standalone_ok(acc: bytes) -> bool:
+    """True if RX contains a line that is exactly ``OK`` (not ``WiFi: ... OK``)."""
+    if b"SyntaxError" in acc or b'File "<stdin>"' in acc:
+        return False
+    for raw in acc.replace(b"\r\n", b"\n").split(b"\n"):
+        if raw.strip() == b"OK":
+            return True
+    return False
+
+
 def _usb_angle_probe(ser) -> bool:
     """True if a minimal J0 line gets ``OK`` from the robot protocol.
 
@@ -90,32 +142,37 @@ def _usb_angle_probe(ser) -> bool:
     ``SyntaxError`` and ``File "<stdin>"`` — so this distinguishes firmware
     from a bare ``>>>`` prompt even when a stale boot line looked like
     "firmware ready".
+
+    Wi-Fi boot prints lines containing the substring ``OK`` (e.g. rp2.country); we only
+    accept a standalone ``OK`` line matching ``reply_fn("OK\\n")``. Wi-Fi bring-up can
+    delay stdin polling for hundreds of ms — retry with a longer deadline.
     """
-    time.sleep(0.08)
-    try:
-        while ser.in_waiting:
-            ser.read(ser.in_waiting)
-    except Exception:
-        return False
-    try:
-        ser.write(b"J0:0.00\n")
-        ser.flush()
-    except Exception:
-        return False
-    deadline = time.monotonic() + 0.85
-    acc = b""
-    while time.monotonic() < deadline:
+    for attempt in range(5):
+        time.sleep(0.05 + 0.035 * attempt)
         try:
-            n = ser.in_waiting
-            if n:
-                acc += ser.read(n)
+            while ser.in_waiting:
+                ser.read(ser.in_waiting)
         except Exception:
             return False
-        if b"SyntaxError" in acc or b"File \"<stdin>\"" in acc:
+        try:
+            ser.write(b"J0:0.00\n")
+            ser.flush()
+        except Exception:
             return False
-        if b"OK" in acc and b"SyntaxError" not in acc:
-            return True
-        time.sleep(0.01)
+        deadline = time.monotonic() + 2.4
+        acc = b""
+        while time.monotonic() < deadline:
+            try:
+                n = ser.in_waiting
+                if n:
+                    acc += ser.read(n)
+            except Exception:
+                return False
+            if b"SyntaxError" in acc or b'File "<stdin>"' in acc:
+                return False
+            if _rx_has_standalone_ok(acc):
+                return True
+            time.sleep(0.012)
     return False
 
 
@@ -327,33 +384,61 @@ class PicoInterface:
             logger.error(msg)
             return False, msg
 
-        # Try to open the port — retry once after 1 s if access is denied
-        # (Windows can take a moment to release a COM port).
+        try:
+            with exclusive_serial_access(target_port):
+                return self._connect_serial_session(target_port, baud, _serial_mod)
+        except TimeoutError as exc:
+            msg = (
+                "ERROR: USB serial wait timed out\n"
+                f"CAUSE: {exc}\n"
+                "FIX:   Let Deploy finish, close Thonny/other COM tools, unplug/replug the Pico, "
+                "or restart this simulator."
+            )
+            self.last_error = msg
+            logger.error(msg)
+            return False, msg
+
+    def _connect_serial_session(
+        self, target_port: str, baud: int, _serial_mod
+    ) -> tuple[bool, str]:
+        """Open USB serial and wait for firmware; ``exclusive_serial_access(target_port)`` is held."""
+        # Try to open the port — retries with backoff (Windows often needs time to release COM).
         ser = None
         last_exc = None
-        for attempt in range(2):
+        # Few quick retries — long backoff made “Connect” feel hung when Windows stalls COM.
+        max_attempts = 4
+        for attempt in range(max_attempts):
             try:
                 ser = _serial_mod.Serial(target_port, baud, timeout=1.0)
                 break
             except _serial_mod.SerialException as exc:
                 last_exc = exc
                 exc_str = str(exc).lower()
-                if attempt == 0 and ("access" in exc_str or "denied" in exc_str or "permission" in exc_str):
-                    logger.info("Access denied on %s — retrying in 1 s", target_port)
-                    time.sleep(1.0)
+                access_like = (
+                    "access" in exc_str or "denied" in exc_str or "permission" in exc_str
+                )
+                if access_like and attempt + 1 < max_attempts:
+                    delay = min(0.55, 0.12 + 0.18 * attempt)
+                    logger.info(
+                        "Access denied on %s — retrying in %.2f s", target_port, delay
+                    )
+                    time.sleep(delay)
                 else:
-                    break  # non-access error, no point retrying
+                    break
 
         if ser is None:
             exc_str = str(last_exc).lower()
             if "access" in exc_str or "denied" in exc_str or "permission" in exc_str:
                 msg = (
                     f"ERROR: Access denied on {target_port}\n"
-                    "CAUSE: Another program (or this simulator) already has the port open\n"
+                    "CAUSE: Another program may already have the port open, or two connects "
+                    "overlapped (e.g. Deploy auto-reconnect while you clicked Connect).\n"
                     "FIX:\n"
-                    "  1. Close and reopen this simulator completely\n"
-                    "  2. Close Thonny, Arduino IDE, PuTTY, or any other serial terminal\n"
-                    "  3. Then click Connect again"
+                    "  1. Wait 5–10 s after Deploy finishes, then Connect once\n"
+                    "  2. Close Thonny, Arduino IDE, PuTTY, mpremote, or another Cursor window "
+                    "running this simulator\n"
+                    "  3. Unplug/replug the Pico USB if it still fails\n"
+                    "  4. Restart this simulator if needed"
                 )
             else:
                 msg = (
@@ -403,6 +488,9 @@ class PicoInterface:
                 if chunk:
                     buf += chunk
                     if b"Robot Arm Pico Controller ready" in buf or b"firmware ready" in buf:
+                        # Banner can appear while CYW43 bring-up is still in long sleeps;
+                        # probe retries + firmware _wifi_sleep_ms_poll cover that race.
+                        time.sleep(0.1)
                         if not _usb_angle_probe(ser):
                             logger.error(
                                 "Saw ready banner on %s but J0:0.00 did not return OK — "
