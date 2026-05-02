@@ -54,3 +54,8 @@ Items marked ✅ are complete. Items marked 🔲 are still open.
 🔲 **Terminal ALIASES/MACROS persistence** — save to `arm_config.json` so they survive restarts
 
 🔲 **CAMERA preset memory** — save last camera angle/zoom to `arm_config.json`
+
+
+
+
+also I cannot see any of the names of the menu items organize them better (motor setup, output pinns/hardware [move the location of these menus to maybe above or something])  and then put a control panel on the left like UGS so I can jog the joints individually and jog the end effector in 3 dimensions and also return to home give it very similar funcitonality and feel to UGS

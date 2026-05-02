@@ -99,7 +99,8 @@ def split_trajectory_prefix(line: str) -> tuple[Optional[float], str]:
     m = _TRAJ_PREFIX_RE.match(line.strip())
     if not m:
         return None, line.strip()
-    return float(m.group(1)), line.strip()[m.end() :]
+    rest = line.strip()[m.end() :].strip()
+    return float(m.group(1)), rest
 
 
 def decode_response(raw: bytes) -> dict:

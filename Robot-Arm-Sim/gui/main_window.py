@@ -45,7 +45,7 @@ from hardware.protocol import (
     clamp_trajectory_stream_hz,
 )
 
-from .constants import _DEFAULT_LIMIT, logger
+from .constants import _DEFAULT_LIMIT, logger, app_config_dir
 from .viewport import ArmViewport
 from .panels import (
     ArmConfigPanel,
@@ -62,9 +62,10 @@ from .panels import (
     HomingPanel,
     HardwarePanel,
     PinoutPanel,
+    apply_motor_joint_dict_to_row,
 )
 from .terminal_ui import HelpDialog, TerminalLineEdit, PicoTerminal, TerminalLogHandler
-from .theme import apply_app_theme, TEXT_SECONDARY
+from .theme import apply_app_theme, TEXT_NAV
 
 # Main Window
 # ═══════════════════════════════════════════════════════════════════════════
@@ -109,6 +110,11 @@ class MainWindow(QMainWindow):
 
         # Pico-reported real joint angles (joint_idx → degrees); populated by POS: push
         self._pico_pos: dict[int, float] = {}
+
+        self._motor_cfg_persist_timer = QTimer(self)
+        self._motor_cfg_persist_timer.setSingleShot(True)
+        self._motor_cfg_persist_timer.timeout.connect(self._flush_motor_config_persist)
+
         self._pos_stream_active: bool = False
         self._pin_stream_active: bool = False
 
@@ -298,7 +304,7 @@ class MainWindow(QMainWindow):
 
         # Permanent hint label on the right side of the status bar
         self._help_hint_label = QLabel("H — help")
-        self._help_hint_label.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0 8px;")
+        self._help_hint_label.setStyleSheet(f"color: {TEXT_NAV}; padding: 0 8px;")
         self.status_bar.addPermanentWidget(self._help_hint_label)
 
         # Help dialog (created here; shown after window is visible)
@@ -351,6 +357,7 @@ class MainWindow(QMainWindow):
         # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
         self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
         self.motor_config_panel.config_changed.connect(self._on_motor_config_sync_zero_panel)
+        self.motor_config_panel.config_changed.connect(self._schedule_motor_config_persist)
 
         # Give MotorConfigPanel access to pin data so Save/Load include GPIO assignments
         self.motor_config_panel._pins_callback = self.pinout_panel.get_pins_for_joint
@@ -358,6 +365,7 @@ class MainWindow(QMainWindow):
 
         # Auto-save whenever the user edits a pin number in the Pinout panel
         self.pinout_panel.pins_changed.connect(self._save_arm_config)
+        self.pinout_panel.pins_changed.connect(self._schedule_motor_config_persist)
 
         # Auto-save when homing config changes
         self.homing_panel.config_changed.connect(self._save_arm_config)
@@ -809,7 +817,8 @@ class MainWindow(QMainWindow):
         self.ee_constraint_panel.reset()
         self.animator.cancel()
         self._render_arm()
-        self._save_arm_config()
+        if not self._loading:
+            self._save_arm_config()
         self.status_bar.showMessage("Configuration updated")
 
     def _on_offsets_changed(self) -> None:
@@ -829,11 +838,7 @@ class MainWindow(QMainWindow):
     # ── Arm config persistence ────────────────────────────────────────────
 
     def _arm_config_save_path(self) -> str:
-        if getattr(sys, "frozen", False):
-            base = os.path.dirname(sys.executable)
-        else:
-            base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, "config", "arm_config.json")
+        return os.path.join(app_config_dir(), "arm_config.json")
 
     def _on_save_as_default(self) -> None:
         """Explicitly save current configuration as the startup default."""
@@ -860,7 +865,9 @@ class MainWindow(QMainWindow):
 
     def _save_arm_config(self) -> None:
         """Save current arm config (joints, lengths, offsets) to config/arm_config.json.
-        Also keeps motor_config.json in sync so pins are always included.
+
+        Does not write ``motor_config.json``. That sidecar is updated only when the
+        user changes motor or pinout fields (debounced; see ``_schedule_motor_config_persist``).
         """
         path = self._arm_config_save_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -875,7 +882,20 @@ class MainWindow(QMainWindow):
             logger.info("Arm config auto-saved to %s", path)
         except OSError as e:
             logger.warning("Could not save arm config: %s", e)
-        # Keep motor_config.json in sync (includes GPIO pins from PinoutPanel)
+
+    def _schedule_motor_config_persist(self) -> None:
+        """Coalesce writes to motor_config.json (Motor panel emits many signals per edit)."""
+        if self._loading:
+            return
+        if getattr(self.motor_config_panel, "_block_persist", False):
+            return
+        self._motor_cfg_persist_timer.start(450)
+
+    def _flush_motor_config_persist(self) -> None:
+        if self._loading:
+            return
+        if getattr(self.motor_config_panel, "_block_persist", False):
+            return
         self.motor_config_panel._save_config()
 
     def _load_arm_config_on_startup(self) -> None:
@@ -1031,47 +1051,24 @@ class MainWindow(QMainWindow):
         # Trigger full config rebuild to sync all panels
         self._on_config_changed()
 
-        # Restore motor configs (driver, gear ratio, steps/rev, etc.)
+        # Restore motor configs (driver, gear ratio, steps/rev, etc.) — only keys present in file.
         for jcfg in d.get("motor_configs", []):
             row = next(
-                (r for r in self.motor_config_panel._rows if r["index"] == jcfg.get("idx")),
+                (
+                    r
+                    for r in self.motor_config_panel._rows
+                    if r["index"] == jcfg.get("idx", jcfg.get("index"))
+                ),
                 None,
             )
             if row is None:
                 continue
-            driver = jcfg.get("driver", "28byj")
-            if driver == "servo":
-                row["driver_combo"].setCurrentText("Servo (PWM)")
-                row["min_pulse"].setValue(int(jcfg.get("min_pulse_us", 1000)))
-                row["max_pulse"].setValue(int(jcfg.get("max_pulse_us", 2000)))
-                row["angle_range"].setValue(int(jcfg.get("angle_range_deg", 180)))
-            elif driver == "28byj":
-                row["driver_combo"].setCurrentText("28BYJ-48 (ULN2003)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 4096)))
-                row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
-                row["accel"].setValue(int(jcfg.get("accel", 1000)))
-                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                _bs2 = int(jcfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs2, row["spr"].value(), row["gear"].value())
-                )
-                row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-            else:
-                row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 800)))
-                row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(jcfg.get("accel", 1000)))
-                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                _bs2 = int(jcfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs2, row["spr"].value(), row["gear"].value())
-                )
-                row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-                row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
-                row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
-            row["zero"].setValue(float(jcfg.get("zero_offset_deg", 0.0)))
+            apply_motor_joint_dict_to_row(row, jcfg)
+
+        for row in self.motor_config_panel._rows:
+            rfn = row.get("_refresh_derived")
+            if callable(rfn):
+                rfn()
 
         # Restore GPIO pin assignments from motor_configs[].pins
         self._sync_pinout_panel()
@@ -1142,11 +1139,6 @@ class MainWindow(QMainWindow):
             self._resting_pose_degs = [0.0] * (n + 1)
             if self.start_pose_panel.home_spins:
                 self.start_pose_panel.set_home_degs(self._resting_pose_degs)
-
-        # Save motor_config.json now that pins are fully restored.
-        # (_on_config_changed called earlier saves arm_config.json before pins are
-        # loaded, so motor_config.json would lack them without this explicit call.)
-        self.motor_config_panel._save_config()
 
     def _on_update_clicked(self) -> None:
         """Handle the Update button / Space key: validate, solve IK, start animation."""
@@ -1505,6 +1497,18 @@ class MainWindow(QMainWindow):
             fps=self._fps,
         )
 
+    def _set_hardware_wifi_ip(self, ip: str) -> None:
+        """Fill USB-discovered IP into the Hardware panel (label + bookmark field)."""
+        ip = (ip or "").strip()
+        if not ip or ip == "0.0.0.0":
+            return
+        self.hardware_panel.ip_lbl.setText(f"Pico IP: {ip}")
+        self.hardware_panel.ip_lbl.setVisible(True)
+        self.hardware_panel.ip_edit.setText(ip)
+        self.hardware_panel.log_lbl.setText(f"Pico Wi‑Fi IP saved to bookmark: {ip}")
+        self.hardware_panel.log_lbl.setStyleSheet("color: #00cc00;")
+        self.status_bar.showMessage(f"Pico Wi‑Fi IP: {ip}")
+
     # ── Hardware Integration ──────────────────────────────────────────────
 
     def _on_pico_rx_threadsafe(self, text: str) -> None:
@@ -1540,12 +1544,34 @@ class MainWindow(QMainWindow):
         if text.startswith("HOMING") or text.startswith("HOME J") or text.startswith("STOPPED"):
             self.terminal.log(text, "info")
             return
-        if text.startswith("WiFi connected:"):
+        if text.startswith("WiFi connected:") or text.startswith("WiFi AP ready:"):
             ip = text.split(":", 1)[1].strip()
-            self.hardware_panel.ip_lbl.setText(f"Pico IP: {ip}")
-            self.hardware_panel.ip_lbl.setVisible(True)
+            self._set_hardware_wifi_ip(ip)
             self.terminal.log(text, "info")
-        elif text.startswith("OK"):
+            return
+        if text.startswith("PICO_NET "):
+            # Machine-readable: PICO_NET <ip> <http_port> <tcp_port>
+            parts = text.split()
+            if len(parts) >= 2:
+                self._set_hardware_wifi_ip(parts[1])
+            self.terminal.log(text, "info")
+            return
+        if text.startswith("WiFi:"):
+            self.hardware_panel.log_lbl.setText(text[:160])
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ffaa00;")
+            self.terminal.log(text, "info")
+            return
+        if text.startswith("HTTP dashboard") or text.startswith(
+            "TCP control listening"
+        ):
+            self.terminal.log(text, "info")
+            return
+        if "WiFi connect failed" in text or "WiFi AP: no usable IP" in text:
+            self.hardware_panel.log_lbl.setText(text[:220])
+            self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+            self.terminal.log(text, "error")
+            return
+        if text.startswith("OK"):
             # Firmware echoes OK per accepted line; host skips duplicate idle poses, but many OK/s may remain during motion.
             _now = time.monotonic()
             if _now - getattr(self, "_last_ok_log_time", 0.0) >= 1.0:
@@ -3320,6 +3346,13 @@ class MainWindow(QMainWindow):
                     "or WIFI). Firmware TCP port "
                     + str(self.hardware_panel.get_wifi_port())
                     + "; this app uses USB serial only.",
+                    "info",
+                )
+                self.terminal.log(
+                    "After USB reconnects, watch this terminal (10–45 s): you should see "
+                    "'WiFi: joining…' / 'WiFi: waiting…', then "
+                    "'WiFi connected:' or 'WiFi AP ready:', a '========== Wi-Fi ready ==========' "
+                    "block, and 'PICO_NET …'. The IP is copied into Pico IP (bookmark).",
                     "info",
                 )
 

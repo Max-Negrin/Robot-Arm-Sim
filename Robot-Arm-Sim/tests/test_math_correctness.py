@@ -30,28 +30,33 @@ def test_dh_transform():
     print(f"Z rotation test: {np.allclose(T, expected, atol=1e-10)}")
 
 def test_forward_kinematics_consistency():
-    """Test consistency between different FK methods."""
+    """Sanity-check FK outputs (planar vs DH use different frame layouts — do not mix)."""
     print("\n=== Testing FK Consistency ===")
-    
+
     config = ArmConfig([3.0, 2.0], [(-2.967, 2.967)] * 2)
-    state = ArmState(math.pi/4, [math.pi/6, math.pi/3])
-    
-    # Method 1: direct FK
+    state = ArmState(math.pi / 4, [math.pi / 6, math.pi / 3])
+
     positions1 = forward_kinematics(config, state)
-    
-    # Method 2: via DH frames
+    assert len(positions1) == 2 * len(config.link_lengths)
+    assert np.all(np.isfinite(positions1[-1]))
+
     frames = forward_kinematics_frames(config, state)
-    positions2 = [frame[:3, 3] for frame in frames[1:]]  # Skip world frame
-    
-    print(f"FK consistency: {np.allclose(positions1, positions2, atol=1e-10)}")
-    
-    # Print positions for verification
-    print("Direct FK positions:")
+    assert len(frames) == len(config.link_lengths) + 2
+    assert frames[-1].shape == (4, 4)
+    assert np.all(np.isfinite(frames[-1]))
+
+    print(
+        f"FK sanity: {len(positions1)} interleaved points, "
+        f"{len(frames)} DH frames, EE={positions1[-1]}"
+    )
+
+    print("Direct FK positions (interleaved eff/nom):")
     for i, pos in enumerate(positions1):
         print(f"  {i}: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]")
-    
-    print("DH frame positions:")
-    for i, pos in enumerate(positions2):
+
+    print("DH frame origins (world → base → each joint):")
+    for i, frame in enumerate(frames[1:]):
+        pos = frame[:3, 3]
         print(f"  {i}: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]")
 
 def test_jacobian_correctness():

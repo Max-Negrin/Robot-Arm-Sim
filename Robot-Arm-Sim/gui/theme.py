@@ -18,6 +18,8 @@ BORDER = "#45454f"
 BORDER_FOCUS = "#0078d4"
 TEXT_PRIMARY = "#e8e8ed"
 TEXT_SECONDARY = "#a8a8b3"
+# Slightly brighter than TEXT_SECONDARY for navigation chrome (toolbox tabs, group titles).
+TEXT_NAV = "#d8d8e0"
 TEXT_DISABLED = "#6b6b75"
 ACCENT = "#0078d4"
 ACCENT_HOVER = "#1a86d8"
@@ -63,6 +65,40 @@ def application_stylesheet() -> str:
     QMainWindow {{
         background-color: {BG_WINDOW};
     }}
+    QMenuBar {{
+        background-color: {BG_SUBTLE};
+        color: {TEXT_PRIMARY};
+        border-bottom: 1px solid {BORDER};
+        padding: 2px 4px;
+    }}
+    QMenuBar::item {{
+        background-color: transparent;
+        color: {TEXT_PRIMARY};
+        padding: 6px 12px;
+    }}
+    QMenuBar::item:selected {{
+        background-color: {BG_MUTED};
+        color: {TEXT_PRIMARY};
+    }}
+    QMenu {{
+        background-color: {BG_SUBTLE};
+        color: {TEXT_PRIMARY};
+        border: 1px solid {BORDER};
+        padding: 4px 0;
+    }}
+    QMenu::item {{
+        padding: 8px 32px 8px 16px;
+        color: {TEXT_PRIMARY};
+    }}
+    QMenu::item:selected {{
+        background-color: {ACCENT};
+        color: #ffffff;
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {BORDER};
+        margin: 4px 10px;
+    }}
     QGroupBox {{
         font-weight: 600;
         font-size: 10pt;
@@ -77,7 +113,7 @@ def application_stylesheet() -> str:
         subcontrol-position: top left;
         left: 10px;
         padding: 0 6px;
-        color: {TEXT_SECONDARY};
+        color: {TEXT_NAV};
     }}
     QToolBox::tab {{
         background-color: {BG_SUBTLE};
@@ -85,10 +121,11 @@ def application_stylesheet() -> str:
         border-bottom: none;
         border-top-left-radius: 6px;
         border-top-right-radius: 6px;
-        padding: 8px 14px;
+        padding: 10px 14px;
         font-weight: 600;
-        color: {TEXT_SECONDARY};
-        min-height: 18px;
+        font-size: 10.5pt;
+        color: {TEXT_NAV};
+        min-height: 22px;
     }}
     QToolBox::tab:selected {{
         background-color: {BG_MUTED};
@@ -182,6 +219,34 @@ def application_stylesheet() -> str:
     QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
         border-color: {BORDER_FOCUS};
     }}
+    QComboBox QAbstractItemView {{
+        background-color: {BG_INPUT};
+        color: {TEXT_PRIMARY};
+        selection-background-color: {ACCENT};
+        selection-color: #ffffff;
+        border: 1px solid {BORDER};
+        outline: none;
+        padding: 2px;
+    }}
+    QListWidget {{
+        background-color: {BG_INPUT};
+        color: {TEXT_PRIMARY};
+        border: 1px solid {BORDER};
+        border-radius: 4px;
+        outline: none;
+        padding: 4px;
+    }}
+    QListWidget::item {{
+        padding: 6px 8px;
+        color: {TEXT_PRIMARY};
+    }}
+    QListWidget::item:selected {{
+        background-color: {ACCENT};
+        color: #ffffff;
+    }}
+    QListWidget::item:hover {{
+        background-color: {BG_MUTED};
+    }}
     QComboBox::drop-down {{
         border: none;
         width: 22px;
@@ -190,7 +255,7 @@ def application_stylesheet() -> str:
         image: none;
         border-left: 4px solid transparent;
         border-right: 4px solid transparent;
-        border-top: 5px solid {TEXT_SECONDARY};
+        border-top: 5px solid {TEXT_NAV};
         margin-right: 8px;
     }}
     QCheckBox, QRadioButton {{
@@ -248,8 +313,8 @@ def application_stylesheet() -> str:
     QStatusBar {{
         background: {BG_SUBTLE};
         border-top: 1px solid {BORDER};
-        color: {TEXT_SECONDARY};
-        font-size: 9pt;
+        color: {TEXT_NAV};
+        font-size: 9.5pt;
     }}
     QLabel[heading="true"] {{
         font-weight: 700;
@@ -271,7 +336,7 @@ def application_stylesheet() -> str:
     }}
     QPushButton#TerminalToggle {{
         background-color: {BG_MUTED};
-        color: {TEXT_SECONDARY};
+        color: {TEXT_NAV};
         border: 1px solid {BORDER};
         border-radius: 4px;
         padding: 2px 12px;

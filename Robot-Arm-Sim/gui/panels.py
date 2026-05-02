@@ -44,7 +44,7 @@ from hardware.protocol import (
     clamp_trajectory_stream_hz,
 )
 
-from .constants import _DEFAULT_LIMIT, logger
+from .constants import _DEFAULT_LIMIT, logger, app_config_dir
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Sidebar Panels
@@ -1178,6 +1178,60 @@ def _backlash_angle_rad_from_motor_cfg(cfg: dict) -> float:
     return 2.0 * math.pi * (float(steps) / steps_out)
 
 
+def apply_motor_joint_dict_to_row(row: dict, jcfg: dict) -> None:
+    """Copy motor parameters from ``jcfg`` into MotorConfigPanel row widgets.
+
+    Only keys that are **present** in ``jcfg`` are applied — no invented defaults
+    from code (missing keys leave the widget as-is).
+    """
+    if "driver" in jcfg:
+        dr = jcfg["driver"]
+        if dr == "servo":
+            row["driver_combo"].setCurrentText("Servo (PWM)")
+        elif dr == "28byj":
+            row["driver_combo"].setCurrentText("28BYJ-48 (ULN2003)")
+        else:
+            row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
+
+    text = row["driver_combo"].currentText()
+    is_servo = "Servo" in text
+    is_28byj = "28BYJ" in text
+
+    if is_servo:
+        if "min_pulse_us" in jcfg:
+            row["min_pulse"].setValue(int(jcfg["min_pulse_us"]))
+        if "max_pulse_us" in jcfg:
+            row["max_pulse"].setValue(int(jcfg["max_pulse_us"]))
+        if "angle_range_deg" in jcfg:
+            row["angle_range"].setValue(int(jcfg["angle_range_deg"]))
+    else:
+        if "steps_per_rev" in jcfg:
+            row["spr"].setValue(int(jcfg["steps_per_rev"]))
+        if "gear_ratio" in jcfg:
+            row["gear"].setValue(float(jcfg["gear_ratio"]))
+        if "max_sps" in jcfg:
+            row["max_sps"].setValue(int(jcfg["max_sps"]))
+        if "accel" in jcfg:
+            row["accel"].setValue(int(jcfg["accel"]))
+        if "jerk" in jcfg:
+            row["jerk"].setValue(int(jcfg["jerk"]))
+        if "gravity_offset_deg" in jcfg:
+            row["gravity_offset"].setValue(float(jcfg["gravity_offset_deg"]))
+        if "backlash_steps" in jcfg:
+            _bs = int(jcfg["backlash_steps"])
+            row["backlash_arcmin"].setValue(
+                _backlash_steps_to_arcmin(_bs, row["spr"].value(), row["gear"].value())
+            )
+        if not is_28byj:
+            if "invert_dir" in jcfg:
+                row["invert_dir_check"].setChecked(bool(jcfg["invert_dir"]))
+            if "dir_setup_us" in jcfg:
+                row["dir_setup_spin"].setValue(int(jcfg["dir_setup_us"]))
+
+    if "zero_offset_deg" in jcfg:
+        row["zero"].setValue(float(jcfg["zero_offset_deg"]))
+
+
 class MotorConfigPanel(QGroupBox):
     """Full per-joint motor configuration editor.
 
@@ -1237,6 +1291,8 @@ class MotorConfigPanel(QGroupBox):
         outer.addWidget(self.form_widget)
 
         self._rows: list[dict] = []
+        # While True, do not auto-persist motor_config.json (file load / batch apply).
+        self._block_persist: bool = False
 
         btn_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Config")
@@ -1557,47 +1613,23 @@ class MotorConfigPanel(QGroupBox):
             gear.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             max_sps.valueChanged.connect(lambda v, r=row: _update_derived(None, r))
             backlash_arcmin.valueChanged.connect(_on_backlash_arcmin_changed)
+            accel.valueChanged.connect(self.config_changed.emit)
+            jerk.valueChanged.connect(self.config_changed.emit)
+            gravity_offset.valueChanged.connect(self.config_changed.emit)
+            min_pulse.valueChanged.connect(self.config_changed.emit)
+            max_pulse.valueChanged.connect(self.config_changed.emit)
+            angle_range.valueChanged.connect(self.config_changed.emit)
+            invert_dir_check.stateChanged.connect(self.config_changed.emit)
+            dir_setup_spin.valueChanged.connect(self.config_changed.emit)
             _update_derived(None, row)
             row["_refresh_derived"] = lambda r=row: _update_derived(None, r)
 
-        # Restore previously set values for joints that still exist
+        # Restore previously set values for joints that still exist (use only keys present).
         for row in self._rows:
             cfg = saved.get(row["index"])
             if cfg is None:
                 continue
-            driver = cfg.get("driver", "28byj")
-            if driver == "servo":
-                row["driver_combo"].setCurrentText("Servo (PWM)")
-                row["min_pulse"].setValue(int(cfg.get("min_pulse_us", 1000)))
-                row["max_pulse"].setValue(int(cfg.get("max_pulse_us", 2000)))
-                row["angle_range"].setValue(int(cfg.get("angle_range_deg", 180)))
-            elif driver == "28byj":
-                row["driver_combo"].setCurrentText("28BYJ-48 (ULN2003)")
-                row["spr"].setValue(int(cfg.get("steps_per_rev", 4096)))
-                row["gear"].setValue(float(cfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(cfg.get("max_sps", 500)))
-                row["accel"].setValue(int(cfg.get("accel", 1000)))
-                row["jerk"].setValue(int(cfg.get("jerk", 0)))
-                _bs0 = int(cfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs0, row["spr"].value(), row["gear"].value())
-                )
-                row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
-            else:
-                row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(cfg.get("steps_per_rev", 800)))
-                row["gear"].setValue(float(cfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(cfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(cfg.get("accel", 1000)))
-                row["jerk"].setValue(int(cfg.get("jerk", 0)))
-                _bs0 = int(cfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs0, row["spr"].value(), row["gear"].value())
-                )
-                row["gravity_offset"].setValue(float(cfg.get("gravity_offset_deg", 0.0)))
-                row["invert_dir_check"].setChecked(bool(cfg.get("invert_dir", False)))
-                row["dir_setup_spin"].setValue(int(cfg.get("dir_setup_us", 5)))
-            row["zero"].setValue(float(cfg.get("zero_offset_deg", 0.0)))
+            apply_motor_joint_dict_to_row(row, cfg)
 
         for row in self._rows:
             rfn = row.get("_refresh_derived")
@@ -1683,11 +1715,7 @@ class MotorConfigPanel(QGroupBox):
     # ── Persistence ────────────────────────────────────────────────────────
 
     def _config_path(self) -> str:
-        if getattr(sys, "frozen", False):
-            base = os.path.dirname(sys.executable)
-        else:
-            base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, "config", "motor_config.json")
+        return os.path.join(app_config_dir(), "motor_config.json")
 
     def _save_config(self) -> None:
         path = self._config_path()
@@ -1714,48 +1742,27 @@ class MotorConfigPanel(QGroupBox):
             logger.error("Failed to load motor config: %s", e)
             return
 
-        for jcfg in data.get("joints", []):
-            row = next((r for r in self._rows if r["index"] == jcfg.get("idx", jcfg.get("index"))), None)
-            if row is None:
-                continue
-            driver = jcfg.get("driver", "28byj")
-            if driver == "servo":
-                row["driver_combo"].setCurrentText("Servo (PWM)")
-                row["min_pulse"].setValue(int(jcfg.get("min_pulse_us", 1000)))
-                row["max_pulse"].setValue(int(jcfg.get("max_pulse_us", 2000)))
-                row["angle_range"].setValue(int(jcfg.get("angle_range_deg", 180)))
-            elif driver == "28byj":
-                row["driver_combo"].setCurrentText("28BYJ-48 (ULN2003)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 4096)))
-                row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(jcfg.get("max_sps", 500)))
-                row["accel"].setValue(int(jcfg.get("accel", 1000)))
-                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                _bs1 = int(jcfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs1, row["spr"].value(), row["gear"].value())
+        self._block_persist = True
+        try:
+            for jcfg in data.get("joints", []):
+                row = next(
+                    (
+                        r
+                        for r in self._rows
+                        if r["index"] == jcfg.get("idx", jcfg.get("index"))
+                    ),
+                    None,
                 )
-                row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-            else:
-                row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
-                row["spr"].setValue(int(jcfg.get("steps_per_rev", 800)))
-                row["gear"].setValue(float(jcfg.get("gear_ratio", 1.0)))
-                row["max_sps"].setValue(int(jcfg.get("max_sps", 2000)))
-                row["accel"].setValue(int(jcfg.get("accel", 1000)))
-                row["jerk"].setValue(int(jcfg.get("jerk", 0)))
-                _bs1 = int(jcfg.get("backlash_steps", 0))
-                row["backlash_arcmin"].setValue(
-                    _backlash_steps_to_arcmin(_bs1, row["spr"].value(), row["gear"].value())
-                )
-                row["gravity_offset"].setValue(float(jcfg.get("gravity_offset_deg", 0.0)))
-                row["invert_dir_check"].setChecked(bool(jcfg.get("invert_dir", False)))
-                row["dir_setup_spin"].setValue(int(jcfg.get("dir_setup_us", 5)))
-            row["zero"].setValue(float(jcfg.get("zero_offset_deg", 0.0)))
+                if row is None:
+                    continue
+                apply_motor_joint_dict_to_row(row, jcfg)
 
-        for row in self._rows:
-            rfn = row.get("_refresh_derived")
-            if callable(rfn):
-                rfn()
+            for row in self._rows:
+                rfn = row.get("_refresh_derived")
+                if callable(rfn):
+                    rfn()
+        finally:
+            self._block_persist = False
 
         logger.info("Motor config loaded from %s", path)
 

@@ -268,14 +268,14 @@
     "wifi_ssid": "",
     "wifi_password": "",
     "wifi_country": "US",
-    "usb_port": "",
+    "usb_port": "COM5",
     "baud": 115200,
-    "hardware_sync": true,
+    "hardware_sync": false,
     "firmware_include_wifi": true,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0,
-    "wifi_ap_mode": false,
+    "wifi_ap_mode": true,
     "wifi_ap_ssid": "PicoArm",
-    "wifi_ap_password": ""
+    "wifi_ap_password": "12345678"
   }
 }

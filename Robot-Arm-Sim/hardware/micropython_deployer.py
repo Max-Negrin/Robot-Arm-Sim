@@ -13,7 +13,8 @@ Deployment strategy (tried in order):
 2. Raw serial REPL — works without mpremote using only pyserial.
 
 Both methods upload ``firmware/pico_control_script.py`` to the board as
-``main.py``, then trigger a soft reset so the script starts immediately.
+``main.py``.  USB serial deploy also uploads ``firmware/http_dashboard.py`` as
+``http_dashboard.py`` when present (required for the Wi‑Fi web dashboard).
 
 Errors are reported with human-readable descriptions and suggested fixes.
 """
@@ -115,12 +116,24 @@ def _deploy_via_serial_repl(port: str, firmware_path: str,
             script_text = f.read()
     except OSError as exc:
         return False, f"Cannot read firmware file: {exc}"
-    return _deploy_via_serial_repl_text(port, script_text, progress_cb=progress_cb)
+    return _deploy_via_serial_repl_text(
+        port, script_text, progress_cb=progress_cb, companion_files=None
+    )
 
 
-def _deploy_via_serial_repl_text(port: str, script_text: str,
-                                  progress_cb=None) -> tuple[bool, str]:
-    """Upload a script string via the MicroPython raw REPL (chunked, reliable)."""
+def _deploy_via_serial_repl_text(
+    port: str,
+    script_text: str,
+    *,
+    progress_cb=None,
+    companion_files: Optional[list[tuple[str, str]]] = None,
+) -> tuple[bool, str]:
+    """Upload one or more ``.py`` files via the MicroPython raw REPL (chunked).
+
+    ``script_text`` is always written as ``main.py``.  Each entry in
+    ``companion_files`` is ``(remote_name, source_text)``, e.g.
+    ``("http_dashboard.py", ...)``.
+    """
     from .pico_interface import exclusive_serial_access
 
     try:
@@ -198,36 +211,50 @@ def _deploy_via_serial_repl_text(port: str, script_text: str,
                 )
             _prog("[2/4] Raw REPL entered")
 
-            # --- Step 3: write the file in 512-byte hex chunks ---
-            script_bytes = script_text.encode("utf-8")
-            CHUNK = 512
-            total = len(script_bytes)
-            n_chunks = (total + CHUNK - 1) // CHUNK
-            _prog(f"[3/4] Writing firmware: {total} bytes in {n_chunks} chunks...")
-            logger.info("Writing %d bytes in %d chunks", total, n_chunks)
-
-            resp = _raw_exec("f = open('main.py', 'wb')")
-            if b"Error" in resp or b"Traceback" in resp:
-                return False, f"ERROR: Could not open main.py for writing\nCAUSE: {resp[:200]!r}"
-
-            for i in range(0, total, CHUNK):
-                chunk = script_bytes[i : i + CHUNK]
-                hex_str = chunk.hex()
-                cmd = f"f.write(bytes.fromhex('{hex_str}'))"
-                resp = _raw_exec(cmd)
+            def _write_remote_py(remote_name: str, text: str, desc: str) -> Optional[str]:
+                """Write one file; return error message or None on success."""
+                script_bytes = text.encode("utf-8")
+                CHUNK = 512
+                total = len(script_bytes)
+                n_chunks = (total + CHUNK - 1) // CHUNK
+                _prog(f"[3/4] {desc}: {total} bytes in {n_chunks} chunks...")
+                logger.info("Writing %s %d bytes in %d chunks", remote_name, total, n_chunks)
+                resp = _raw_exec("f = open({}, 'wb')".format(repr(remote_name)))
                 if b"Error" in resp or b"Traceback" in resp:
-                    _raw_exec("f.close()")   # best-effort cleanup
-                    return False, (
-                        f"ERROR: Write failed at byte {i}\n"
+                    return (
+                        f"ERROR: Could not open {remote_name} for writing\n"
                         f"CAUSE: {resp[:200]!r}"
                     )
-                chunk_num = i // CHUNK + 1
-                if chunk_num % 5 == 0 or chunk_num == n_chunks:
-                    _prog(f"[3/4] chunk {chunk_num}/{n_chunks}...")
+                for i in range(0, total, CHUNK):
+                    chunk = script_bytes[i : i + CHUNK]
+                    hex_str = chunk.hex()
+                    cmd = "f.write(bytes.fromhex('{}'))".format(hex_str)
+                    resp = _raw_exec(cmd)
+                    if b"Error" in resp or b"Traceback" in resp:
+                        _raw_exec("f.close()")
+                        return (
+                            f"ERROR: Write failed for {remote_name} at byte {i}\n"
+                            f"CAUSE: {resp[:200]!r}"
+                        )
+                    chunk_num = i // CHUNK + 1
+                    if chunk_num % 5 == 0 or chunk_num == n_chunks:
+                        _prog(f"[3/4] {remote_name} chunk {chunk_num}/{n_chunks}...")
+                _raw_exec("f.close()")
+                _prog(f"[3/4] {remote_name} OK ({n_chunks} chunks)")
+                logger.info("File %s write complete", remote_name)
+                return None
 
-            _raw_exec("f.close()")
-            _prog(f"[3/4] All {n_chunks} chunks written OK")
-            logger.info("File write complete")
+            err = _write_remote_py("main.py", script_text, "Writing main.py (firmware)")
+            if err:
+                return False, err
+
+            if companion_files:
+                for remote_name, src in companion_files:
+                    if not remote_name or not str(remote_name).endswith(".py"):
+                        continue
+                    e2 = _write_remote_py(str(remote_name), src, f"Writing {remote_name}")
+                    if e2:
+                        return False, e2
 
             # --- Step 4: exit raw REPL and soft reset ---
             _prog("[4/4] Soft resetting board — firmware starting...")
@@ -727,9 +754,25 @@ class MicroPythonDeployer:
         firmware_text = _inject_web_arm_config(firmware_text, arm_config)
         _prog("Injected WEB_ARM_CONFIG (link lengths + joint limits for onboard FK/IK dashboard)")
 
+        companion_files: list[tuple[str, str]] = []
+        dash_path = os.path.join(os.path.dirname(firmware_path), "http_dashboard.py")
+        try:
+            with open(dash_path, "r", encoding="utf-8") as df:
+                companion_files.append(("http_dashboard.py", df.read()))
+        except OSError:
+            _prog(
+                "WARN: http_dashboard.py missing beside pico_control_script.py — "
+                "Wi‑Fi web UI will not load on the Pico until that file is deployed"
+            )
+
         # Deploy via raw serial REPL (no external tools needed)
         _prog("Deploying via raw serial REPL...")
-        ok, msg = _deploy_via_serial_repl_text(port, firmware_text, progress_cb=progress_cb)
+        ok, msg = _deploy_via_serial_repl_text(
+            port,
+            firmware_text,
+            progress_cb=progress_cb,
+            companion_files=companion_files,
+        )
         if ok:
             return True, msg
 

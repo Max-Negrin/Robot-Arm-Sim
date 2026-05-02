@@ -52,6 +52,12 @@ import select
 import machine
 from machine import Pin, PWM
 
+# HTTP dashboard (optional second file on the device — uploaded with Deploy).
+try:
+    import http_dashboard as _http_dash
+except ImportError:
+    _http_dash = None
+
 # PIO STEP pulses for step/dir drivers (default). Software STEP only if ``pio_stepdir`` false.
 try:
     import rp2
@@ -274,7 +280,6 @@ _web_cmd_queue = []
 # dashboard targets every tick (repeated jog requests while holding buttons refresh this).
 _dashboard_jog_last_ms = None
 _DASHBOARD_SUPPRESS_HOST_TRAJ_MS = 900
-_http_axes_ref = None
 
 
 def _clamp_scalar(v, lo, hi):
@@ -447,240 +452,6 @@ def _apply_web_command(item, axes):
             ji = i + 1
             if ji in by_idx:
                 by_idx[ji].set_target_angle(pdeg)
-
-
-def _build_dashboard_html():
-    """Static HTML for ``/`` (built once; TCP_PORT / WEB_HTTP_PORT interpolated)."""
-    return """<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Arm dashboard</title><style>
-body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:12px;}
-h1{font-size:1.1rem;margin:0 0 8px;}
-.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;}
-.dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle;}
-.dot.on{background:#0f0;box-shadow:0 0 6px #0f0;}.dot.off{background:#644;}.dot.na{background:#333;}
-svg{background:#1a1a1a;border:1px solid #333;display:block;max-width:100%;}button{margin:2px;padding:6px 10px;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;}
-.ee{font-family:monospace;font-size:14px;}small{color:#888;}
-.hdr{margin:10px 0 4px;color:#aaa;font-size:11px;}
-</style></head><body>
-<h1>Pico arm dashboard</h1>
-<p><small>TCP """ + str(TCP_PORT) + """ · HTTP """ + str(WEB_HTTP_PORT) + """</small></p>
-<div class="row" id="sw"></div>
-<svg id="sv" width="320" height="240" viewBox="-110 -110 220 220"><path id="armPath" stroke="#6cf" stroke-width="3" fill="none" d=""/></svg>
-<p class="ee" id="ee"></p>
-<p class="hdr">End-effector jog — world XYZ (mm, hold)</p>
-<div class="row">
-<button type="button" id="exm">EE −X</button><button type="button" id="exp">EE +X</button>
-<button type="button" id="eym">EE −Y</button><button type="button" id="eyp">EE +Y</button>
-<button type="button" id="ezm">EE −Z</button><button type="button" id="ezp">EE +Z</button>
-</div>
-<p class="hdr">Joint jog — degrees (hold)</p>
-<div class="row" id="jb"></div>
-<script>
-function armLine(points){if(points.length<2)return '';
-let mx=0,my=0,Mx=0,My=0;for(const p of points){mx=Math.min(mx,p[0]);Mx=Math.max(Mx,p[0]);my=Math.min(my,p[1]);My=Math.max(My,p[1]);}
-const rw=Math.max(Mx-mx,1e-6),rh=Math.max(My-my,1e-6),sc=Math.min(180/rw,180/rh)*0.85,cx=(mx+Mx)/2,cy=(my+My)/2;
-let d='';for(let i=0;i<points.length;i++){const x=(points[i][0]-cx)*sc,y=-(points[i][1]-cy)*sc;d+=(i?'L':'M')+x+','+y;}
-return d;}
-var jbBuiltSig='',swBuiltSig='',holdIv=null,holdUrl=null;
-var stateBusy=false,statePending=false;
-function rebuildSwitches(swArr){var el=document.getElementById('sw'),h='';for(var i=0;i<swArr.length;i++){h+='<span><span class="dot na"></span>J'+swArr[i].idx+' limit</span> ';}el.innerHTML=h.trimEnd();}
-function updateSwitchDots(swArr){var el=document.getElementById('sw');for(var i=0;i<swArr.length;i++){var span=el.children[i];if(!span)return false;var dot=span.querySelector('.dot');if(!dot)return false;var s=swArr[i];dot.className='dot '+(s.pressed?'on':(s.wired?'off':'na'));}return true;}
-function rebuildJointButtons(joints){var el=document.getElementById('jb');el.innerHTML='';for(var i=0;i<joints.length;i++){var jo=joints[i];var bm=document.createElement('button');bm.type='button';bm.textContent='J'+jo.idx+' −';bindHold(bm,'/api/jog_joint?j='+jo.idx+'&delta=-2');el.appendChild(bm);var bp=document.createElement('button');bp.type='button';bp.textContent='J'+jo.idx+' +';bindHold(bp,'/api/jog_joint?j='+jo.idx+'&delta=2');el.appendChild(bp);el.appendChild(document.createTextNode(' '));}}
-async function refreshState(){
-if(stateBusy){statePending=true;return;}
-stateBusy=true;
-try{
-var r=await fetch('/api/state',{cache:'no-store'});
-var j=await r.json();
-document.getElementById('ee').textContent='EE X='+j.ee.x+' Y='+j.ee.y+' Z='+j.ee.z+(j.fk_ok?'':' (FK off)');
-var swSig=j.switches.map(function(s){return s.idx;}).join('|');
-if(swSig!==swBuiltSig){rebuildSwitches(j.switches);swBuiltSig=swSig;}else if(!updateSwitchDots(j.switches)){rebuildSwitches(j.switches);}
-var jbSig=j.joints.map(function(x){return x.idx;}).join('|');
-if(jbSig!==jbBuiltSig){rebuildJointButtons(j.joints);jbBuiltSig=jbSig;}
-var pts=j.polyline_xy||[];document.getElementById('armPath').setAttribute('d',pts.length?armLine(pts):'');
-}catch(e){console.warn(e);}
-finally{
-stateBusy=false;
-if(statePending){statePending=false;refreshState();}
-}
-}
-async function pollLoop(){
-while(true){
-try{await refreshState();await new Promise(function(r){setTimeout(r,50);});}
-catch(e){console.warn(e);await new Promise(function(r){setTimeout(r,120);});}
-}
-}
-pollLoop();
-function stopHold(){if(holdIv){clearInterval(holdIv);holdIv=null;}holdUrl=null;}
-function fireHold(){
-if(!holdUrl)return;
-fetch(holdUrl,{cache:'no-store'}).then(function(){refreshState();}).catch(function(){});
-}
-function startHold(url){stopHold();holdUrl=url;fireHold();holdIv=setInterval(fireHold,60);}
-function bindHold(el,url){
-el.addEventListener('pointerdown',function(e){if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();try{el.setPointerCapture(e.pointerId);}catch(x){}startHold(url);});
-el.addEventListener('pointerup',stopHold);el.addEventListener('pointercancel',stopHold);el.addEventListener('lostpointercapture',stopHold);}
-bindHold(document.getElementById('exm'),'/api/jog_ee?dx=-1.25');
-bindHold(document.getElementById('exp'),'/api/jog_ee?dx=1.25');
-bindHold(document.getElementById('eym'),'/api/jog_ee?dy=-1.25');
-bindHold(document.getElementById('eyp'),'/api/jog_ee?dy=1.25');
-bindHold(document.getElementById('ezm'),'/api/jog_ee?dz=-1.25');
-bindHold(document.getElementById('ezp'),'/api/jog_ee?dz=1.25');
-window.addEventListener('blur',stopHold);
-window.addEventListener('pointerup',stopHold);
-</script>
-</body></html>"""
-
-
-def _http_bind_listen(sta_ip):
-    """Bind HTTP dashboard socket. ``sta_ip`` from STA ``ifconfig()`` (same strategy as before)."""
-    import socket
-
-    port = int(WEB_HTTP_PORT)
-    candidates = []
-    if sta_ip and sta_ip != "0.0.0.0":
-        candidates.append((sta_ip, port))
-    candidates.extend([("0.0.0.0", port), ("", port)])
-
-    srv = None
-    bound_addr = None
-    last_be = None
-    for addr in candidates:
-        sock = None
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(addr)
-            srv = sock
-            sock = None
-            bound_addr = addr
-            break
-        except OSError as be:
-            last_be = be
-            if sock is not None:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
-
-    if srv is None:
-        raise OSError("HTTP bind failed: {}".format(last_be))
-
-    srv.listen(4)
-    show_ip = bound_addr[0] if bound_addr and bound_addr[0] else "0.0.0.0"
-    return srv, show_ip
-
-
-def _http_serve_client(conn, html):
-    """Handle one HTTP connection (request → response, then close)."""
-    import json
-
-    try:
-        conn.settimeout(3.0)
-        req = b""
-        while b"\r\n\r\n" not in req and len(req) < 4096:
-            req += conn.recv(512)
-        if not req:
-            return
-        head = req.split(b"\r\n\r\n", 1)[0].decode("utf-8", "replace")
-        lines = head.split("\r\n")
-        req_line = lines[0] if lines else ""
-        parts = req_line.split()
-        path_full = parts[1] if len(parts) > 1 else "/"
-        path = path_full
-        qs = ""
-        if "?" in path_full:
-            path, qs = path_full.split("?", 1)
-
-        if path == "/" or path == "/index.html":
-            body = html
-            ctype = "text/html; charset=utf-8"
-        elif path == "/api/state":
-            axes = _http_axes_ref
-            bd, pd = _angles_deg_bundle(axes) if axes else (0.0, [])
-            pts3 = _fk_positions_deg(bd, pd) if axes else []
-            fk_ok = len(pts3) > 0
-            poly_xy = [[round(p[0], 4), round(p[1], 4)] for p in pts3] if fk_ok else []
-            joints_out = []
-            sw_out = []
-            for ax in sorted(axes or [], key=lambda a: a.idx):
-                live = False
-                if getattr(ax, "_home_pin", None) is not None:
-                    try:
-                        pv = ax._home_pin.value()
-                        live = (pv == 1) if ax.home_pin_polarity == "NC" else (pv == 0)
-                    except Exception:
-                        live = False
-                joints_out.append({"idx": ax.idx, "deg": round(_axis_angle_deg(ax), 3)})
-                sw_out.append({"idx": ax.idx, "pressed": live, "wired": getattr(ax, "_home_pin", None) is not None})
-            ee = pts3[-1] if fk_ok else (0.0, 0.0, 0.0)
-            doc = {
-                "fk_ok": fk_ok,
-                "joints": joints_out,
-                "switches": sw_out,
-                "ee": {
-                    "x": round(ee[0], 4),
-                    "y": round(ee[1], 4),
-                    "z": round(ee[2], 4),
-                },
-                "polyline_xy": poly_xy,
-                "tcp_control_port": TCP_PORT,
-                "http_port": WEB_HTTP_PORT,
-            }
-            body = json.dumps(doc)
-            ctype = "application/json"
-        elif path == "/api/jog_joint":
-            pr = {}
-            for pair in qs.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    pr[k] = v
-            try:
-                jn = int(pr.get("j", "-1"))
-                delta = float(pr.get("delta", "0"))
-                _web_cmd_queue.append(("JJ", jn, delta))
-                while len(_web_cmd_queue) > 64:
-                    _web_cmd_queue.pop(0)
-                body = '{"ok":true}'
-            except Exception:
-                body = '{"ok":false}'
-            ctype = "application/json"
-        elif path == "/api/jog_ee":
-            pr = {}
-            for pair in qs.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    pr[k] = v
-            try:
-                dx = float(pr.get("dx", "0"))
-                dy = float(pr.get("dy", "0"))
-                dz = float(pr.get("dz", "0"))
-                _web_cmd_queue.append(("JE", dx, dy, dz))
-                while len(_web_cmd_queue) > 64:
-                    _web_cmd_queue.pop(0)
-                body = '{"ok":true}'
-            except Exception:
-                body = '{"ok":false}'
-            ctype = "application/json"
-        else:
-            body = "Not found"
-            ctype = "text/plain"
-
-        raw_b = body.encode("utf-8")
-        hdr = (
-            "HTTP/1.0 200 OK\r\nContent-Type: "
-            + ctype
-            + "\r\nConnection: close\r\nContent-Length: "
-            + str(len(raw_b))
-            + "\r\n\r\n"
-        )
-        conn.send(hdr.encode("utf-8") + raw_b)
-    except Exception:
-        pass
-    try:
-        conn.close()
-    except Exception:
-        pass
 
 
 def _accept_nonblocking(sock):
@@ -1463,7 +1234,10 @@ def _traj_reset():
 
 
 def _parse_trajectory_prefix(line: str):
-    """Return (t_seconds_or_None, remainder_after_comma)."""
+    """Return (t_seconds_or_None, remainder_after_comma).
+
+    Host-side mirror: ``hardware/firmware_parse.parse_trajectory_prefix``.
+    """
     s = line.strip()
     if len(s) < 4:
         return None, s
@@ -1543,7 +1317,10 @@ def _traj_capture_prev_from_axes(axes):
 # ---------------------------------------------------------------------------
 
 def parse_command(line: str):
-    """Parse 'J0:45.00,J1:32.50,...' → {0: 45.0, 1: 32.5, ...}"""
+    """Parse 'J0:45.00,J1:32.50,...' → {0: 45.0, 1: 32.5, ...}
+
+    Host-side mirror: ``hardware/firmware_parse.py`` — keep parsers aligned.
+    """
     result = {}
     try:
         for token in line.strip().split(","):
@@ -1871,9 +1648,6 @@ def main():
     _traj_prev_deg = tuple([0.0] * _traj_slots)
     _traj_anchor_us = None
     _traj_ring = TrajectoryRing()
-
-    global _http_axes_ref
-    _http_axes_ref = axes
 
     buf = ""
     idle_ticks = 0
@@ -2235,7 +2009,36 @@ def main():
                 )
             else:
                 print("WiFi connected: {}".format(_sta_ip))
+            # High-visibility summary — users often miss a single line in a scrolling REPL/USB log.
+            print("")
+            print("========== Wi-Fi ready ==========")
+            print("  IP:  {}".format(_sta_ip))
+            print(
+                "  Web: http://{}:{}/".format(_sta_ip, WEB_HTTP_PORT)
+            )
+            print("  TCP: {}:{}".format(_sta_ip, TCP_PORT))
+            print("=================================")
+            print("PICO_NET {0} {1} {2}".format(_sta_ip, WEB_HTTP_PORT, TCP_PORT))
+            print("")
             _flush_stdout()
+
+            if _http_dash is not None:
+                try:
+                    _http_dash.configure(
+                        get_axes=lambda: axes,
+                        web_cmd_queue=_web_cmd_queue,
+                        get_tcp_port=lambda: int(TCP_PORT),
+                        get_http_port=lambda: int(WEB_HTTP_PORT),
+                        angles_deg_bundle=_angles_deg_bundle,
+                        fk_positions_deg=_fk_positions_deg,
+                        axis_angle_deg=_axis_angle_deg,
+                    )
+                except Exception as _cfg_e:
+                    try:
+                        print("WARN: http_dashboard.configure:", _cfg_e)
+                        _flush_stdout()
+                    except Exception:
+                        pass
 
             # MicroPython RP2040: only one ``_thread`` worker may run on core 1 — TCP :8888 and HTTP :8080
             # share one loop (non-blocking accept + serve) so we never hit ``OSError: core1 in use``.
@@ -2281,36 +2084,48 @@ def main():
                 _flush_stdout()
 
                 http_srv = None
-                try:
-                    http_srv, http_show = _http_bind_listen(_sta_ip)
-                    http_srv.setblocking(False)
-                    print(
-                        "HTTP dashboard listening on {}:{}".format(
-                            http_show,
-                            WEB_HTTP_PORT,
-                        )
-                    )
-                    print(
-                        "HTTP dashboard (same LAN): http://{}:{}".format(
-                            _sta_ip,
-                            WEB_HTTP_PORT,
-                        )
-                    )
-                    if not WIFI_AP_MODE:
-                        print(
-                            "NOTE: Phone hotspots often block Wi-Fi client-to-client traffic "
-                            "(your PC/phone may not reach this IP even though Wi-Fi is up). "
-                            "Try the phone's own browser to this URL, a home router, or disable "
-                            "AP/client isolation if your hotspot settings offer it."
-                        )
-                except Exception as _he:
+                html = ""
+                if _http_dash is not None:
                     try:
-                        print("WARN: HTTP bind failed:", _he)
+                        http_srv, http_show = _http_dash.bind_listen(_sta_ip)
+                        http_srv.setblocking(False)
+                        print(
+                            "HTTP dashboard listening on {}:{}".format(
+                                http_show,
+                                WEB_HTTP_PORT,
+                            )
+                        )
+                        print(
+                            "HTTP dashboard (same LAN): http://{}:{}".format(
+                                _sta_ip,
+                                WEB_HTTP_PORT,
+                            )
+                        )
+                        if not WIFI_AP_MODE:
+                            print(
+                                "NOTE: Phone hotspots often block Wi-Fi client-to-client traffic "
+                                "(your PC/phone may not reach this IP even though Wi-Fi is up). "
+                                "Try the phone's own browser to this URL, a home router, or disable "
+                                "AP/client isolation if your hotspot settings offer it."
+                            )
+                        html = _http_dash.build_html()
+                    except Exception as _he:
+                        try:
+                            print("WARN: HTTP bind failed:", _he)
+                        except Exception:
+                            pass
+                        http_srv = None
+                        html = ""
+                else:
+                    try:
+                        print(
+                            "WARN: http_dashboard.py missing on device — web UI disabled "
+                            "(Deploy over USB copies it next to main.py)."
+                        )
+                        _flush_stdout()
                     except Exception:
                         pass
-                    http_srv = None
 
-                html = _build_dashboard_html()
                 _flush_stdout()
 
                 conn = [None]
@@ -2365,14 +2180,14 @@ def main():
                 while True:
                     did_work = False
 
-                    if http_srv is not None:
+                    if http_srv is not None and _http_dash is not None and html:
                         for _ in range(24):
                             ha = _accept_nonblocking(http_srv)
                             if ha is None:
                                 break
                             did_work = True
                             _hc, _ = ha
-                            _http_serve_client(_hc, html)
+                            _http_dash.serve_client(_hc, html)
 
                     # Accept new TCP control connection if we have none
                     if conn[0] is None:
@@ -2519,12 +2334,24 @@ def main():
                     line = _wifi_rx.pop(0)
                     _handle_line(line, _wifi_tx.append)
 
-            if _web_cmd_queue:
+            _motion_web = False
+            for _it in _web_cmd_queue:
+                if _it and _it[0] in ("JJ", "JE"):
+                    _motion_web = True
+                    break
+            if _motion_web:
                 _traj_reset()
             _had_web_jog = False
             while _web_cmd_queue:
                 try:
-                    _apply_web_command(_web_cmd_queue.pop(0), axes)
+                    _item = _web_cmd_queue.pop(0)
+                    if _item and _item[0] == "__LED__":
+                        try:
+                            led.toggle()
+                        except Exception:
+                            pass
+                        continue
+                    _apply_web_command(_item, axes)
                     _had_web_jog = True
                 except Exception:
                     pass
