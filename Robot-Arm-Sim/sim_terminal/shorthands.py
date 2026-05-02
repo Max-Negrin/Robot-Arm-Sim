@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import re
-from typing import Any
+
+if TYPE_CHECKING:
+    from sim_terminal.main_window_api import MainWindowTerminalAPI
 
 
 _JOINT_DEG = re.compile(
@@ -17,7 +21,7 @@ _JHOME = re.compile(
 )
 
 
-def try_apply_shorthands(mw: Any, raw: str) -> bool:
+def try_apply_shorthands(mw: MainWindowTerminalAPI, raw: str) -> bool:
     """
     If ``raw`` matches a shorthand, handle it and return True.
     May recurse into ``mw._on_terminal_command`` for joint/cart shorthands.

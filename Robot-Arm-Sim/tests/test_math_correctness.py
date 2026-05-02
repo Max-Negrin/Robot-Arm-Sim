@@ -134,7 +134,10 @@ def test_ik_accuracy():
             actual_error = np.linalg.norm(ee_pos - target)
             print(f"  Actual error: {actual_error:.6f}")
             print(f"  Base angle: {math.degrees(result.state.base_angle):.1f}°")
-            print(f"  Planar angles: {[math.degrees(a):.1f}° for a in result.state.planar_angles]}")
+            print(
+                f"  Planar angles: "
+                f"{[round(math.degrees(a), 1) for a in result.state.planar_angles]} deg"
+            )
 
 def test_singularity_detection():
     """Test singularity detection."""

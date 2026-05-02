@@ -5,7 +5,10 @@ broad ``startswith`` handlers and matches HELP for MEM/TEMP/PING/… on hardware
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sim_terminal.main_window_api import MainWindowTerminalAPI
 
 # Exact one-line device commands; STEPT is prefix-matched below.
 PICO_EXACT = frozenset(
@@ -20,7 +23,7 @@ PICO_EXACT = frozenset(
 )
 
 
-def try_pico_priority(mw: Any, raw: str, upper: str, parts: list[str]) -> bool:
+def try_pico_priority(mw: MainWindowTerminalAPI, raw: str, upper: str, parts: list[str]) -> bool:
     """
     If this is a priority hardware command, send it (or show not-connected) and
     return True. Otherwise return False so the main dispatcher can handle it.

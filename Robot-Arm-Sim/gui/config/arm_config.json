@@ -1,0 +1,281 @@
+{
+  "_comment": "Auto-saved arm configuration. Loaded on next startup.",
+  "arm_config": {
+    "num_links": 4,
+    "link_lengths": [
+      3.0,
+      2.5,
+      2.0,
+      1.5
+    ],
+    "joint_limits": [
+      [
+        -170.0023,
+        170.0023
+      ],
+      [
+        -170.0023,
+        170.0023
+      ],
+      [
+        -170.0023,
+        170.0023
+      ],
+      [
+        -170.0023,
+        170.0023
+      ]
+    ],
+    "joint_plane_offsets": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "joint_lateral_x": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "joint_lateral_y": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "base_vertical_offset": 0.0,
+    "starting_angles": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "elbow": 0,
+    "motor_configs": [
+      {
+        "idx": 0,
+        "name": "Base",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      {
+        "idx": 1,
+        "name": "Joint 1",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      {
+        "idx": 2,
+        "name": "Joint 2",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          10,
+          11,
+          12,
+          13
+        ]
+      },
+      {
+        "idx": 3,
+        "name": "Joint 3",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          14,
+          15,
+          16,
+          17
+        ]
+      },
+      {
+        "idx": 4,
+        "name": "Joint 4",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          18,
+          19,
+          20,
+          21
+        ]
+      }
+    ],
+    "math_expressions": [
+      {
+        "index": 1,
+        "enabled": false,
+        "expression": ""
+      },
+      {
+        "index": 2,
+        "enabled": false,
+        "expression": ""
+      },
+      {
+        "index": 3,
+        "enabled": false,
+        "expression": ""
+      },
+      {
+        "index": 4,
+        "enabled": false,
+        "expression": ""
+      }
+    ],
+    "ee_constraint": {
+      "enabled": false,
+      "auto": true,
+      "angle_deg": 0.0
+    },
+    "target_panel": {
+      "x": 4.0,
+      "y": 3.0,
+      "z": 2.5,
+      "approach_auto": true,
+      "approach_angle_deg": 0.0
+    },
+    "homing_config": [
+      {
+        "idx": 0,
+        "name": "Base",
+        "home_pin": 20,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      },
+      {
+        "idx": 1,
+        "name": "Joint 1",
+        "home_pin": 21,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      },
+      {
+        "idx": 2,
+        "name": "Joint 2",
+        "home_pin": 22,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      },
+      {
+        "idx": 3,
+        "name": "Joint 3",
+        "home_pin": 23,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      },
+      {
+        "idx": 4,
+        "name": "Joint 4",
+        "home_pin": 24,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      }
+    ]
+  },
+  "hardware": {
+    "wifi_host": "",
+    "wifi_port": 8888,
+    "wifi_ssid": "",
+    "wifi_password": "",
+    "wifi_country": "US",
+    "usb_port": "",
+    "baud": 115200,
+    "hardware_sync": true,
+    "firmware_include_wifi": true,
+    "firmware_step_us": 250,
+    "firmware_host_follow_max_sps": 0,
+    "wifi_ap_mode": false,
+    "wifi_ap_ssid": "PicoArm",
+    "wifi_ap_password": ""
+  }
+}
