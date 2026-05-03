@@ -24,7 +24,7 @@ TERMINAL_HELP_LINES = [
     "  POS                      — toggle 1 Hz joint-angle stream",
     "  EE / EE ON / EE OFF      — toggle 1 Hz EE coordinate stream",
     "  PINS / PINS ON / PINS OFF — toggle 1 Hz GPIO pin debug stream (hw only)",
-    "  LIMITS / LIMITS ON / OFF — toggle limit switch status stream (debug homing)",
+    "  LIMSWITCH / LIMSWITCH ON / OFF — toggle limit switch status stream (debug homing)",
     "  STOP                     — cancel homing, stop all motors and streams",
     "─── Motion ─────────────────────────────────────────────────",
     "  HOME                     — animate to vertical (all joints 0)",

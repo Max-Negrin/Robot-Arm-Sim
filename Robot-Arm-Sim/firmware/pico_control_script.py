@@ -59,6 +59,10 @@ except ImportError:
     _http_dash = None
 
 # PIO STEP pulses for step/dir drivers (default). Software STEP only if ``pio_stepdir`` false.
+# 2 MHz gives an 8-cycle HIGH pulse = 4 µs — within spec for A4988/DRV8825/TMC2209.
+_PIO_CLOCK_HZ = 2_000_000
+_PIO_MIN_SPS  = 20   # never let PIO run slower than this (avoids multi-second blocking per step)
+
 try:
     import rp2
     from rp2 import PIO, StateMachine, asm_pio
@@ -69,7 +73,7 @@ try:
         mov(x, osr)
         label("wait_lo")
         jmp(x_dec, "wait_lo")
-        set(pins, 1) [7]
+        set(pins, 1) [7]   # HIGH for 8 cycles = 4 µs at 2 MHz
         set(pins, 0)
 
     _PIO_HAVE_STEP = True
@@ -91,6 +95,53 @@ def _pio_alloc_sm_id(cfg: dict) -> int:
     if i > 7:
         raise ValueError("Too many PIO step/dir axes (max 8 state machines)")
     return i
+
+
+# ---------------------------------------------------------------------------
+# Shared step-pulse generators — single source of truth for GPIO and PIO
+# ---------------------------------------------------------------------------
+
+def _step_gpio(step_pin, dir_pin, count: int, forward: bool,
+               invert_dir: bool, last_phys_dir: int, dir_setup_us: int,
+               step_us: int = 5) -> int:
+    """Bit-bang ``count`` STEP pulses.  Returns the physical DIR value applied."""
+    phys_dir = 1 if ((not forward) if invert_dir else forward) else 0
+    dir_pin.value(phys_dir)
+    if phys_dir != last_phys_dir and dir_setup_us > 0:
+        time.sleep_us(dir_setup_us)
+    half = max(2, step_us)
+    for _ in range(count):
+        step_pin.value(1)
+        time.sleep_us(half)
+        step_pin.value(0)
+        time.sleep_us(half)
+    return phys_dir
+
+
+def _step_pio(sm, dir_pin, count: int, forward: bool,
+              invert_dir: bool, last_phys_dir: int, dir_setup_us: int,
+              vel: float) -> int:
+    """Push ``count`` step-pulse requests into the PIO FIFO.  Returns DIR value applied.
+
+    ``vel`` is the current host-follow velocity (steps/s); clamped to at least
+    _PIO_MIN_SPS so the FIFO never stalls for more than 1/_PIO_MIN_SPS seconds per step.
+    """
+    try:
+        sm.active(1)
+    except Exception:
+        pass
+    phys_dir = 1 if ((not forward) if invert_dir else forward) else 0
+    dir_pin.value(phys_dir)
+    if phys_dir != last_phys_dir and dir_setup_us > 0:
+        time.sleep_us(dir_setup_us)
+    # period = PIO cycles for the LOW gap before each HIGH pulse.
+    # Clamp to [64, max_period] where max_period keeps us at ≥ _PIO_MIN_SPS.
+    max_period = max(64, _PIO_CLOCK_HZ // (2 * _PIO_MIN_SPS))
+    sps = max(float(_PIO_MIN_SPS), abs(vel))
+    period = max(64, min(max_period, int(_PIO_CLOCK_HZ / (2.0 * sps))))
+    for _ in range(count):
+        sm.put(period)
+    return phys_dir
 
 # When the host streams J0:..,J1:..,J2:.. but make_axis() skipped a JOINT, we
 # record indices here and print a one-time WARN (otherwise J2 is ignored silently).
@@ -430,7 +481,21 @@ def _apply_web_command(item, axes):
         ddeg = float(item[2])
         for ax in axes:
             if ax.idx == jn:
-                ax.set_target_angle(_axis_angle_deg(ax) + ddeg)
+                _steps_out = getattr(ax, "_steps_out", 0)
+                if _steps_out and _steps_out > 0:
+                    # Accumulate on target_pos (steps) so rapid jog commands build
+                    # up the target even before the motor has physically moved.
+                    delta_steps = ddeg / 360.0 * _steps_out
+                    new_target = ax.target_pos + delta_steps
+                    _lmin = getattr(ax, "_limit_min", None)
+                    _lmax = getattr(ax, "_limit_max", None)
+                    if _lmin is not None:
+                        new_target = max(new_target, _lmin)
+                    if _lmax is not None:
+                        new_target = min(new_target, _lmax)
+                    ax.target_pos = new_target
+                else:
+                    ax.set_target_angle(_axis_angle_deg(ax) + ddeg)
                 return
     elif item[0] == "JE":
         dx = float(item[1])
@@ -498,12 +563,16 @@ def axis_plan_velocity_steps(
     tdt = max(dt, 1e-9)
     e = float(signed_position_error_steps)
     a = abs(e)
-    if a < AXIS_PLAN_EPS_STEPS:
-        return 0, 0.0, 0.0, 0.0
 
     ae = float(accel_sps2)
     if ae <= 0.0:
         ae = max(float(max_speed_sps) * 10.0, 400.0)
+
+    if a < AXIS_PLAN_EPS_STEPS:
+        if abs(vel_signed) < 1.0:
+            return 0, 0.0, 0.0, 0.0
+        dv = math.copysign(min(ae * tdt, abs(vel_signed)), -vel_signed)
+        return 0, vel_signed + dv, frac_carry, dv
 
     vmax = max(float(max_speed_sps), 1e-9)
     ds = max(0.0, a - 0.5)
@@ -926,18 +995,11 @@ class StepperAxisStepDir(_StepperBase):
         self._last_phys_dir: int = -1   # sentinel — unknown until first step
 
     def _step(self, count: int, forward: bool) -> None:
-        physical_forward = (not forward) if self.invert_dir else forward
-        phys_dir = 1 if physical_forward else 0
-        self._dir_pin.value(phys_dir)
-        if phys_dir != self._last_phys_dir and self.dir_setup_us > 0:
-            time.sleep_us(self.dir_setup_us)
-        self._last_phys_dir = phys_dir
-        # ≥2.5 µs is typical for opto inputs (e.g. DM542); use 3 µs for margin.
-        for _ in range(count):
-            self._step_pin.value(1)
-            time.sleep_us(3)
-            self._step_pin.value(0)
-            time.sleep_us(3)
+        self._last_phys_dir = _step_gpio(
+            self._step_pin, self._dir_pin, count, forward,
+            self.invert_dir, self._last_phys_dir, self.dir_setup_us,
+            getattr(self, "step_us", 5),
+        )
 
     def deenergise(self) -> None:
         """STEP/DIR breakouts: no separate coil pins to cut (unlike 28BYJ).
@@ -977,39 +1039,21 @@ class StepperAxisStepDirPIO(_StepperBase):
         self.invert_dir = cfg.get("invert_dir", False)
         self.dir_setup_us = int(cfg.get("dir_setup_us", 12))
         self._last_phys_dir: int = -1
-        self._pio_fc = float(machine.freq())
         sm_id = _pio_alloc_sm_id(cfg)
         self._sm = StateMachine(
             sm_id,
             _pio_step_pulse_program,
-            freq=int(self._pio_fc),
+            freq=_PIO_CLOCK_HZ,
             set_base=Pin(pins[0]),
         )
         self._sm.active(1)
 
     def _step(self, count: int, forward: bool) -> None:
-        try:
-            self._sm.active(1)
-        except Exception:
-            pass
-        physical_forward = (not forward) if self.invert_dir else forward
-        phys_dir = 1 if physical_forward else 0
-        self._dir_pin.value(phys_dir)
-        if phys_dir != self._last_phys_dir and self.dir_setup_us > 0:
-            time.sleep_us(self.dir_setup_us)
-        self._last_phys_dir = phys_dir
-        period = max(
-            64,
-            min(
-                0x7FFFFFFF,
-                int(
-                    self._pio_fc
-                    / max(1.0, 2.0 * max(1.0, abs(self._host_follow_vel)))
-                ),
-            ),
+        self._last_phys_dir = _step_pio(
+            self._sm, self._dir_pin, count, forward,
+            self.invert_dir, self._last_phys_dir, self.dir_setup_us,
+            self._host_follow_vel,
         )
-        for _ in range(count):
-            self._sm.put(period)
 
     def deenergise(self) -> None:
         try:
@@ -1824,8 +1868,16 @@ def main():
             # Host: assume mechanical pose matches these angles (no step burst). See PC connect.
             # Never apply during homing — SYNC clears _homing_mode and would race the state machine
             # (wrong direction / slamming through the home switch when the PC reconnects mid-HOME).
+            # Also skip while dashboard jog is active — web jog owns the arm during suppression window.
             try:
-                if _homing_active or any(
+                _sync_dashboard_blocked = (
+                    _dashboard_jog_last_ms is not None
+                    and time.ticks_diff(time.ticks_ms(), _dashboard_jog_last_ms)
+                    < _DASHBOARD_SUPPRESS_HOST_TRAJ_MS
+                )
+                if _sync_dashboard_blocked:
+                    reply_fn("OK\n")
+                elif _homing_active or any(
                     getattr(ax, "_homing_mode", False) for ax in axes
                 ):
                     reply_fn("ERR:SYNC:homing_busy\n")
@@ -2357,10 +2409,6 @@ def main():
                     pass
             if _had_web_jog:
                 _dashboard_jog_last_ms = time.ticks_ms()
-                for _ax in axes:
-                    _clr = getattr(_ax, "clear_host_follow_rates", None)
-                    if _clr is not None:
-                        _clr()
 
             _playback_traj_to_axes(axes)
 

@@ -1225,6 +1225,8 @@ def apply_motor_joint_dict_to_row(row: dict, jcfg: dict) -> None:
         if not is_28byj:
             if "invert_dir" in jcfg:
                 row["invert_dir_check"].setChecked(bool(jcfg["invert_dir"]))
+            if "pio_stepdir" in jcfg:
+                row["pio_stepdir_check"].setChecked(bool(jcfg["pio_stepdir"]))
             if "dir_setup_us" in jcfg:
                 row["dir_setup_spin"].setValue(int(jcfg["dir_setup_us"]))
 
@@ -1378,6 +1380,19 @@ class MotorConfigPanel(QGroupBox):
             invert_dir_layout.addWidget(invert_dir_check)
             invert_dir_widget.hide()
             stepper_form.addRow("Direction:", invert_dir_widget)
+
+            pio_stepdir_widget = QWidget()
+            pio_stepdir_layout = QHBoxLayout(pio_stepdir_widget)
+            pio_stepdir_layout.setContentsMargins(0, 0, 0, 0)
+            pio_stepdir_check = QCheckBox("Use PIO for STEP")
+            pio_stepdir_check.setChecked(True)
+            pio_stepdir_check.setToolTip(
+                "Use PIO state machine for STEP/DIR toggling (recommended).\n"
+                "Uncheck to use GPIO-only mode for hardware debugging."
+            )
+            pio_stepdir_layout.addWidget(pio_stepdir_check)
+            pio_stepdir_widget.hide()
+            stepper_form.addRow("PIO mode:", pio_stepdir_widget)
 
             dir_setup_widget = QWidget()
             dir_setup_layout = QHBoxLayout(dir_setup_widget)
@@ -1541,6 +1556,8 @@ class MotorConfigPanel(QGroupBox):
                 "gear": gear,
                 "invert_dir_widget": invert_dir_widget,
                 "invert_dir_check": invert_dir_check,
+                "pio_stepdir_widget": pio_stepdir_widget,
+                "pio_stepdir_check": pio_stepdir_check,
                 "dir_setup_widget": dir_setup_widget,
                 "dir_setup_spin": dir_setup_spin,
                 "max_sps": max_sps,
@@ -1563,6 +1580,7 @@ class MotorConfigPanel(QGroupBox):
                 r["stepper_grp"].setVisible(not is_servo)
                 r["servo_grp"].setVisible(is_servo)
                 r["invert_dir_widget"].setVisible(not is_servo and not is_28byj)
+                r["pio_stepdir_widget"].setVisible(not is_servo and not is_28byj)
                 r["dir_setup_widget"].setVisible(not is_servo and not is_28byj)
                 # Set sensible defaults when switching driver
                 if is_servo:
@@ -1620,6 +1638,7 @@ class MotorConfigPanel(QGroupBox):
             max_pulse.valueChanged.connect(self.config_changed.emit)
             angle_range.valueChanged.connect(self.config_changed.emit)
             invert_dir_check.stateChanged.connect(self.config_changed.emit)
+            pio_stepdir_check.stateChanged.connect(self.config_changed.emit)
             dir_setup_spin.valueChanged.connect(self.config_changed.emit)
             _update_derived(None, row)
             row["_refresh_derived"] = lambda r=row: _update_derived(None, r)
@@ -1697,6 +1716,7 @@ class MotorConfigPanel(QGroupBox):
                 }
                 if not is_28byj:
                     cfg["invert_dir"] = row["invert_dir_check"].isChecked()
+                    cfg["pio_stepdir"] = row["pio_stepdir_check"].isChecked()
                     cfg["dir_setup_us"] = row["dir_setup_spin"].value()
             if pins_callback is not None:
                 cfg["pins"] = pins_callback(row["index"])

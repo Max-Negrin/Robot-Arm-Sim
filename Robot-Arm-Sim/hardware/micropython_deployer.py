@@ -62,7 +62,7 @@ def _deploy_via_mpremote(port: str, firmware_path: str,
     def _prog(msg):
         if progress_cb:
             progress_cb(msg)
-        logger.info(msg)
+        logger.debug(msg)
 
     # Check mpremote is available
     _prog("Checking mpremote...")
@@ -144,135 +144,147 @@ def _deploy_via_serial_repl_text(
             "FIX:   pip install pyserial"
         )
 
-    with exclusive_serial_access(port):
-        try:
-            ser = _serial_mod.Serial(port, 115200, timeout=3)
-        except _serial_mod.SerialException as exc:
-            return False, (
-                f"ERROR: Cannot open {port}\n"
-                f"CAUSE: {exc}\n"
-                "FIX:   Ensure the port is not in use by another program"
-            )
-
-        def _read_until(marker: bytes, timeout: float = 5.0) -> bytes:
-            buf = b""
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                chunk = ser.read(ser.in_waiting or 1)
-                if chunk:
-                    buf += chunk
-                    if marker in buf:
-                        break
-            return buf
-
-        def _raw_exec(cmd: str, timeout: float = 8.0) -> bytes:
-            """Send one command in raw REPL mode and return the response."""
-            ser.write(cmd.encode("utf-8") + b"\x04")
-            resp = _read_until(b"\x04", timeout=timeout)
-            return resp
-
-        def _prog(msg):
+    try:
+        with exclusive_serial_access(port):
             if progress_cb:
-                progress_cb(msg)
-            logger.info(msg)
-
-        try:
-            # --- Step 1: reach >>> prompt regardless of current state ---
-            # Ctrl+B exits raw REPL → normal REPL
-            # Ctrl+C interrupts any running user code
-            _prog(f"[1/4] Interrupting Pico on {port}...")
-            ser.write(b"\x02")       # exit raw REPL if stuck there
-            time.sleep(0.2)
-            for _ in range(3):
-                ser.write(b"\x03")   # Ctrl+C: interrupt user code
-                time.sleep(0.1)
-            resp = _read_until(b">>>", timeout=3.0)
-            if b">>>" not in resp:
-                # Try a soft reset as a last resort
-                _prog("[1/4] No >>> yet, trying soft reset...")
-                ser.write(b"\x04")
-                resp = _read_until(b">>>", timeout=5.0)
-            if b">>>" not in resp:
+                progress_cb(f"Opening serial port {port}...")
+            try:
+                ser = _serial_mod.Serial(port, 115200, timeout=3)
+            except _serial_mod.SerialException as exc:
                 return False, (
-                    "ERROR: Could not reach MicroPython REPL (>>> prompt not seen)\n"
-                    "FIX:   Unplug and replug the Pico USB cable, then try Deploy again"
+                    f"ERROR: Cannot open {port}\n"
+                    f"CAUSE: {exc}\n"
+                    "FIX:   Unplug/replug the Pico USB, close Thonny or other serial tools, "
+                    "then try Deploy again"
                 )
-            _prog("[1/4] MicroPython >>> prompt reached")
 
-            # --- Step 2: enter raw REPL (Ctrl+A) ---
-            _prog("[2/4] Entering raw REPL mode...")
-            ser.write(b"\x01")
-            resp = _read_until(b"raw REPL", timeout=3.0)
-            if b"raw REPL" not in resp:
-                return False, (
-                    "ERROR: Could not enter raw REPL\n"
-                    "CAUSE: Board did not respond to Ctrl+A\n"
-                    "FIX:   Ensure MicroPython firmware is installed on the Pico"
-                )
-            _prog("[2/4] Raw REPL entered")
+            def _read_until(marker: bytes, timeout: float = 5.0) -> bytes:
+                buf = b""
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    chunk = ser.read(ser.in_waiting or 1)
+                    if chunk:
+                        buf += chunk
+                        if marker in buf:
+                            break
+                return buf
 
-            def _write_remote_py(remote_name: str, text: str, desc: str) -> Optional[str]:
-                """Write one file; return error message or None on success."""
-                script_bytes = text.encode("utf-8")
-                CHUNK = 512
-                total = len(script_bytes)
-                n_chunks = (total + CHUNK - 1) // CHUNK
-                _prog(f"[3/4] {desc}: {total} bytes in {n_chunks} chunks...")
-                logger.info("Writing %s %d bytes in %d chunks", remote_name, total, n_chunks)
-                resp = _raw_exec("f = open({}, 'wb')".format(repr(remote_name)))
-                if b"Error" in resp or b"Traceback" in resp:
-                    return (
-                        f"ERROR: Could not open {remote_name} for writing\n"
-                        f"CAUSE: {resp[:200]!r}"
+            def _raw_exec(cmd: str, timeout: float = 8.0) -> bytes:
+                """Send one command in raw REPL mode and return the response."""
+                ser.write(cmd.encode("utf-8") + b"\x04")
+                resp = _read_until(b"\x04", timeout=timeout)
+                return resp
+
+            def _prog(msg):
+                if progress_cb:
+                    progress_cb(msg)
+                logger.debug(msg)
+
+            try:
+                # --- Step 1: reach >>> prompt regardless of current state ---
+                # Ctrl+B exits raw REPL → normal REPL
+                # Ctrl+C interrupts any running user code
+                _prog(f"[1/4] Interrupting Pico on {port}...")
+                ser.write(b"\x02")       # exit raw REPL if stuck there
+                time.sleep(0.2)
+                for _ in range(3):
+                    ser.write(b"\x03")   # Ctrl+C: interrupt user code
+                    time.sleep(0.1)
+                resp = _read_until(b">>>", timeout=3.0)
+                if b">>>" not in resp:
+                    # Try a soft reset as a last resort
+                    _prog("[1/4] No >>> yet, trying soft reset...")
+                    ser.write(b"\x04")
+                    resp = _read_until(b">>>", timeout=5.0)
+                if b">>>" not in resp:
+                    return False, (
+                        "ERROR: Could not reach MicroPython REPL (>>> prompt not seen)\n"
+                        "FIX:   Unplug and replug the Pico USB cable, then try Deploy again"
                     )
-                for i in range(0, total, CHUNK):
-                    chunk = script_bytes[i : i + CHUNK]
-                    hex_str = chunk.hex()
-                    cmd = "f.write(bytes.fromhex('{}'))".format(hex_str)
-                    resp = _raw_exec(cmd)
+                _prog("[1/4] MicroPython >>> prompt reached")
+
+                # --- Step 2: enter raw REPL (Ctrl+A) ---
+                _prog("[2/4] Entering raw REPL mode...")
+                ser.write(b"\x01")
+                resp = _read_until(b"raw REPL", timeout=3.0)
+                if b"raw REPL" not in resp:
+                    return False, (
+                        "ERROR: Could not enter raw REPL\n"
+                        "CAUSE: Board did not respond to Ctrl+A\n"
+                        "FIX:   Ensure MicroPython firmware is installed on the Pico"
+                    )
+                _prog("[2/4] Raw REPL entered")
+
+                def _write_remote_py(remote_name: str, text: str, desc: str) -> Optional[str]:
+                    """Write one file; return error message or None on success."""
+                    script_bytes = text.encode("utf-8")
+                    CHUNK = 512
+                    total = len(script_bytes)
+                    n_chunks = (total + CHUNK - 1) // CHUNK
+                    _prog(f"[3/4] {desc}: {total} bytes in {n_chunks} chunks...")
+                    logger.info("Writing %s %d bytes in %d chunks", remote_name, total, n_chunks)
+                    resp = _raw_exec("f = open({}, 'wb')".format(repr(remote_name)))
                     if b"Error" in resp or b"Traceback" in resp:
-                        _raw_exec("f.close()")
                         return (
-                            f"ERROR: Write failed for {remote_name} at byte {i}\n"
+                            f"ERROR: Could not open {remote_name} for writing\n"
                             f"CAUSE: {resp[:200]!r}"
                         )
-                    chunk_num = i // CHUNK + 1
-                    if chunk_num % 5 == 0 or chunk_num == n_chunks:
-                        _prog(f"[3/4] {remote_name} chunk {chunk_num}/{n_chunks}...")
-                _raw_exec("f.close()")
-                _prog(f"[3/4] {remote_name} OK ({n_chunks} chunks)")
-                logger.info("File %s write complete", remote_name)
-                return None
+                    for i in range(0, total, CHUNK):
+                        chunk = script_bytes[i : i + CHUNK]
+                        hex_str = chunk.hex()
+                        cmd = "f.write(bytes.fromhex('{}'))".format(hex_str)
+                        resp = _raw_exec(cmd)
+                        if b"Error" in resp or b"Traceback" in resp:
+                            _raw_exec("f.close()")
+                            return (
+                                f"ERROR: Write failed for {remote_name} at byte {i}\n"
+                                f"CAUSE: {resp[:200]!r}"
+                            )
+                        chunk_num = i // CHUNK + 1
+                        if chunk_num % 5 == 0 or chunk_num == n_chunks:
+                            _prog(f"[3/4] {remote_name} chunk {chunk_num}/{n_chunks}...")
+                    _raw_exec("f.close()")
+                    _prog(f"[3/4] {remote_name} OK ({n_chunks} chunks)")
+                    logger.info("File %s write complete", remote_name)
+                    return None
 
-            err = _write_remote_py("main.py", script_text, "Writing main.py (firmware)")
-            if err:
-                return False, err
+                err = _write_remote_py("main.py", script_text, "Writing main.py (firmware)")
+                if err:
+                    return False, err
 
-            if companion_files:
-                for remote_name, src in companion_files:
-                    if not remote_name or not str(remote_name).endswith(".py"):
-                        continue
-                    e2 = _write_remote_py(str(remote_name), src, f"Writing {remote_name}")
-                    if e2:
-                        return False, e2
+                if companion_files:
+                    for remote_name, src in companion_files:
+                        if not remote_name or not str(remote_name).endswith(".py"):
+                            continue
+                        e2 = _write_remote_py(str(remote_name), src, f"Writing {remote_name}")
+                        if e2:
+                            return False, e2
 
-            # --- Step 4: exit raw REPL and soft reset ---
-            _prog("[4/4] Soft resetting board — firmware starting...")
-            ser.write(b"\x02")   # Ctrl+B: back to normal REPL
-            time.sleep(0.2)
-            ser.write(b"\x04")   # Ctrl+D: soft reset → runs the new main.py
-            time.sleep(0.5)
+                # --- Step 4: exit raw REPL and soft reset ---
+                _prog("[4/4] Soft resetting board — firmware starting...")
+                ser.write(b"\x02")   # Ctrl+B: back to normal REPL
+                time.sleep(0.2)
+                ser.write(b"\x04")   # Ctrl+D: soft reset → runs the new main.py
+                time.sleep(0.5)
 
-            logger.info("Serial REPL deployment succeeded on %s", port)
-            return True, "Deployed via serial REPL successfully"
+                logger.info("Serial REPL deployment succeeded on %s", port)
+                return True, "Deployed via serial REPL successfully"
 
-        except Exception as exc:
-            return False, f"Serial REPL deployment error: {exc}"
-        finally:
-            try:
-                ser.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                return False, f"Serial REPL deployment error: {exc}"
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    except TimeoutError as exc:
+        return False, (
+            f"ERROR: Serial port {port} busy — timed out waiting for exclusive access\n"
+            f"CAUSE: {exc}\n"
+            "FIX:   Let the previous Connect/Deploy finish, then try again. "
+            "If stuck, restart the simulator and unplug/replug the Pico."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +309,8 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
         if driver == "stepdir":
             parts.append(f'"invert_dir": {str(j.get("invert_dir", False)).lower().capitalize()}')
             parts.append(f'"dir_setup_us": {int(j.get("dir_setup_us", 12))}')
+            use_pio = j.get("pio_stepdir", True)
+            parts.append(f'"pio_stepdir": {str(bool(use_pio)).lower().capitalize()}')
         parts += [
             f'"max_sps": {j.get("max_sps", 500)}',
             f'"accel": {j.get("accel", 1000)}',
@@ -545,7 +559,7 @@ def _deploy_via_wifi(host: str, port: int, firmware_text: str,
     def _prog(msg):
         if progress_cb:
             progress_cb(msg)
-        logger.info(msg)
+        logger.debug(msg)
 
     # 1024-byte chunks: 8× fewer ACK round-trips than the old 128-byte default.
     # At LAN WiFi latency (~5 ms), that alone saves ~0.5 s per 15 KB upload.

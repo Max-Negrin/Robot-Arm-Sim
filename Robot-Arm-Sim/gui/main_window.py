@@ -63,6 +63,7 @@ from .panels import (
     HardwarePanel,
     PinoutPanel,
     apply_motor_joint_dict_to_row,
+    _backlash_angle_rad_from_motor_cfg,
 )
 from .terminal_ui import HelpDialog, TerminalLineEdit, PicoTerminal, TerminalLogHandler
 from .theme import apply_app_theme, TEXT_NAV
@@ -2009,13 +2010,13 @@ class MainWindow(QMainWindow):
                 self._pin_stream_active = False
                 self.terminal.log("Pin debug stream: OFF", "info")
 
-        # ── LIMITS ────────────────────────────────────────────────────────
-        elif upper in ("LIMITS", "LIMITS ON", "LIMITS OFF"):
-            want_on = not (upper == "LIMITS OFF" or
-                           (upper == "LIMITS" and getattr(self, "_limit_stream_enabled", False)))
+        # ── LIMSWITCH ─────────────────────────────────────────────────────
+        elif upper in ("LIMSWITCH", "LIMSWITCH ON", "LIMSWITCH OFF"):
+            want_on = not (upper == "LIMSWITCH OFF" or
+                           (upper == "LIMSWITCH" and getattr(self, "_limit_stream_enabled", False)))
             if want_on:
                 if self._hardware is None or not self._hardware.is_connected:
-                    self.terminal.log("LIMITS: not connected to Pico", "error")
+                    self.terminal.log("LIMSWITCH: not connected to Pico", "error")
                 else:
                     self._hardware.send_raw("PIN_STREAM_ON\n")
                     self._limit_stream_enabled = True
@@ -3279,34 +3280,58 @@ class MainWindow(QMainWindow):
         import queue as _queue
 
         _msg_queue: _queue.Queue = _queue.Queue()
+        # Capture on the main thread — _deploy() runs in a background thread.
+        _arm_config = self._get_arm_config_dict()
 
         def _progress(msg: str) -> None:
             _msg_queue.put(("progress", msg))
 
         def _deploy():
-            deployer = MicroPythonDeployer()
-            ok, result_msg = deployer.deploy(
-                target_port,
-                joints_config=joints_config,
-                wifi_ssid=wifi_ssid,
-                wifi_password=wifi_pw,
-                wifi_port=wifi_port,
-                step_us=step_us,
-                host_follow_max_sps=host_cap,
-                arm_config=self._get_arm_config_dict(),
-                embed_wifi=embed_wifi,
-                wifi_country=wifi_cc,
-                wifi_ap_mode=wifi_ap_mode,
-                wifi_ap_ssid=wifi_ap_ssid,
-                wifi_ap_password=wifi_ap_pw,
-                progress_cb=_progress,
-            )
+            try:
+                deployer = MicroPythonDeployer()
+                ok, result_msg = deployer.deploy(
+                    target_port,
+                    joints_config=joints_config,
+                    wifi_ssid=wifi_ssid,
+                    wifi_password=wifi_pw,
+                    wifi_port=wifi_port,
+                    step_us=step_us,
+                    host_follow_max_sps=host_cap,
+                    arm_config=_arm_config,
+                    embed_wifi=embed_wifi,
+                    wifi_country=wifi_cc,
+                    wifi_ap_mode=wifi_ap_mode,
+                    wifi_ap_ssid=wifi_ap_ssid,
+                    wifi_ap_password=wifi_ap_pw,
+                    progress_cb=_progress,
+                )
+            except Exception as exc:
+                ok = False
+                result_msg = (
+                    f"ERROR: Deploy crashed unexpectedly\n"
+                    f"CAUSE: {exc}\n"
+                    "FIX:   Unplug/replug the Pico USB cable and try Deploy again."
+                )
+                logger.exception("Deploy worker crashed")
             _msg_queue.put(("done", ok, result_msg))
 
         threading.Thread(target=_deploy, daemon=True, name="pico-deploy").start()
         logger.info("Firmware deployment started on %s", target_port)
 
+        _poll_deadline = time.monotonic() + 360.0
+
         def _poll():
+            if time.monotonic() > _poll_deadline:
+                self._set_hardware_usb_flash_busy(False)
+                _tmsg = (
+                    "ERROR: Deploy timed out (>6 min) — re-enabling buttons.\n"
+                    "FIX:   Unplug/replug the Pico USB cable, then try Deploy again."
+                )
+                self.hardware_panel.log_lbl.setText(_tmsg[:300])
+                self.hardware_panel.log_lbl.setStyleSheet("color: #ff6666;")
+                self.terminal.log("Deploy timed out — re-enabling buttons", "error")
+                logger.error("Deploy poll timed out waiting for worker")
+                return
             try:
                 while True:
                     item = _msg_queue.get_nowait()
