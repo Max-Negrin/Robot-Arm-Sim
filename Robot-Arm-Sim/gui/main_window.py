@@ -10,6 +10,8 @@ import logging
 import numpy as np
 from typing import Optional
 
+import queue as _queue_mod
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSlider, QGroupBox, QFormLayout,
@@ -17,9 +19,10 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QToolBox, QStatusBar, QProgressBar,
     QListWidget, QListWidgetItem, QFileDialog, QAbstractItemView,
     QGridLayout, QPlainTextEdit, QSizePolicy, QMessageBox,
+    QDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
-from PyQt6.QtGui import QFont, QKeyEvent, QDesktopServices
+from PyQt6.QtGui import QFont, QKeyEvent, QDesktopServices, QAction
 
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
@@ -67,6 +70,7 @@ from .panels import (
 )
 from .terminal_ui import HelpDialog, TerminalLineEdit, PicoTerminal, TerminalLogHandler
 from .theme import apply_app_theme, TEXT_NAV
+from .jog_panel import JogPanel
 
 # Main Window
 # ═══════════════════════════════════════════════════════════════════════════
@@ -140,6 +144,14 @@ class MainWindow(QMainWindow):
         self._hw_stream_origin_mono: float = time.monotonic()
         self._bottleneck_status_shown: bool = False
 
+        # Continuous jog state (driven by _on_timer_tick when active)
+        self._jog_active:  bool  = False
+        self._jog_type:    str   = 'joint'   # 'joint' | 'ee'
+        self._jog_axis:    int   = 0
+        self._jog_dir:     float = 1.0
+        self._jog_vel:     float = 0.0       # current speed (deg/s or mm/s)
+        self._jog_update_counter: int = 0    # throttle position readout
+
         # Apply dark theme
         self._apply_dark_theme()
 
@@ -169,185 +181,139 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ── Left sidebar ──
-        sidebar_scroll = QScrollArea()
-        sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setMinimumWidth(200)
-        sidebar_scroll.setMaximumWidth(600)
-        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        # ── Save as Default button (always visible above toolbox) ──
-        self.save_default_btn = QPushButton("Save as Default")
-        self.save_default_btn.setObjectName("PrimaryButton")
-        self.save_default_btn.setToolTip(
-            "Save all current settings as defaults — they will be restored on next startup"
-        )
-
-        toolbox = QToolBox()
-
-        # Wrap sidebar content: save button + toolbox
-        sidebar_widget = QWidget()
-        sidebar_layout = QVBoxLayout(sidebar_widget)
-        sidebar_layout.setContentsMargins(4, 4, 4, 4)
-        sidebar_layout.setSpacing(8)
-        sidebar_layout.addWidget(self.save_default_btn)
-        sidebar_layout.addWidget(toolbox)
-        sidebar_scroll.setWidget(sidebar_widget)
-
-        self.config_panel = ArmConfigPanel()
-        self.target_panel = TargetPanel()
-        self.start_pose_panel = InitialJointPanel()
-        self.joint_panel = JointOutputPanel()
-        self.offset_panel = JointPlaneOffsetPanel()
+        # All config panels opened via menu-bar dialogs
+        self.config_panel        = ArmConfigPanel()
+        self.target_panel        = TargetPanel()
+        self.start_pose_panel    = InitialJointPanel()
+        self.joint_panel         = JointOutputPanel()
+        self.offset_panel        = JointPlaneOffsetPanel()
         self.ee_constraint_panel = ConstrainEndEffectorPanel()
-        self.math_panel = CustomMathPanel(self.math_engine)
-        self.anim_panel = AnimationControlPanel(self.animator)
-        self.waypoint_panel = WaypointPanel()
-        self.stats_panel = StatsPanel()
-        self.motor_config_panel = MotorConfigPanel()
-        self.homing_panel = HomingPanel()
-        self.pinout_panel = PinoutPanel()
-        self.hardware_panel = HardwarePanel()
+        self.math_panel          = CustomMathPanel(self.math_engine)
+        self.anim_panel          = AnimationControlPanel(self.animator)
+        self.waypoint_panel      = WaypointPanel()
+        self.stats_panel         = StatsPanel()
+        self.motor_config_panel  = MotorConfigPanel()
+        self.homing_panel        = HomingPanel()
+        self.pinout_panel        = PinoutPanel()
+        self.hardware_panel      = HardwarePanel()
 
-        # ── Group: Arm Setup (config + joint offsets) ──
-        arm_setup_widget = QWidget()
-        arm_setup_layout = QVBoxLayout(arm_setup_widget)
-        arm_setup_layout.setContentsMargins(0, 0, 0, 0)
-        arm_setup_layout.setSpacing(4)
-        arm_setup_layout.addWidget(self.config_panel)
-        arm_setup_layout.addWidget(self.offset_panel)
+        # Composite group widgets reused inside dialogs
+        self._arm_setup_widget = QWidget()
+        _asl = QVBoxLayout(self._arm_setup_widget)
+        _asl.setContentsMargins(4, 4, 4, 4)
+        _asl.setSpacing(4)
+        _asl.addWidget(self.config_panel)
+        _asl.addWidget(self.offset_panel)
 
-        # ── Group: Target & Constraints ──
-        target_widget = QWidget()
-        target_layout = QVBoxLayout(target_widget)
-        target_layout.setContentsMargins(0, 0, 0, 0)
-        target_layout.setSpacing(4)
-        target_layout.addWidget(self.target_panel)
-        target_layout.addWidget(self.ee_constraint_panel)
+        self._target_widget = QWidget()
+        _tl = QVBoxLayout(self._target_widget)
+        _tl.setContentsMargins(4, 4, 4, 4)
+        _tl.setSpacing(4)
+        _tl.addWidget(self.target_panel)
+        _tl.addWidget(self.ee_constraint_panel)
 
-        # ── Group: Joint State (starting angles + live readout) ──
-        joint_state_widget = QWidget()
-        joint_state_layout = QVBoxLayout(joint_state_widget)
-        joint_state_layout.setContentsMargins(0, 0, 0, 0)
-        joint_state_layout.setSpacing(4)
-        joint_state_layout.addWidget(self.start_pose_panel)
-        joint_state_layout.addWidget(self.joint_panel)
+        self._joint_state_widget = QWidget()
+        _jsl = QVBoxLayout(self._joint_state_widget)
+        _jsl.setContentsMargins(4, 4, 4, 4)
+        _jsl.setSpacing(4)
+        _jsl.addWidget(self.start_pose_panel)
+        _jsl.addWidget(self.joint_panel)
 
-        toolbox.addItem(arm_setup_widget, "Arm Setup")
-        toolbox.addItem(target_widget, "Target & Constraints")
-        toolbox.addItem(joint_state_widget, "Joint State")
-        toolbox.addItem(self.anim_panel, "Animation")
-        toolbox.addItem(self.waypoint_panel, "Waypoint Path")
-        toolbox.addItem(self.math_panel, "Custom Math")
-        toolbox.addItem(self.motor_config_panel, "Motor Configuration")
-        toolbox.addItem(self.homing_panel, "Homing")
-        toolbox.addItem(self.pinout_panel, "Pico Pinout")
-        toolbox.addItem(self.hardware_panel, "Hardware (Pico 2W)")
-        toolbox.addItem(self.stats_panel, "Status")
+        # Placeholder widget so signal wiring below does not crash
+        self.save_default_btn = QPushButton()
 
-        # Expand Target & Constraints by default
-        toolbox.setCurrentIndex(1)
+        # Dialog cache for panel windows
+        self._panel_dialogs: dict = {}
 
-        # ── 3D Viewport ──
+        # Jog control panel (fixed left, always visible)
+        self.jog_panel = JogPanel()
+
+        # 3D Viewport
         self.viewport = ArmViewport()
         self.viewport.setMinimumWidth(300)
 
-        # ── Terminal panel (below viewport) ──
+        # Terminal panel (below viewport)
         self.terminal = PicoTerminal()
         self.terminal.setMinimumHeight(80)
         self.terminal.close_requested.connect(self._hide_terminal)
         self.terminal.command_entered.connect(self._on_terminal_command)
 
-        # Mirror Python log output into the terminal widget
         self._terminal_log_handler = TerminalLogHandler(self.terminal)
         self._terminal_log_handler.setLevel(logging.INFO)
         logging.getLogger().addHandler(self._terminal_log_handler)
 
-        # Vertical splitter: viewport on top, terminal below
         self._right_splitter = QSplitter(Qt.Orientation.Vertical)
         self._right_splitter.addWidget(self.viewport)
         self._right_splitter.addWidget(self.terminal)
         self._right_splitter.setCollapsible(0, False)
         self._right_splitter.setCollapsible(1, True)
-        # Thick handle so it's easy to grab and drag
         self._right_splitter.setHandleWidth(8)
-        # Terminal open by default at 200px
         self._terminal_visible = True
         self._right_splitter.setSizes([600, 200])
 
-        # ── Horizontal splitter: sidebar | right panel ──
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(sidebar_scroll)
-        splitter.addWidget(self._right_splitter)
-        splitter.setCollapsible(0, True)  # Allow collapsing sidebar
-        splitter.setCollapsible(1, False)  # Keep viewport always visible
-        splitter.setSizes([290, 1100])  # Initial sidebar: 290px, viewport: rest
-        splitter.setHandleWidth(8)
+        main_layout.addWidget(self.jog_panel)
+        main_layout.addWidget(self._right_splitter, 1)
 
-        main_layout.addWidget(splitter)
+        # ── Hardware / sequence state (created here so all methods find them) ──
+        self._hardware = None
+        self._connecting_iface = None
+        self._hw_sync_nudge_shown: bool = False
+        self._pico_rx_queue: _queue_mod.Queue = _queue_mod.Queue()
+        self._sequence_queue: list = []
+        self._sequence_index: int = 0
 
-        # ── Status bar ──
+        # ── Status bar ────────────────────────────────────────────────
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
 
-        # Terminal toggle button (left side of status bar)
-        self._terminal_btn = QPushButton("Terminal")
-        self._terminal_btn.setObjectName("TerminalToggle")
+        # Terminal toggle button lives in the status bar (right side)
+        self._terminal_btn = QPushButton("⌨ Terminal")
         self._terminal_btn.setCheckable(True)
-        self._terminal_btn.setToolTip("Toggle terminal panel  (T  or  Ctrl+`)")
-        self._terminal_btn.setChecked(True)   # terminal starts open
-        self._terminal_btn.clicked.connect(self._toggle_terminal)
-        self.status_bar.addWidget(self._terminal_btn)
-
-        # Permanent hint label on the right side of the status bar
-        self._help_hint_label = QLabel("H — help")
-        self._help_hint_label.setStyleSheet(f"color: {TEXT_NAV}; padding: 0 8px;")
-        self.status_bar.addPermanentWidget(self._help_hint_label)
-
-        # Help dialog (created here; shown after window is visible)
-        self._help_dialog = HelpDialog(self)
-
-        # ── Wire up signals ──
-        self.save_default_btn.clicked.connect(self._on_save_as_default)
-        self.config_panel.apply_btn.clicked.connect(self._on_config_changed)
-        self.anim_panel.reset_btn.clicked.connect(self._on_reset_to_vertical)
-        self.target_panel.update_btn.clicked.connect(self._on_update_clicked)
-        self.config_panel.elbow_combo.currentIndexChanged.connect(self._on_update_clicked)
-        self.ee_constraint_panel.constrain_cb.toggled.connect(self._on_ee_constraint_toggled)
-        self.waypoint_panel.run_btn.clicked.connect(self._on_run_sequence)
-        self.waypoint_panel.stop_btn.clicked.connect(self._on_stop_sequence)
-        self.waypoint_panel.set_copy_callback(self._copy_target_to_waypoint)
-        self.waypoint_panel.set_arm_config_callbacks(
-            self._get_arm_config_dict,
-            self._apply_arm_config_dict,
+        self._terminal_btn.setChecked(True)
+        self._terminal_btn.setFixedHeight(22)
+        self._terminal_btn.setStyleSheet(
+            "QPushButton{background:#2a2a2a;color:#aaa;border:1px solid #444;"
+            "border-radius:3px;padding:0 6px;font-size:11px;}"
+            "QPushButton:checked{background:#007acc;color:white;}"
         )
+        self._terminal_btn.clicked.connect(self._toggle_terminal)
+        self.status_bar.addPermanentWidget(self._terminal_btn)
+
+        # ── Help dialog ───────────────────────────────────────────────
+        self._help_dialog = HelpDialog(self)
+        self._help_hint_label = QLabel("Press H / F1 for help")
+        self._help_hint_label.setStyleSheet("color:#666;font-size:10px;")
+        self.status_bar.addWidget(self._help_hint_label)
+
+        # ── Signal wiring ─────────────────────────────────────────────
+        self.config_panel.apply_btn.clicked.connect(self._on_config_changed)
+        self.target_panel.update_btn.clicked.connect(self._on_update_clicked)
+        self.offset_panel.config_changed.connect(self._on_offsets_changed)
+
         self.start_pose_panel.state_changed.connect(self._on_start_pose_changed)
         self.start_pose_panel.reset_to_vertical.connect(self._on_start_pose_zero_vertical_reset)
         self.start_pose_panel.set_copy_callback(self._copy_arm_to_start_pose)
         self.start_pose_panel.set_home_from_arm_callback(self._copy_home_pose_from_arm)
         self.start_pose_panel.set_save_home_callback(self._on_save_home_pose)
-        self.offset_panel.config_changed.connect(self._on_offsets_changed)
 
-        # Waypoint sequence state
-        self._sequence_queue: list[dict] = []
-        self._sequence_index: int = 0
+        self.ee_constraint_panel.constrain_cb.toggled.connect(self._on_ee_constraint_toggled)
 
-        # Hardware state
-        self._hardware = None           # PicoInterface instance once connected
-        self._connecting_iface = None   # in-flight iface during connect worker
-        # One-time terminal hint when connected but angle streaming is off (JOG/IK need sync on)
-        self._hw_sync_nudge_shown: bool = False
-        # PC-side direction-reversal backlash (see _apply_direction_backlash_to_angles)
-        self._hw_bl_prev: list[float] | None = None
-        self._hw_bl_pdelta: list[float] | None = None
-        import queue as _q
-        self._pico_rx_queue: _q.Queue = _q.Queue()  # thread-safe RX message queue
+        self.waypoint_panel.run_btn.clicked.connect(self._on_run_sequence)
+        self.waypoint_panel.stop_btn.clicked.connect(self._on_stop_sequence)
+        self.waypoint_panel.set_copy_callback(self._copy_target_to_waypoint)
+        self.waypoint_panel.set_arm_config_callbacks(
+            self._get_arm_config_dict,
+            self._apply_arm_config_dict_from_waypoint_import,
+        )
 
-        # Wire hardware panel signals
+        self.motor_config_panel.config_changed.connect(self._schedule_motor_config_persist)
+        self.motor_config_panel.config_changed.connect(self._on_motor_config_sync_zero_panel)
+        self.motor_config_panel.pins_loaded.connect(self._restore_motor_config_pins)
+        self.pinout_panel.pins_changed.connect(self._schedule_motor_config_persist)
+
         self.hardware_panel.connect_requested.connect(self._on_hardware_connect)
         self.hardware_panel.disconnect_requested.connect(self._on_hardware_disconnect)
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
@@ -355,34 +321,103 @@ class MainWindow(QMainWindow):
         self.hardware_panel.home_all_requested.connect(self._on_home_all_requested)
         self.hardware_panel.enable_cb.toggled.connect(self._on_hw_sync_toggled)
 
-        # Keep PinoutPanel in sync when driver types change in MotorConfigPanel
-        self.motor_config_panel.config_changed.connect(self._sync_pinout_panel)
-        self.motor_config_panel.config_changed.connect(self._on_motor_config_sync_zero_panel)
-        self.motor_config_panel.config_changed.connect(self._schedule_motor_config_persist)
+        self.jog_panel.jog_started.connect(self._on_jog_started)
+        self.jog_panel.jog_stopped.connect(self._on_jog_stopped)
+        self.jog_panel.home_requested.connect(self._on_home_all_requested)
+        self.jog_panel.stop_requested.connect(self._on_stop_sequence)
 
-        # Give MotorConfigPanel access to pin data so Save/Load include GPIO assignments
-        self.motor_config_panel._pins_callback = self.pinout_panel.get_pins_for_joint
-        self.motor_config_panel.pins_loaded.connect(self._restore_motor_config_pins)
+        self._setup_menubar()
 
-        # Auto-save whenever the user edits a pin number in the Pinout panel
-        self.pinout_panel.pins_changed.connect(self._save_arm_config)
-        self.pinout_panel.pins_changed.connect(self._schedule_motor_config_persist)
+    def _apply_arm_config_dict_from_waypoint_import(self, d: dict) -> None:
+        """Apply an arm-config dict that arrived via waypoint JSON import."""
+        try:
+            self._loading = True
+            self._apply_arm_config_dict(d)
+        except Exception as e:
+            logger.warning("Waypoint import: could not apply arm config: %s", e)
+        finally:
+            self._loading = False
 
-        # Auto-save when homing config changes
-        self.homing_panel.config_changed.connect(self._save_arm_config)
+    # ── Menu bar ──────────────────────────────────────────────────────
 
-        # Initial panel builds
-        n = self.arm_config.num_planar_joints
-        self.offset_panel.rebuild(n)
-        self.start_pose_panel.rebuild(n)
-        self.joint_panel.rebuild(n)
-        self.math_panel.rebuild(n)
-        self.motor_config_panel.rebuild(n)
-        self.homing_panel.rebuild(n)
-        self._sync_pinout_panel()
-        self._sync_start_panel_from_motors()
+    def _setup_menubar(self) -> None:
+        mb = self.menuBar()
 
-    # ── Event Handlers ────────────────────────────────────────────────
+        # File
+        file_menu = mb.addMenu("File")
+        save_act = QAction("Save as Default", self)
+        save_act.triggered.connect(self._on_save_as_default)
+        file_menu.addAction(save_act)
+        file_menu.addSeparator()
+        exit_act = QAction("Exit", self)
+        exit_act.triggered.connect(self.close)
+        file_menu.addAction(exit_act)
+
+        # Hardware
+        hw_menu = mb.addMenu("Hardware")
+        hw_menu.addAction(self._panel_action("Connection && Deploy", self.hardware_panel, 420))
+        hw_menu.addAction(self._panel_action("Motor Config", self.motor_config_panel, 480))
+        hw_menu.addAction(self._panel_action("Pin Assignments", self.pinout_panel, 480))
+        hw_menu.addAction(self._panel_action("Homing", self.homing_panel, 480))
+
+        # Arm Setup
+        arm_menu = mb.addMenu("Arm Setup")
+        arm_menu.addAction(self._panel_action("Configuration && Offsets", self._arm_setup_widget, 400))
+        arm_menu.addAction(self._panel_action("Target && IK", self._target_widget, 360))
+        arm_menu.addAction(self._panel_action("Joint State && Zero", self._joint_state_widget, 400))
+
+        # Motion
+        motion_menu = mb.addMenu("Motion")
+        motion_menu.addAction(self._panel_action("Animation", self.anim_panel, 360))
+        motion_menu.addAction(self._panel_action("Waypoints", self.waypoint_panel, 420))
+        motion_menu.addAction(self._panel_action("Custom Math", self.math_panel, 420))
+
+        # View
+        view_menu = mb.addMenu("View")
+        term_act = QAction("Toggle Terminal  (T)", self)
+        term_act.triggered.connect(self._toggle_terminal)
+        view_menu.addAction(term_act)
+        view_menu.addAction(self._panel_action("Stats", self.stats_panel, 300))
+
+        # Help
+        help_menu = mb.addMenu("Help")
+        help_act = QAction("Help  (H)", self)
+        help_act.triggered.connect(self._toggle_help)
+        help_menu.addAction(help_act)
+
+    def _panel_action(self, title: str, widget: QWidget, width: int = 400) -> QAction:
+        act = QAction(title, self)
+        act.triggered.connect(lambda checked=False, w=widget, t=title, wi=width: self._show_panel_dialog(w, t, wi))
+        return act
+
+    def _show_panel_dialog(self, widget: QWidget, title: str, width: int = 400) -> None:
+        key = id(widget)
+        dlg = self._panel_dialogs.get(key)
+        if dlg is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle(title)
+            dlg.setWindowFlags(
+                Qt.WindowType.Window |
+                Qt.WindowType.WindowCloseButtonHint |
+                Qt.WindowType.WindowMinimizeButtonHint
+            )
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(4, 4, 4, 4)
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(widget)
+            lay.addWidget(scroll)
+
+            dlg.resize(width, min(700, widget.sizeHint().height() + 40))
+            self._panel_dialogs[key] = dlg
+
+        if dlg.isVisible():
+            dlg.hide()
+        else:
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
 
     def keyPressEvent(self, event) -> None:
         """Handle keyboard shortcuts."""
@@ -1412,6 +1447,46 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"POST-HOME J{j_idx}: {step}", "tx")
                 self._on_terminal_command(step)
 
+    # ── Jog Control Panel ─────────────────────────────────────────────
+
+    def _on_jog_started(self, jog_type: str, axis: int, direction: float) -> None:
+        self._jog_active = True
+        self._jog_type   = jog_type
+        self._jog_axis   = axis
+        self._jog_dir    = direction
+        self._jog_vel    = 0.0
+
+    def _on_jog_stopped(self) -> None:
+        self._jog_active = False
+        self._jog_vel    = 0.0
+
+    def _tick_jog(self, dt: float) -> None:
+        """Advance arm state for one timer tick while jog is held."""
+        accel_deg   = self.jog_panel.accel_deg_s2()
+        max_deg     = self.jog_panel.max_speed_deg_s() * self.jog_panel.feed_rate()
+
+        self._jog_vel = min(max_deg, self._jog_vel + accel_deg * dt)
+
+        if self._jog_type == 'joint':
+            delta_rad = math.radians(self._jog_dir * self._jog_vel * dt)
+            if self._jog_axis == 0:
+                self.arm_state.base_angle += delta_rad
+            else:
+                idx = self._jog_axis - 1
+                if 0 <= idx < len(self.arm_state.planar_angles):
+                    self.arm_state.planar_angles[idx] += delta_rad
+
+        elif self._jog_type == 'ee':
+            # mm/s (reuse same speed param — user adjusts to taste)
+            delta_mm = self._jog_dir * self._jog_vel * dt
+            self.target[self._jog_axis] += delta_mm
+            self.target_panel.x_spin.setValue(float(self.target[0]))
+            self.target_panel.y_spin.setValue(float(self.target[1]))
+            self.target_panel.z_spin.setValue(float(self.target[2]))
+            result = solve_ik_analytical(self.arm_config, self.target, self.constraints)
+            if result.success:
+                self.arm_state = result.state
+
     # ── Timer / Animation Loop ────────────────────────────────────────
 
     def _on_timer_tick(self) -> None:
@@ -1431,9 +1506,13 @@ class MainWindow(QMainWindow):
             # Loop rate smoothing (main timer, not the throttled view rate)
             self._fps = 0.9 * self._fps + 0.1 * (1.0 / max(dt, 1e-6))
 
+            # Continuous jog (bypasses animator for immediate response)
+            if self._jog_active:
+                self._tick_jog(dt)
+
             if not self.animator.is_running:
                 self._bottleneck_status_shown = False
-            if self.animator.is_running:
+            if self.animator.is_running and not self._jog_active:
                 self.arm_state = self.animator.step(dt)
                 if not self._bottleneck_status_shown and self.animator.bottleneck_joint is not None:
                     self._bottleneck_status_shown = True
@@ -1458,6 +1537,10 @@ class MainWindow(QMainWindow):
 
             if self._main_loop_tick % self._STATS_EVERY_N == 0:
                 self._update_stats()
+
+            # Update jog panel DRO ~20 Hz
+            if self._main_loop_tick % 50 == 0:
+                self._update_jog_panel_positions()
 
             # Check homing timeout (15 second limit)
             if self._homing_active and self._homing_start_time is not None:
@@ -1497,6 +1580,21 @@ class MainWindow(QMainWindow):
             singularity=sing.get("type"),
             fps=self._fps,
         )
+
+    def _update_jog_panel_positions(self) -> None:
+        try:
+            joints_deg = [math.degrees(self.arm_state.base_angle)] + [
+                math.degrees(a) for a in self.arm_state.planar_angles
+            ]
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = list(positions[-1]) if len(positions) > 0 else [0.0, 0.0, 0.0]
+            self.jog_panel.update_positions(joints_deg, ee)
+            # Sync joint count if arm config changed
+            n_joints = 1 + self.arm_config.num_planar_joints
+            if len(self.jog_panel._joint_rows) != n_joints:
+                self.jog_panel.set_joint_count(n_joints)
+        except Exception:
+            pass
 
     def _set_hardware_wifi_ip(self, ip: str) -> None:
         """Fill USB-discovered IP into the Hardware panel (label + bookmark field)."""
@@ -1723,6 +1821,7 @@ class MainWindow(QMainWindow):
                     self._pico_pos.clear()
                     self.hardware_panel.set_connected(False, err)
                     self.terminal.set_connected(False)
+                    self.jog_panel.set_connection_status(False)
                     self.terminal.log(f"Unexpected disconnect: {err.splitlines()[0]}", "error")
                     self.status_bar.showMessage("Hardware disconnected")
                     self._hardware = None
@@ -1870,6 +1969,7 @@ class MainWindow(QMainWindow):
                 iface_done.rx_callback = self._on_pico_rx_threadsafe
                 self.hardware_panel.set_connected(True, msg)
                 self.terminal.set_connected(True, f"USB {port}")
+                self.jog_panel.set_connection_status(True, port)
                 self.terminal.log(f"Connected via USB ({port})", "info")
                 self.terminal.log(
                     "If a joint (e.g. J2) never moves: PRINTAXES (firmware list), or STEPT 2 200 "

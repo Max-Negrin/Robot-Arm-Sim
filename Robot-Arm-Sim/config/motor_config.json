@@ -13,7 +13,7 @@
       "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
       "invert_dir": true,
-      "pio_stepdir": false,
+      "pio_stepdir": true,
       "dir_setup_us": 5,
       "pins": [
         8,
@@ -33,7 +33,7 @@
       "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
       "invert_dir": false,
-      "pio_stepdir": false,
+      "pio_stepdir": true,
       "dir_setup_us": 20,
       "pins": [
         4,
@@ -53,7 +53,7 @@
       "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
       "invert_dir": true,
-      "pio_stepdir": false,
+      "pio_stepdir": true,
       "dir_setup_us": 20,
       "pins": [
         6,

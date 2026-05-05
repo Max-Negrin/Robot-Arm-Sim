@@ -1,12 +1,22 @@
 {
   "_comment": "Auto-saved arm configuration. Loaded on next startup.",
   "arm_config": {
-    "num_links": 2,
+    "num_links": 4,
     "link_lengths": [
-      8.0,
-      10.0
+      3.0,
+      2.5,
+      2.0,
+      1.5
     ],
     "joint_limits": [
+      [
+        -170.0023,
+        170.0023
+      ],
+      [
+        -170.0023,
+        170.0023
+      ],
       [
         -170.0023,
         170.0023
@@ -17,14 +27,20 @@
       ]
     ],
     "joint_plane_offsets": [
-      2.0,
+      0.0,
+      0.0,
+      0.0,
       0.0
     ],
     "joint_lateral_x": [
       0.0,
+      0.0,
+      0.0,
       0.0
     ],
     "joint_lateral_y": [
+      0.0,
+      0.0,
       0.0,
       0.0
     ],
@@ -32,83 +48,13 @@
     "starting_angles": [
       0.0,
       0.0,
+      0.0,
+      0.0,
       0.0
     ],
     "elbow": 0,
-    "motor_configs": [
-      {
-        "idx": 0,
-        "name": "Base",
-        "driver": "stepdir",
-        "steps_per_rev": 800,
-        "gear_ratio": 6.0,
-        "max_sps": 12000,
-        "accel": 5000,
-        "jerk": 14000,
-        "zero_offset_deg": 0.0,
-        "backlash_steps": 0,
-        "gravity_offset_deg": 0.0,
-        "invert_dir": true,
-        "pio_stepdir": false,
-        "dir_setup_us": 5,
-        "pins": [
-          8,
-          7
-        ]
-      },
-      {
-        "idx": 1,
-        "name": "Joint 1",
-        "driver": "stepdir",
-        "steps_per_rev": 1600,
-        "gear_ratio": 20.0,
-        "max_sps": 15000,
-        "accel": 8000,
-        "jerk": 14000,
-        "zero_offset_deg": 0.0,
-        "backlash_steps": 0,
-        "gravity_offset_deg": 0.0,
-        "invert_dir": false,
-        "pio_stepdir": false,
-        "dir_setup_us": 20,
-        "pins": [
-          4,
-          3
-        ]
-      },
-      {
-        "idx": 2,
-        "name": "Joint 2",
-        "driver": "stepdir",
-        "steps_per_rev": 1600,
-        "gear_ratio": 70.0,
-        "max_sps": 36000,
-        "accel": 22000,
-        "jerk": 48000,
-        "zero_offset_deg": 90.0,
-        "backlash_steps": 0,
-        "gravity_offset_deg": 0.0,
-        "invert_dir": true,
-        "pio_stepdir": false,
-        "dir_setup_us": 20,
-        "pins": [
-          6,
-          5
-        ]
-      }
-    ],
-    "math_expressions": [
-      {
-        "index": 1,
-        "enabled": false,
-        "expression": ""
-      },
-      {
-        "index": 2,
-        "enabled": false,
-        "expression": ""
-      }
-    ],
+    "motor_configs": [],
+    "math_expressions": [],
     "ee_constraint": {
       "enabled": false,
       "auto": true,
@@ -121,53 +67,7 @@
       "approach_auto": true,
       "approach_angle_deg": 0.0
     },
-    "homing_config": [
-      {
-        "idx": 0,
-        "name": "Base",
-        "home_pin": -1,
-        "home_pin_polarity": "NO",
-        "home_direction": 1,
-        "home_search_speed_sps": 5,
-        "home_speed_sps": 5,
-        "home_backup_steps": 5,
-        "home_offset_deg": 0.0,
-        "limits_enabled": false,
-        "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0,
-        "post_home_cmds": ""
-      },
-      {
-        "idx": 1,
-        "name": "Joint 1",
-        "home_pin": -1,
-        "home_pin_polarity": "NO",
-        "home_direction": 1,
-        "home_search_speed_sps": 5,
-        "home_speed_sps": 5,
-        "home_backup_steps": 5,
-        "home_offset_deg": 0.0,
-        "limits_enabled": false,
-        "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0,
-        "post_home_cmds": ""
-      },
-      {
-        "idx": 2,
-        "name": "Joint 2",
-        "home_pin": -1,
-        "home_pin_polarity": "NO",
-        "home_direction": 1,
-        "home_search_speed_sps": 5,
-        "home_speed_sps": 5,
-        "home_backup_steps": 5,
-        "home_offset_deg": 0.0,
-        "limits_enabled": false,
-        "limit_min_deg": -180.0,
-        "limit_max_deg": 180.0,
-        "post_home_cmds": ""
-      }
-    ]
+    "homing_config": []
   },
   "hardware": {
     "wifi_host": "",
@@ -175,14 +75,14 @@
     "wifi_ssid": "",
     "wifi_password": "",
     "wifi_country": "US",
-    "usb_port": "COM5",
+    "usb_port": "",
     "baud": 115200,
-    "hardware_sync": false,
+    "hardware_sync": true,
     "firmware_include_wifi": true,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0,
-    "wifi_ap_mode": true,
+    "wifi_ap_mode": false,
     "wifi_ap_ssid": "PicoArm",
-    "wifi_ap_password": "12345678"
+    "wifi_ap_password": ""
   }
 }
