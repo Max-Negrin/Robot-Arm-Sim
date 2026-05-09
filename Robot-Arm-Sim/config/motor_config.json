@@ -1,4 +1,5 @@
 {
+  "_comment": "Recovered from git commit e800473 (\"added summary\") — last saved motor tuning BEFORE commit 661336f (\"worked on wireless\") reset config/motor_config.json to default 28BYJ values. Not loaded automatically: copy joints into Motor panel, or temporarily rename this file to motor_config.json (after backing up the current file), start the app, and use Save.",
   "joints": [
     {
       "idx": 0,
@@ -6,14 +7,13 @@
       "driver": "stepdir",
       "steps_per_rev": 800,
       "gear_ratio": 6.0,
-      "max_sps": 12000,
-      "accel": 5000,
+      "max_sps": 6000,
+      "accel": 2000,
       "jerk": 14000,
       "zero_offset_deg": 0.0,
       "backlash_steps": 0,
       "gravity_offset_deg": 0.0,
       "invert_dir": true,
-      "pio_stepdir": true,
       "dir_setup_us": 5,
       "pins": [
         8,
@@ -26,14 +26,13 @@
       "driver": "stepdir",
       "steps_per_rev": 1600,
       "gear_ratio": 20.0,
-      "max_sps": 15000,
-      "accel": 8000,
+      "max_sps": 10000,
+      "accel": 6000,
       "jerk": 14000,
       "zero_offset_deg": 0.0,
-      "backlash_steps": 0,
+      "backlash_steps": 30,
       "gravity_offset_deg": 0.0,
       "invert_dir": false,
-      "pio_stepdir": true,
       "dir_setup_us": 20,
       "pins": [
         4,
@@ -50,10 +49,9 @@
       "accel": 22000,
       "jerk": 48000,
       "zero_offset_deg": 90.0,
-      "backlash_steps": 0,
+      "backlash_steps": 104,
       "gravity_offset_deg": 0.0,
       "invert_dir": true,
-      "pio_stepdir": true,
       "dir_setup_us": 20,
       "pins": [
         6,

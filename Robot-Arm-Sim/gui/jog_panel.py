@@ -16,7 +16,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QDoubleSpinBox, QFrame, QScrollArea, QGridLayout,
-    QSizePolicy,
+    QSizePolicy, QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -162,9 +162,26 @@ class JogPanel(QWidget):
         self._status_lbl = QLabel("Disconnected")
         self._status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 9pt;")
 
+        self._sim_cb = QCheckBox("SIM")
+        self._sim_cb.setChecked(False)
+        self._sim_cb.setToolTip(
+            "Sim mode: arm moves in the 3D simulator only.\n"
+            "Uncheck to stream joint angles to the real Pico."
+        )
+        self._sim_cb.setStyleSheet(
+            f"QCheckBox {{ color: {TEXT_SECONDARY}; font-size: 8.5pt; font-weight: 700; }}"
+            f"QCheckBox:checked {{ color: #f0c040; }}"
+            f"QCheckBox::indicator {{ width: 13px; height: 13px; }}"
+        )
+
         h.addWidget(self._status_dot)
         h.addWidget(self._status_lbl, 1)
+        h.addWidget(self._sim_cb)
         self._vbox.addWidget(w)
+
+    @property
+    def sim_mode(self) -> bool:
+        return self._sim_cb.isChecked()
 
     # ── STOP / HOME ──────────────────────────────────────────────────────
 

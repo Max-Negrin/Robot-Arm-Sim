@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._jog_dir:     float = 1.0
         self._jog_vel:     float = 0.0       # current speed (deg/s or mm/s)
         self._jog_update_counter: int = 0    # throttle position readout
+        self._ee_jog_pos:  Optional[np.ndarray] = None  # unused, kept for compat
 
         # Apply dark theme
         self._apply_dark_theme()
@@ -319,11 +320,11 @@ class MainWindow(QMainWindow):
         self.hardware_panel.deploy_requested.connect(self._on_hardware_deploy)
         self.hardware_panel.led_toggle_requested.connect(self._on_led_toggle)
         self.hardware_panel.home_all_requested.connect(self._on_home_all_requested)
-        self.hardware_panel.enable_cb.toggled.connect(self._on_hw_sync_toggled)
+        self.jog_panel._sim_cb.toggled.connect(self._on_sim_mode_toggled)
 
         self.jog_panel.jog_started.connect(self._on_jog_started)
         self.jog_panel.jog_stopped.connect(self._on_jog_stopped)
-        self.jog_panel.home_requested.connect(self._on_home_all_requested)
+        self.jog_panel.home_requested.connect(self._on_jog_panel_home)
         self.jog_panel.stop_requested.connect(self._on_stop_sequence)
 
         self._setup_menubar()
@@ -624,7 +625,7 @@ class MainWindow(QMainWindow):
             target_state.planar_angles[i] = end.planar_angles[i]
 
     def _on_reset_to_vertical(self) -> None:
-        """Animate all joints to the saved starting pose (arm_config starting_angles)."""
+        """Animate all joints to the saved starting pose and sync EE target + joint panel."""
         target = self._arm_state_from_resting_degs()
         self.animator.start(
             self.arm_state,
@@ -632,7 +633,21 @@ class MainWindow(QMainWindow):
             locked_orientation=None,
             motor_rad_limits=self._anim_motor_limits(),
         )
+        # Update EE target to FK of home pose so coordinates stay in sync
+        ee = forward_kinematics(self.arm_config, target)[-1]
+        self.target = np.array(ee, dtype=float)
+        self.target_panel.x_spin.setValue(float(self.target[0]))
+        self.target_panel.y_spin.setValue(float(self.target[1]))
+        self.target_panel.z_spin.setValue(float(self.target[2]))
+        self.joint_panel.update_angles(target, ConstraintSet())
         self.status_bar.showMessage("Resetting to saved resting pose (starting_angles)")
+
+    def _on_jog_panel_home(self) -> None:
+        """Jog panel HOME: reset sim to resting pose, also home hardware if connected."""
+        self._on_reset_to_vertical()
+        if self._hardware is not None and self._hardware.is_connected:
+            self._hardware.send_raw("HOME\n")
+            self.terminal.log("HOME → firmware HOME", "tx")
 
     def _apply_zero_from_start_panel_to_motors(self) -> None:
         """Write Zero position panel values into Motor configuration zero offsets."""
@@ -1450,10 +1465,11 @@ class MainWindow(QMainWindow):
     # ── Jog Control Panel ─────────────────────────────────────────────
 
     def _on_jog_started(self, jog_type: str, axis: int, direction: float) -> None:
+        self._jog_type = jog_type
+        self._jog_axis = axis
+        self._jog_dir  = direction
+        self.animator.cancel()
         self._jog_active = True
-        self._jog_type   = jog_type
-        self._jog_axis   = axis
-        self._jog_dir    = direction
         self._jog_vel    = 0.0
 
     def _on_jog_stopped(self) -> None:
@@ -1462,12 +1478,24 @@ class MainWindow(QMainWindow):
 
     def _tick_jog(self, dt: float) -> None:
         """Advance arm state for one timer tick while jog is held."""
-        accel_deg   = self.jog_panel.accel_deg_s2()
-        max_deg     = self.jog_panel.max_speed_deg_s() * self.jog_panel.feed_rate()
+        if not self._jog_active:
+            return
+        accel = self.jog_panel.accel_deg_s2()
+        max_v = self.jog_panel.max_speed_deg_s() * self.jog_panel.feed_rate()
+        self._jog_vel = min(max_v, self._jog_vel + accel * dt)
 
-        self._jog_vel = min(max_deg, self._jog_vel + accel_deg * dt)
-
-        if self._jog_type == 'joint':
+        if self._jog_type == 'ee':
+            # Velocity in mm/s (accel/max_speed spinboxes reused as mm/s² and mm/s)
+            delta_mm = self._jog_dir * self._jog_vel * dt
+            positions = forward_kinematics(self.arm_config, self.arm_state)
+            ee = np.array(positions[-1], dtype=float)
+            ee[self._jog_axis] += delta_mm
+            result = solve_ik_analytical(
+                self.arm_config, ee, elbow=self.config_panel.get_elbow()
+            )
+            if result.success and result.state is not None:
+                self.arm_state = result.state
+        else:
             delta_rad = math.radians(self._jog_dir * self._jog_vel * dt)
             if self._jog_axis == 0:
                 self.arm_state.base_angle += delta_rad
@@ -1475,17 +1503,6 @@ class MainWindow(QMainWindow):
                 idx = self._jog_axis - 1
                 if 0 <= idx < len(self.arm_state.planar_angles):
                     self.arm_state.planar_angles[idx] += delta_rad
-
-        elif self._jog_type == 'ee':
-            # mm/s (reuse same speed param — user adjusts to taste)
-            delta_mm = self._jog_dir * self._jog_vel * dt
-            self.target[self._jog_axis] += delta_mm
-            self.target_panel.x_spin.setValue(float(self.target[0]))
-            self.target_panel.y_spin.setValue(float(self.target[1]))
-            self.target_panel.z_spin.setValue(float(self.target[2]))
-            result = solve_ik_analytical(self.arm_config, self.target, self.constraints)
-            if result.success:
-                self.arm_state = result.state
 
     # ── Timer / Animation Loop ────────────────────────────────────────
 
@@ -1519,7 +1536,7 @@ class MainWindow(QMainWindow):
                     bj = self.animator.bottleneck_joint
                     self.status_bar.showMessage(
                         f"Move duration is set by J{bj} (Motor max sps/gear). All joints use one time so they "
-                        f"finish together. If the move is too slow, increase that joint’s max sps or fix an "
+                        f"finish together. If the move is too slow, increase that joint's max sps or fix an "
                         f"overstated gear ratio — often the elbow (J2).",
                         8000,
                     )
@@ -1733,7 +1750,7 @@ class MainWindow(QMainWindow):
         return out
 
     def _seed_hardware_pose_from_sim(self) -> None:
-        """On connect: align the Pico’s logical position with the simulator (no burst from 0)."""
+        """On connect: align the Pico's logical position with the simulator (no burst from 0)."""
         h = self._hardware
         if h is None or not getattr(h, "is_connected", False):
             return
@@ -1828,7 +1845,7 @@ class MainWindow(QMainWindow):
                     self._hw_sync_nudge_shown = False
             return
 
-        if not self.hardware_panel.is_hardware_sync_enabled():
+        if self.jog_panel.sim_mode:
             if (
                 not self._hw_sync_nudge_shown
                 and self._hardware is not None
@@ -1836,10 +1853,8 @@ class MainWindow(QMainWindow):
             ):
                 self._hw_sync_nudge_shown = True
                 self.terminal.log(
-                    "Hardware: “Enable hardware synchronization” is off — the Pico is not sent "
-                    "J0:…,J1:… angle streams, so the physical arm will not follow JOG, IK, or waypoints. "
-                    "Homing, LED, STOP, and STEPT still work. Turn the checkbox on in "
-                    "Hardware (Pico 2W) to move the real arm.",
+                    "SIM mode is ON - the Pico is not receiving joint angle streams. "
+                    "Uncheck SIM in the control panel to move the real arm.",
                     "error",
                 )
             return
@@ -1991,8 +2006,7 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, _poll_connect)
 
-    def _on_hw_sync_toggled(self, checked: bool) -> None:
-        """Allow the sync-off nudge to fire again if the user disables streaming."""
+    def _on_sim_mode_toggled(self, checked: bool) -> None:
         if not checked:
             self._hw_sync_nudge_shown = False
 

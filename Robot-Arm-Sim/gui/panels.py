@@ -2105,18 +2105,6 @@ class HardwarePanel(QGroupBox):
         super().__init__("Hardware (Pico 2W)", parent)
         layout = QVBoxLayout(self)
 
-        # Enable toggle
-        self.enable_cb = QCheckBox("Enable hardware synchronization")
-        self.enable_cb.setToolTip(
-            "Must be ON for JOG, IK (Update/Space), and waypoints to move the real arm — "
-            "the PC sends J0:…,J1:… as fast as the serial link allows (typically ~100–200 Hz "
-            "at 115200 baud), with the sim stepped at 1 kHz.\n"
-            "When OFF, the 3D sim still moves but the Pico only receives one-off commands "
-            "(homing, LED, STOP, STEPT, etc.), not continuous angles."
-        )
-        self.enable_cb.setChecked(True)
-        layout.addWidget(self.enable_cb)
-
         # Status indicator
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status:"))
@@ -2427,8 +2415,8 @@ class HardwarePanel(QGroupBox):
         self.deploy_wifi_browser_btn.setEnabled(enabled)
 
     def is_hardware_sync_enabled(self) -> bool:
-        """When True, the main loop calls ``send_joint_angles`` to the Pico."""
-        return self.enable_cb.isChecked()
+        """Always True — sync on/off is now controlled by the SIM checkbox in JogPanel."""
+        return True
 
     def restore(self, data: dict) -> None:
         """Restore hardware panel state from a saved dict."""
@@ -2450,8 +2438,7 @@ class HardwarePanel(QGroupBox):
             idx = self.baud_combo.findText(str(data["baud"]))
             if idx >= 0:
                 self.baud_combo.setCurrentIndex(idx)
-        if "hardware_sync" in data:
-            self.enable_cb.setChecked(bool(data["hardware_sync"]))
+        # hardware_sync key ignored — sync is now controlled by JogPanel SIM checkbox
         if "firmware_include_wifi" in data:
             self.include_wifi_deploy_cb.setChecked(bool(data["firmware_include_wifi"]))
         if "firmware_step_us" in data:
@@ -2642,11 +2629,8 @@ class HardwarePanel(QGroupBox):
         self.deploy_requested.emit(port)
 
     def _on_deploy_wifi_browser_clicked(self) -> None:
-        """Preset for Wi‑Fi dashboard use: embed wireless stack, stop USB angle streaming."""
+        """Preset for Wi‑Fi dashboard use: embed wireless stack."""
         self.include_wifi_deploy_cb.setChecked(True)
-        self.enable_cb.blockSignals(True)
-        self.enable_cb.setChecked(False)
-        self.enable_cb.blockSignals(False)
 
         if self.wifi_ap_mode_deploy():
             if not self.get_wifi_ap_ssid().strip():
