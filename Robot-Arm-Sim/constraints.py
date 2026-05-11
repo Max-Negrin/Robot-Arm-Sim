@@ -92,16 +92,15 @@ def clamp_state(
 ) -> ArmState:
     """Clamp all joint angles to effective limits and apply locked values."""
     clamped = state.copy()
-    for i in range(config.num_planar_joints):
+    for i in range(config.num_joints):
+        if i >= len(clamped.joint_angles):
+            break
         lo, hi = get_effective_limits(config, constraints, i)
-        clamped.planar_angles[i] = clamp(clamped.planar_angles[i], lo, hi)
+        clamped.joint_angles[i] = clamp(clamped.joint_angles[i], lo, hi)
 
-    # Apply locked joints
     for idx, val in constraints.locked_joints.items():
-        if idx == 0:
-            clamped.base_angle = val
-        elif 1 <= idx <= config.num_planar_joints:
-            clamped.planar_angles[idx - 1] = val
+        if 0 <= idx < len(clamped.joint_angles):
+            clamped.joint_angles[idx] = val
 
     return clamped
 
@@ -190,7 +189,7 @@ def check_singularity(config: ArmConfig, state: ArmState) -> dict:
     # Classify
     sing_type = None
     if near_singular:
-        positions = forward_kinematics(config, state)
+        positions, _ = forward_kinematics(state.joint_angles, config)
         ee = positions[-1]
         d = float(np.linalg.norm(ee))
         r = math.sqrt(ee[0] ** 2 + ee[1] ** 2)
@@ -236,19 +235,17 @@ def check_self_collision(
 
     Returns True if collision detected.
     """
-    positions = forward_kinematics(config, state)
-    # FK returns interleaved [eff0, nom0, eff1, nom1, …, eff_EE] (2N+1 elements).
-    # Link segments are at even-indexed pairs: (positions[2i], positions[2i+1]).
-    n_links = config.num_planar_joints
+    positions, _ = forward_kinematics(state.joint_angles, config)
+    # positions is N+1 points: [base, j1, j2, ..., EE]
+    # Link segments are consecutive pairs: (positions[i], positions[i+1])
+    n = len(positions)
 
-    for i in range(n_links):
-        seg_i_a, seg_i_b = positions[2 * i], positions[2 * i + 1]
-        for j in range(i + 2, n_links):
-            seg_j_a, seg_j_b = positions[2 * j], positions[2 * j + 1]
-            d1 = _point_to_segment_distance(seg_i_a, seg_j_a, seg_j_b)
-            d2 = _point_to_segment_distance(seg_i_b, seg_j_a, seg_j_b)
-            d3 = _point_to_segment_distance(seg_j_a, seg_i_a, seg_i_b)
-            d4 = _point_to_segment_distance(seg_j_b, seg_i_a, seg_i_b)
+    for i in range(n - 1):
+        for j in range(i + 2, n - 1):
+            d1 = _point_to_segment_distance(positions[i],     positions[j],     positions[j + 1])
+            d2 = _point_to_segment_distance(positions[i + 1], positions[j],     positions[j + 1])
+            d3 = _point_to_segment_distance(positions[j],     positions[i],     positions[i + 1])
+            d4 = _point_to_segment_distance(positions[j + 1], positions[i],     positions[i + 1])
             if min(d1, d2, d3, d4) < margin:
                 return True
     return False
@@ -265,5 +262,5 @@ def check_table_collision(config: ArmConfig, state: ArmState) -> bool:
     The XY plane (z = 0) represents the table surface. Returns True if any
     part of the arm would intersect the table.
     """
-    positions = forward_kinematics(config, state)
+    positions, _ = forward_kinematics(state.joint_angles, config)
     return any(pos[2] < 0 for pos in positions)

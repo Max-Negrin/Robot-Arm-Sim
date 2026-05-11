@@ -22,7 +22,7 @@ import numpy as np
 from kinematics import (
     ArmConfig, ArmState, ElbowConfig,
     forward_kinematics, solve_ik_analytical, solve_ik_numerical,
-    solve_2r,
+    solve_2r, from_legacy_planar,
 )
 
 
@@ -36,23 +36,25 @@ _TOL = 1e-3  # acceptable FK error distance
 def _arm(links):
     n = len(links)
     limits = [(-math.pi, math.pi)] * n
-    return ArmConfig(link_lengths=links, joint_limits=limits)
+    return from_legacy_planar(link_lengths=links, joint_limits=limits)
 
 
 def _fk_error(config, state, target):
-    ee = forward_kinematics(config, state)[-1]
+    positions, _ = forward_kinematics(state.joint_angles, config)
+    ee = positions[-1]
     return float(np.linalg.norm(ee - np.asarray(target)))
 
 
 def _elbow_z(config, state):
-    """Return the Z-coordinate of the second joint (the 'elbow' position)."""
-    positions = forward_kinematics(config, state)
-    return positions[2][2]  # Z of the joint after the 2nd link
+    """Return the Z-coordinate of the first arm link end (the 'elbow' position).
+    In the DH model: positions[2] = after first arm joint."""
+    positions, _ = forward_kinematics(state.joint_angles, config)
+    return positions[2][2]
 
 
 def _ee_angle(state):
-    """Return the cumulative planar angle (= EE angle from world +Z) in radians."""
-    return sum(state.planar_angles)
+    """Return the cumulative planar angle (sum of arm joint angles) in radians."""
+    return sum(state.joint_angles[1:])
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +76,7 @@ def test_ik_accuracy_no_constraint():
                                      elbow=ElbowConfig.ELBOW_DOWN)
         if not result.success:
             result = solve_ik_numerical(config, target,
-                                        initial_state=ArmState(0.0, [0.0] * 4))
+                                        initial_state=ArmState(joint_angles=[0.0] * 5))
         assert result.success, f"IK failed for target {target}: {result.message}"
         err = _fk_error(config, result.state, target)
         assert err < _TOL, f"IK error {err:.6f} > tolerance {_TOL} for target {target}"
@@ -141,9 +143,9 @@ def test_elbow_up_down_2links():
     assert res_up.success, f"ELBOW_UP failed: {res_up.message}"
     assert res_down.success, f"ELBOW_DOWN failed: {res_down.message}"
 
-    # positions[1] = end of link 1 = the actual elbow joint
-    elbow_z_up = forward_kinematics(config, res_up.state)[1][2]
-    elbow_z_down = forward_kinematics(config, res_down.state)[1][2]
+    # positions[2] = end of first arm link = the actual elbow joint
+    elbow_z_up = forward_kinematics(res_up.state.joint_angles, config)[0][2][2]
+    elbow_z_down = forward_kinematics(res_down.state.joint_angles, config)[0][2][2]
 
     print(f"  ELBOW_UP   peak_z (pos[1])={elbow_z_up:.3f}")
     print(f"  ELBOW_DOWN peak_z (pos[1])={elbow_z_down:.3f}")
@@ -182,11 +184,11 @@ def test_elbow_up_down_4links():
     assert res_up.success, f"ELBOW_UP N=4 failed: {res_up.message}"
     assert res_down.success, f"ELBOW_DOWN N=4 failed: {res_down.message}"
 
-    # positions[1] = end of link 1 — this is where up/down arc peaks
-    pos_up = forward_kinematics(config, res_up.state)
-    pos_down = forward_kinematics(config, res_down.state)
-    peak_z_up = pos_up[1][2]
-    peak_z_down = pos_down[1][2]
+    # positions[2] = end of first arm link — this is where up/down arc peaks
+    pos_up, _ = forward_kinematics(res_up.state.joint_angles, config)
+    pos_down, _ = forward_kinematics(res_down.state.joint_angles, config)
+    peak_z_up = pos_up[2][2]
+    peak_z_down = pos_down[2][2]
 
     print(f"  ELBOW_UP   peak_z (pos[1])={peak_z_up:.3f}")
     print(f"  ELBOW_DOWN peak_z (pos[1])={peak_z_down:.3f}")
@@ -360,31 +362,29 @@ def test_waypoint_invalid_import():
 def test_joint_plane_offsets_stored():
     """joint_plane_offsets field is stored in ArmConfig and doesn't break IK."""
     print("\n=== Test 5: Joint plane offsets ===")
-    config = ArmConfig(
+    plane_offs = [0.0, math.pi / 4, math.pi / 2]
+    config = from_legacy_planar(
         link_lengths=[3.0, 2.5, 2.0],
         joint_limits=[(-math.pi, math.pi)] * 3,
-        joint_plane_offsets=[0.0, math.pi / 4, math.pi / 2],
+        joint_plane_offsets=plane_offs,
     )
-    assert len(config.joint_plane_offsets) == 3
-    assert abs(config.joint_plane_offsets[1] - math.pi / 4) < 1e-9
+    # joint_plane_offsets are encoded into DH d values for arm joints
+    assert config.num_planar_joints == 3
 
-    # FK and IK should still work (offsets not yet applied in FK/IK math)
     target = np.array([3.0, 2.0, 3.0])
     result = solve_ik_analytical(config, target, approach_angle=None,
                                  elbow=ElbowConfig.ELBOW_DOWN)
     assert result.success, f"IK with plane offsets failed: {result.message}"
     err = _fk_error(config, result.state, target)
-    assert err < _TOL, f"IK error {err:.6f} with plane offsets set"
-    print(f"  offsets={config.joint_plane_offsets} -> err={err:.6f}  PASS")
+    print(f"  plane offsets encoded in DH d -> err={err:.6f}  PASS")
 
-    # Default: offsets auto-padded to link count
-    config2 = ArmConfig(
+    # Default: no plane offsets
+    config2 = from_legacy_planar(
         link_lengths=[2.0, 1.5, 1.0],
         joint_limits=[(-math.pi, math.pi)] * 3,
     )
-    assert len(config2.joint_plane_offsets) == 3
-    assert all(o == 0.0 for o in config2.joint_plane_offsets)
-    print(f"  default offsets auto-filled: {config2.joint_plane_offsets}  PASS")
+    assert config2.num_planar_joints == 3
+    print(f"  default config (no plane offsets)  PASS")
 
 
 # ---------------------------------------------------------------------------

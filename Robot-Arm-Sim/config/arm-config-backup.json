@@ -267,14 +267,14 @@
       }
     ],
     "ee_constraint": {
-      "enabled": true,
+      "enabled": false,
       "auto": true,
-      "angle_deg": -180.0
+      "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 2.0,
-      "y": 8.0,
-      "z": 14.4,
+      "x": 11.0,
+      "y": 0.0,
+      "z": 13.5,
       "approach_auto": true,
       "approach_angle_deg": 0.0
     },
@@ -370,14 +370,7 @@
         "post_home_cmds": ""
       }
     ],
-    "joint_couplings": [
-      {
-        "driver": 2,
-        "follower": 3,
-        "ratio": 1.0,
-        "offset_deg": -90.0
-      }
-    ]
+    "joint_couplings": []
   },
   "hardware": {
     "wifi_host": "",

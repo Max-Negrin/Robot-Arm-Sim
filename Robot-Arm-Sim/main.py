@@ -5,7 +5,7 @@ Entry point for the PyQt6-based 3D robotic arm simulator with analytical IK.
 Usage:
     pip install -r requirements.txt
     python main.py
-
+ 
 
 """
 

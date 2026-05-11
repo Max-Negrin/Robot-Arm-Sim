@@ -378,11 +378,19 @@ class JogPanel(QWidget):
     # ── EE jog rows ──────────────────────────────────────────────────────
 
     def _add_ee_jog(self):
-        self._vbox.addWidget(self._sec_lbl("END-EFFECTOR JOG  (mm)"))
+        self._vbox.addWidget(self._sec_lbl("END-EFFECTOR JOG"))
         for i, name in enumerate(["X", "Y", "Z"]):
-            row = self._make_jog_row(name, 'ee', i)
+            row = self._make_jog_row(f"{name} mm", 'ee', i)
             self._vbox.addWidget(row["widget"])
             self._ee_rows.append(row)
+        # Roll jog: axis index 3, velocity in deg/s (reuses speed/accel spinboxes)
+        roll_row = self._make_jog_row("Roll °", 'ee', 3)
+        roll_row["widget"].setToolTip(
+            "Jog the EE roll angle (rotates gripper around the arm's pointing axis).\n"
+            "Uses the same speed/accel settings as joint jog."
+        )
+        self._vbox.addWidget(roll_row["widget"])
+        self._ee_rows.append(roll_row)
 
     # ── Jog row factory ──────────────────────────────────────────────────
 

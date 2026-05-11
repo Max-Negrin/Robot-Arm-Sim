@@ -29,7 +29,9 @@ import pyqtgraph as pg
 
 from kinematics import (
     ArmConfig, ArmState, IKResult, ElbowConfig,
-    forward_kinematics, solve_ik_analytical, solve_ik_numerical,
+    forward_kinematics, forward_kinematics_frames,
+    solve_ik_analytical, solve_ik_numerical,
+    from_legacy_planar,
 )
 from constraints import (
     ConstraintSet, validate_target, check_singularity, check_self_collision,
@@ -65,6 +67,8 @@ from .panels import (
     HomingPanel,
     HardwarePanel,
     PinoutPanel,
+    MeshConfigPanel,
+    JointCouplingPanel,
     apply_motor_joint_dict_to_row,
     _backlash_angle_rad_from_motor_cfg,
 )
@@ -93,11 +97,11 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         # Core state
-        self.arm_config = ArmConfig(
+        self.arm_config = from_legacy_planar(
             link_lengths=[3.0, 2.5, 2.0, 1.5],
             joint_limits=[_DEFAULT_LIMIT] * 4,
         )
-        self.arm_state = ArmState(base_angle=0.0, planar_angles=[0.0] * 4)
+        self.arm_state = ArmState(joint_angles=[0.0] * 5)
         # Base + planar joint angles (deg) for "rest" — from arm_config starting_angles on load/apply
         self._resting_pose_degs: list[float] = [0.0] * (self.arm_config.num_planar_joints + 1)
         self.target = np.array([4.0, 3.0, 2.5])
@@ -200,6 +204,11 @@ class MainWindow(QMainWindow):
         self.homing_panel        = HomingPanel()
         self.pinout_panel        = PinoutPanel()
         self.hardware_panel      = HardwarePanel()
+        self.mesh_config_panel   = MeshConfigPanel()
+        self.coupling_panel      = JointCouplingPanel()
+
+        # Joint coupling state: list of {driver, follower, ratio, offset_deg}
+        self._joint_couplings: list = []
 
         # Composite group widgets reused inside dialogs
         self._arm_setup_widget = QWidget()
@@ -301,6 +310,7 @@ class MainWindow(QMainWindow):
         self.start_pose_panel.set_save_home_callback(self._on_save_home_pose)
 
         self.ee_constraint_panel.constrain_cb.toggled.connect(self._on_ee_constraint_toggled)
+        self.ee_constraint_panel.azim_cb.toggled.connect(self._on_ee_constraint_toggled)
 
         self.waypoint_panel.run_btn.clicked.connect(self._on_run_sequence)
         self.waypoint_panel.stop_btn.clicked.connect(self._on_stop_sequence)
@@ -326,6 +336,10 @@ class MainWindow(QMainWindow):
         self.jog_panel.jog_stopped.connect(self._on_jog_stopped)
         self.jog_panel.home_requested.connect(self._on_jog_panel_home)
         self.jog_panel.stop_requested.connect(self._on_stop_sequence)
+
+        self.mesh_config_panel.mesh_file_changed.connect(self._on_mesh_file_changed)
+        self.mesh_config_panel.mesh_transform_changed.connect(self._on_mesh_transform_changed)
+        self.coupling_panel.couplings_changed.connect(self._on_couplings_changed)
 
         self._setup_menubar()
 
@@ -366,6 +380,8 @@ class MainWindow(QMainWindow):
         arm_menu.addAction(self._panel_action("Configuration && Offsets", self._arm_setup_widget, 400))
         arm_menu.addAction(self._panel_action("Target && IK", self._target_widget, 360))
         arm_menu.addAction(self._panel_action("Joint State && Zero", self._joint_state_widget, 400))
+        arm_menu.addAction(self._panel_action("Mesh Configuration", self.mesh_config_panel, 360))
+        arm_menu.addAction(self._panel_action("Joint Couplings", self.coupling_panel, 360))
 
         # Motion
         motion_menu = mb.addMenu("Motion")
@@ -464,15 +480,22 @@ class MainWindow(QMainWindow):
             self._help_hint_label.hide()
 
     def _on_ee_constraint_toggled(self, checked: bool) -> None:
-        """Capture EE orientation when the constraint is activated with Auto mode."""
-        if checked and self.ee_constraint_panel.auto_cb.isChecked():
-            self.ee_constraint_panel.capture_angle(self.arm_state)
-            aa = self.ee_constraint_panel.get_approach_angle()
-            if aa is not None:
-                self.status_bar.showMessage(
-                    f"End effector constrained at {math.degrees(aa):+.1f}° from +Z"
-                )
-        elif not checked:
+        """Capture EE orientation when either constraint is activated with Auto mode."""
+        panel = self.ee_constraint_panel
+        elev_auto = panel.constrain_cb.isChecked() and panel.auto_cb.isChecked()
+        azim_auto = panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked()
+        if checked and (elev_auto or azim_auto):
+            panel.capture_angle(self.arm_state, self.arm_config)
+        parts = []
+        aa = panel.get_approach_angle()
+        if aa is not None:
+            parts.append(f"elev {math.degrees(aa):+.1f}°")
+        az = panel.get_azimuth_angle()
+        if az is not None:
+            parts.append(f"azim {math.degrees(az):+.1f}°")
+        if parts:
+            self.status_bar.showMessage("EE constrained: " + "  ".join(parts))
+        elif not panel.is_active:
             self.status_bar.showMessage("End effector constraint released")
 
     def _on_run_sequence(self) -> None:
@@ -573,11 +596,8 @@ class MainWindow(QMainWindow):
         else:
             degs = self._resting_pose_degs
         if not degs or len(degs) < n + 1:
-            return ArmState(0.0, [0.0] * n)
-        return ArmState(
-            base_angle=math.radians(float(degs[0])),
-            planar_angles=[math.radians(float(degs[i])) for i in range(1, n + 1)],
-        )
+            return ArmState(joint_angles=[0.0] * (n + 1))
+        return ArmState(joint_angles=[math.radians(float(degs[i])) for i in range(n + 1)])
 
     def _anim_motor_limits(self) -> list[tuple[float, float]] | None:
         """(ω, α) per joint in rad/s and rad/s² from Motor configuration; None if not ready."""
@@ -614,15 +634,18 @@ class MainWindow(QMainWindow):
         end = self.animator.run_target()
         if end is None:
             return
-        n = len(target_state.planar_angles)
-        if len(end.planar_angles) != n:
+        n = len(target_state.joint_angles)
+        if len(end.joint_angles) != n:
             return
-        if not base_edited:
-            target_state.base_angle = end.base_angle
         for i in range(n):
-            if planar_idx_edited is not None and i == planar_idx_edited:
+            is_base = (i == 0)
+            is_planar = (i > 0)
+            planar_i = i - 1
+            if is_base and base_edited:
                 continue
-            target_state.planar_angles[i] = end.planar_angles[i]
+            if is_planar and planar_idx_edited is not None and planar_i == planar_idx_edited:
+                continue
+            target_state.joint_angles[i] = end.joint_angles[i]
 
     def _on_reset_to_vertical(self) -> None:
         """Animate all joints to the saved starting pose and sync EE target + joint panel."""
@@ -633,12 +656,6 @@ class MainWindow(QMainWindow):
             locked_orientation=None,
             motor_rad_limits=self._anim_motor_limits(),
         )
-        # Update EE target to FK of home pose so coordinates stay in sync
-        ee = forward_kinematics(self.arm_config, target)[-1]
-        self.target = np.array(ee, dtype=float)
-        self.target_panel.x_spin.setValue(float(self.target[0]))
-        self.target_panel.y_spin.setValue(float(self.target[1]))
-        self.target_panel.z_spin.setValue(float(self.target[2]))
         self.joint_panel.update_angles(target, ConstraintSet())
         self.status_bar.showMessage("Resetting to saved resting pose (starting_angles)")
 
@@ -700,14 +717,15 @@ class MainWindow(QMainWindow):
         self.start_pose_panel.reset()
         self._apply_zero_from_start_panel_to_motors()
         self.arm_state = self._arm_state_from_resting_degs()
+        if self._joint_couplings:
+            self._apply_couplings(self.arm_state.joint_angles)
         self._render_arm()
         self._save_arm_config()
         self.status_bar.showMessage("Zero trim cleared; 3D arm at configured home pose")
 
     def _copy_arm_to_start_pose(self) -> None:
         """Set zero offsets to current sim joint angles (°) for quick calibration."""
-        degs = [math.degrees(self.arm_state.base_angle)]
-        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        degs = [math.degrees(a) for a in self.arm_state.joint_angles]
         self._updating_motor_from_start = True
         try:
             self.start_pose_panel.set_values(degs)
@@ -719,8 +737,7 @@ class MainWindow(QMainWindow):
 
     def _copy_home_pose_from_arm(self) -> None:
         """Set home / resting joint angles to the current simulator pose (degrees)."""
-        degs = [math.degrees(self.arm_state.base_angle)]
-        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        degs = [math.degrees(a) for a in self.arm_state.joint_angles]
         self._updating_motor_from_start = True
         try:
             self.start_pose_panel.set_home_degs(degs)
@@ -776,18 +793,8 @@ class MainWindow(QMainWindow):
         self.target_panel.y_spin.setValue(float(target[1]))
         self.target_panel.z_spin.setValue(float(target[2]))
 
-        result = solve_ik_analytical(
-            self.arm_config, target,
-            approach_angle=approach_angle,
-            elbow=elbow,
-            locked_joints={},
-        )
-        if not result.success:
-            result = solve_ik_numerical(
-                self.arm_config, target,
-                initial_state=self.arm_state,
-                locked_joints={},
-            )
+        wp_locked = self.ee_constraint_panel.get_locked_joints(self.arm_config)
+        result = self._solve_ik(target, approach_angle, elbow, wp_locked)
 
         if result.success and result.state is not None:
             self.joint_panel.update_angles(result.state, ConstraintSet())
@@ -838,24 +845,29 @@ class MainWindow(QMainWindow):
             lateral_y=(old_y + [0.0] * n)[:n],
         )
 
-        # Apply custom per-joint limits over the panel defaults
-        limits = list(base_cfg.joint_limits)
+        # Apply custom per-joint limits over the panel defaults (arm joints only, 0-indexed)
+        arm_limits = list(base_cfg.joint_limits[1:])   # skip base joint
         for i, lim in self._custom_limits.items():
-            if i < len(limits):
-                limits[i] = lim
+            if i < len(arm_limits):
+                arm_limits[i] = lim
 
-        self.arm_config = ArmConfig(
-            link_lengths=base_cfg.link_lengths,
-            joint_limits=limits,
-            joint_plane_offsets=self.offset_panel.get_joint_offsets(),
+        self.arm_config = from_legacy_planar(
+            link_lengths=base_cfg.link_lengths[1:],    # skip base joint
+            joint_limits=arm_limits,
             base_vertical_offset=self.offset_panel.get_base_offset(),
             joint_lateral_x=self.offset_panel.get_lateral_x(),
             joint_lateral_y=self.offset_panel.get_lateral_y(),
+            joint_plane_offsets=self.offset_panel.get_joint_offsets(),
+            joint_types=self.config_panel.get_joint_types(),
         )
         self.constraints.collision_margin = self.offset_panel.get_collision_margin()
 
-        self.arm_state = ArmState(base_angle=0.0, planar_angles=[0.0] * n)
-        self._resting_pose_degs = [0.0] * (n + 1)
+        # Carry over existing home angles (trimmed/padded to new joint count).
+        prev_degs = list(self._resting_pose_degs)
+        self._resting_pose_degs = [
+            prev_degs[i] if i < len(prev_degs) else 0.0
+            for i in range(n + 1)
+        ]
 
         self.start_pose_panel.rebuild(n)
         self.start_pose_panel.set_home_degs(self._resting_pose_degs)
@@ -867,20 +879,65 @@ class MainWindow(QMainWindow):
         self._sync_pinout_panel()
         self.ee_constraint_panel.reset()
         self.animator.cancel()
+        self.mesh_config_panel.rebuild(n)
+        self.coupling_panel.rebuild(n)
+        # Reload all meshes from the config panel and restore transforms.
+        self.viewport.load_meshes(self.mesh_config_panel.get_paths())
+        for i, lt in enumerate(self.mesh_config_panel.get_transforms()):
+            self.viewport.set_mesh_local_transform(
+                i, lt['tx'], lt['ty'], lt['tz'],
+                lt['rx'], lt['ry'], lt['rz'], lt['scale'],
+            )
+        # Reset arm to home position (not all-zeros).
+        self.arm_state = self._arm_state_from_resting_degs()
+        if self._joint_couplings:
+            self._apply_couplings(self.arm_state.joint_angles)
         self._render_arm()
         if not self._loading:
             self._save_arm_config()
         self.status_bar.showMessage("Configuration updated")
 
+    def _on_mesh_file_changed(self, idx: int, path: str) -> None:
+        """Reload a single mesh when user loads/clears it in the Mesh Configuration panel."""
+        lt = self.mesh_config_panel.get_transforms()
+        scale = lt[idx]['scale'] if idx < len(lt) else 1.0
+        self.viewport.reload_mesh(idx, path, scale=scale)
+        self._render_arm()
+        if not self._loading:
+            self._save_arm_config()
+
+    def _on_mesh_transform_changed(self, idx: int, tx: float, ty: float, tz: float,
+                                    rx: float, ry: float, rz: float, scale: float) -> None:
+        """Forward per-mesh local transform changes to the viewport and re-render."""
+        self.viewport.set_mesh_local_transform(idx, tx, ty, tz, rx, ry, rz, scale)
+        self._render_arm()
+        if not self._loading:
+            self._save_arm_config()
+
+    def _apply_couplings(self, angles: list) -> None:
+        """Fix all coupled follower joints at their constant offset angle (rigid link)."""
+        for c in self._joint_couplings:
+            f = c['follower']
+            if f < len(angles):
+                angles[f] = math.radians(c['offset_deg'])
+
+    def _on_couplings_changed(self, couplings: list) -> None:
+        self._joint_couplings = couplings
+        self._apply_couplings(self.arm_state.joint_angles)
+        self._render_arm()
+        if not self._loading:
+            self._save_arm_config()
+
     def _on_offsets_changed(self) -> None:
         """Handle changes to joint plane offsets, base offset, lateral offsets, or collision margin."""
-        self.arm_config = ArmConfig(
-            link_lengths=self.arm_config.link_lengths,
-            joint_limits=self.arm_config.joint_limits,
-            joint_plane_offsets=self.offset_panel.get_joint_offsets(),
+        self.arm_config = from_legacy_planar(
+            link_lengths=self.arm_config.link_lengths[1:],   # skip base joint
+            joint_limits=self.arm_config.joint_limits[1:],   # skip base joint
             base_vertical_offset=self.offset_panel.get_base_offset(),
             joint_lateral_x=self.offset_panel.get_lateral_x(),
             joint_lateral_y=self.offset_panel.get_lateral_y(),
+            joint_plane_offsets=self.offset_panel.get_joint_offsets(),
+            joint_types=self.arm_config.joint_types,
         )
         self.constraints.collision_margin = self.offset_panel.get_collision_margin()
         self._render_arm()
@@ -893,8 +950,7 @@ class MainWindow(QMainWindow):
 
     def _on_save_as_default(self) -> None:
         """Explicitly save current configuration as the startup default."""
-        degs = [math.degrees(self.arm_state.base_angle)]
-        degs += [math.degrees(a) for a in self.arm_state.planar_angles]
+        degs = [math.degrees(a) for a in self.arm_state.joint_angles]
         self._updating_motor_from_start = True
         try:
             if self.start_pose_panel.home_spins:
@@ -1039,16 +1095,21 @@ class MainWindow(QMainWindow):
         # Homing config
         homing_config = self.homing_panel.get_homing_configs()
 
+        arm_links = self.arm_config.link_lengths[1:]   # skip base joint (a=0)
+        arm_limits = self.arm_config.joint_limits[1:]   # skip base joint
         return {
-            "num_links": len(self.arm_config.link_lengths),
-            "link_lengths": list(self.arm_config.link_lengths),
+            "num_links": len(arm_links),
+            "link_lengths": arm_links,
+            "joint_types": self.arm_config.joint_types,
+            "mesh_files": self.mesh_config_panel.get_paths(),
+            "mesh_transforms": self.mesh_config_panel.get_transforms(),
             "joint_limits": [
                 [round(math.degrees(lo), 4), round(math.degrees(hi), 4)]
-                for lo, hi in self.arm_config.joint_limits
+                for lo, hi in arm_limits
             ],
             "joint_plane_offsets": list(self.arm_config.joint_plane_offsets),
-            "joint_lateral_x": list(self.arm_config.joint_lateral_x),
-            "joint_lateral_y": list(self.arm_config.joint_lateral_y),
+            "joint_lateral_x": list(self.arm_config.joint_lateral_x[1:]),
+            "joint_lateral_y": list(self.arm_config.joint_lateral_y[1:]),
             "base_vertical_offset": self.arm_config.base_vertical_offset,
             "starting_angles": starting,
             "elbow": self.config_panel.elbow_combo.currentIndex(),
@@ -1057,6 +1118,7 @@ class MainWindow(QMainWindow):
             "ee_constraint": ee_constraint,
             "target_panel": target_panel,
             "homing_config": homing_config,
+            "joint_couplings": self.coupling_panel.get_couplings(),
         }
 
     def _apply_arm_config_dict(self, d: dict) -> None:
@@ -1071,6 +1133,16 @@ class MainWindow(QMainWindow):
         self.config_panel._rebuild_links(n)
         for spin, val in zip(self.config_panel.link_spins, link_lengths):
             spin.setValue(float(val))
+        saved_types = d.get("joint_types")
+        if saved_types:
+            self.config_panel.set_joint_types(saved_types)
+        self.mesh_config_panel.rebuild(n)
+        saved_meshes = d.get("mesh_files")
+        if saved_meshes:
+            self.mesh_config_panel.set_paths(saved_meshes)
+        saved_mesh_transforms = d.get("mesh_transforms")
+        if saved_mesh_transforms:
+            self.mesh_config_panel.set_transforms(saved_mesh_transforms)
 
         # Restore joint limits (overrides panel defaults)
         saved_limits = d.get("joint_limits")
@@ -1174,6 +1246,11 @@ class MainWindow(QMainWindow):
         if elbow is not None:
             self.config_panel.elbow_combo.setCurrentIndex(int(elbow))
 
+        # Restore joint couplings
+        saved_couplings = d.get("joint_couplings", [])
+        self._joint_couplings = list(saved_couplings)
+        self.coupling_panel.set_couplings(saved_couplings)
+
         # Zero position panel = motor zero offsets; restore sim pose (not zero trim)
         self._sync_start_panel_from_motors()
         starting_angles = d.get("starting_angles")
@@ -1181,15 +1258,65 @@ class MainWindow(QMainWindow):
             self._resting_pose_degs = [float(starting_angles[i]) for i in range(n + 1)]
             if self.start_pose_panel.home_spins:
                 self.start_pose_panel.set_home_degs(self._resting_pose_degs)
-            self.arm_state = ArmState(
-                base_angle=math.radians(self._resting_pose_degs[0]),
-                planar_angles=[math.radians(self._resting_pose_degs[i]) for i in range(1, n + 1)],
-            )
+            self.arm_state = ArmState(joint_angles=[math.radians(self._resting_pose_degs[i]) for i in range(n + 1)])
+            if self._joint_couplings:
+                self._apply_couplings(self.arm_state.joint_angles)
             self._render_arm()
         else:
             self._resting_pose_degs = [0.0] * (n + 1)
             if self.start_pose_panel.home_spins:
                 self.start_pose_panel.set_home_degs(self._resting_pose_degs)
+
+    def _solve_ik(
+        self,
+        target: np.ndarray,
+        approach_angle,
+        elbow,
+        locked_joints: dict,
+    ) -> "IKResult":
+        """
+        Solve IK seeded from the current arm state.  If the solution causes
+        self-collision, automatically try the opposite elbow configuration.
+        Returns the best IKResult (collision-free if possible).
+        """
+        result = solve_ik_analytical(
+            self.arm_config, target,
+            approach_angle=approach_angle,
+            elbow=elbow,
+            locked_joints=locked_joints,
+            initial_angles=self.arm_state.joint_angles,
+            couplings=self._joint_couplings or None,
+        )
+
+        if result.success and result.state is not None:
+            margin = self.constraints.collision_margin
+            if check_self_collision(self.arm_config, result.state, margin):
+                alt_elbow = (ElbowConfig.ELBOW_DOWN
+                             if elbow == ElbowConfig.ELBOW_UP
+                             else ElbowConfig.ELBOW_UP)
+                alt = solve_ik_analytical(
+                    self.arm_config, target,
+                    approach_angle=approach_angle,
+                    elbow=alt_elbow,
+                    locked_joints=locked_joints,
+                    initial_angles=self.arm_state.joint_angles,
+                    couplings=self._joint_couplings or None,
+                )
+                if alt.success and alt.state is not None and \
+                        not check_self_collision(self.arm_config, alt.state, margin):
+                    self.status_bar.showMessage(
+                        f"Elbow auto-flipped to avoid self-collision | {alt.message}"
+                    )
+                    return alt
+                # Both configurations collide — return original with warning appended.
+                result = IKResult(
+                    success=result.success,
+                    state=result.state,
+                    error_distance=result.error_distance,
+                    message=result.message + " [SELF-COLLISION WARNING]",
+                    elbow_config=result.elbow_config,
+                )
+        return result
 
     def _on_update_clicked(self) -> None:
         """Handle the Update button / Space key: validate, solve IK, start animation."""
@@ -1210,6 +1337,9 @@ class MainWindow(QMainWindow):
                         if val is not None:
                             locked_joints[idx] = val
 
+            # Merge EE orientation locks (roll joints) into locked_joints
+            locked_joints.update(self.ee_constraint_panel.get_locked_joints(self.arm_config))
+
             # Approach angle: EE constraint panel takes priority; fall back to TargetPanel
             approach_angle = self.ee_constraint_panel.get_approach_angle()
             if approach_angle is None:
@@ -1222,25 +1352,13 @@ class MainWindow(QMainWindow):
             if not validation["reachable"]:
                 self.status_bar.showMessage(f"Warning: {validation['message']}")
 
-            # Solve IK
-            result = solve_ik_analytical(
-                self.arm_config, self.target,
-                approach_angle=approach_angle,
-                elbow=elbow,
-                locked_joints=locked_joints,
-            )
-
-            # Fallback to numerical
-            if not result.success:
-                self.status_bar.showMessage("Analytical IK failed, trying numerical...")
-                result = solve_ik_numerical(
-                    self.arm_config, self.target,
-                    initial_state=self.arm_state,
-                    locked_joints=locked_joints,
-                )
+            # Solve IK (seeds from current state; auto-flips elbow if self-collision)
+            result = self._solve_ik(self.target, approach_angle, elbow, locked_joints)
 
             if result.success and result.state is not None:
                 final_state = result.state
+                if self._joint_couplings:
+                    self._apply_couplings(final_state.joint_angles)
                 self.joint_panel.update_angles(final_state, ConstraintSet())
                 self.animator.start(
                     self.arm_state,
@@ -1280,9 +1398,8 @@ class MainWindow(QMainWindow):
             "target_z": float(self.target[2]),
         }
         # Current joint angles
-        ctx["theta_1"] = self.arm_state.base_angle
-        for i, a in enumerate(self.arm_state.planar_angles):
-            ctx[f"theta_{i + 2}"] = a
+        for i, a in enumerate(self.arm_state.joint_angles):
+            ctx[f"theta_{i + 1}"] = a
         # Link lengths
         for i, L in enumerate(self.arm_config.link_lengths):
             ctx[f"L{i + 1}"] = L
@@ -1444,6 +1561,19 @@ class MainWindow(QMainWindow):
         self.hardware_panel.home_all_btn.setEnabled(True)
 
         if success:
+            # Sync the simulation state to the post-home position so the 3D view
+            # reflects home and the streaming loop doesn't re-command the old target.
+            homing_cfgs = self.homing_panel.get_homing_configs()
+            new_angles = list(self.arm_state.joint_angles)
+            for j_idx in self._homing_joint_indices:
+                cfg = next((c for c in homing_cfgs if c["idx"] == j_idx), None)
+                offset_deg = cfg.get("home_offset_deg", 0.0) if cfg else 0.0
+                if j_idx < len(new_angles):
+                    new_angles[j_idx] = math.radians(offset_deg)
+            self.arm_state = ArmState(joint_angles=new_angles)
+            if self._joint_couplings:
+                self._apply_couplings(self.arm_state.joint_angles)
+            self._render_arm()
             self._run_post_home_commands(self._homing_joint_indices)
         self._homing_joint_indices = []
 
@@ -1485,24 +1615,43 @@ class MainWindow(QMainWindow):
         self._jog_vel = min(max_v, self._jog_vel + accel * dt)
 
         if self._jog_type == 'ee':
-            # Velocity in mm/s (accel/max_speed spinboxes reused as mm/s² and mm/s)
-            delta_mm = self._jog_dir * self._jog_vel * dt
-            positions = forward_kinematics(self.arm_config, self.arm_state)
-            ee = np.array(positions[-1], dtype=float)
-            ee[self._jog_axis] += delta_mm
-            result = solve_ik_analytical(
-                self.arm_config, ee, elbow=self.config_panel.get_elbow()
-            )
-            if result.success and result.state is not None:
-                self.arm_state = result.state
+            approach_angle = self.ee_constraint_panel.get_approach_angle()
+            locked_joints  = self.ee_constraint_panel.get_locked_joints(self.arm_config)
+            elbow          = self.config_panel.get_elbow()
+
+            if self._jog_axis == 3:
+                # Roll jog: directly drive roll joints, update lock spinbox to stay in sync
+                delta_rad = math.radians(self._jog_dir * self._jog_vel * dt)
+                for i, jtype in enumerate(self.arm_config.joint_types):
+                    if jtype == "roll":
+                        idx = i + 1
+                        new_a = self.arm_state.joint_angles[idx] + delta_rad
+                        j = self.arm_config.joints[idx]
+                        self.arm_state.joint_angles[idx] = max(j.joint_min, min(j.joint_max, new_a))
+                # Keep roll spinbox in sync with the first roll joint
+                for i, jtype in enumerate(self.arm_config.joint_types):
+                    if jtype == "roll":
+                        self.ee_constraint_panel.roll_spin.setValue(
+                            math.degrees(self.arm_state.joint_angles[i + 1])
+                        )
+                        break
+            else:
+                # XYZ EE jog — velocity in mm/s; maintain orientation if constraints active
+                delta_mm = self._jog_dir * self._jog_vel * dt
+                positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
+                ee = np.array(positions[-1], dtype=float)
+                ee[self._jog_axis] += delta_mm
+                result = self._solve_ik(ee, approach_angle, elbow, locked_joints)
+                if result.success and result.state is not None:
+                    self.arm_state = result.state
         else:
             delta_rad = math.radians(self._jog_dir * self._jog_vel * dt)
-            if self._jog_axis == 0:
-                self.arm_state.base_angle += delta_rad
-            else:
-                idx = self._jog_axis - 1
-                if 0 <= idx < len(self.arm_state.planar_angles):
-                    self.arm_state.planar_angles[idx] += delta_rad
+            idx = self._jog_axis
+            if 0 <= idx < len(self.arm_state.joint_angles):
+                self.arm_state.joint_angles[idx] += delta_rad
+
+        if self._joint_couplings:
+            self._apply_couplings(self.arm_state.joint_angles)
 
     # ── Timer / Animation Loop ────────────────────────────────────────
 
@@ -1541,6 +1690,11 @@ class MainWindow(QMainWindow):
                         8000,
                     )
 
+            # Coupling enforcement — always, regardless of animation/jog state.
+            # _tick_jog already calls this, so skip during jog to avoid double-apply.
+            if self._joint_couplings and not self._jog_active:
+                self._apply_couplings(self.arm_state.joint_angles)
+
             # GL: 1 kHz not needed; ~125 fps while moving is visually smooth; idle ~125 fps too
             v_period = (
                 self._VIEW_REDRAW_EVERY_N_ANIM
@@ -1573,12 +1727,13 @@ class MainWindow(QMainWindow):
 
     def _render_arm(self) -> None:
         """Compute FK and update the 3D viewport."""
-        positions = forward_kinematics(self.arm_config, self.arm_state)
-        self.viewport.update_arm(positions, self.target)
+        positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
+        frames = forward_kinematics_frames(self.arm_config, self.arm_state)
+        self.viewport.update_arm(positions, self.target, frames=frames)
 
     def _update_stats(self) -> None:
         """Update the stats panel with current state."""
-        positions = forward_kinematics(self.arm_config, self.arm_state)
+        positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
         ee = positions[-1]
         ee_dist = float(np.linalg.norm(ee - self.target))
 
@@ -1600,10 +1755,8 @@ class MainWindow(QMainWindow):
 
     def _update_jog_panel_positions(self) -> None:
         try:
-            joints_deg = [math.degrees(self.arm_state.base_angle)] + [
-                math.degrees(a) for a in self.arm_state.planar_angles
-            ]
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            joints_deg = [math.degrees(a) for a in self.arm_state.joint_angles]
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             ee = list(positions[-1]) if len(positions) > 0 else [0.0, 0.0, 0.0]
             self.jog_panel.update_positions(joints_deg, ee)
             # Sync joint count if arm config changed
@@ -1716,7 +1869,7 @@ class MainWindow(QMainWindow):
 
     def _gravity_adjusted_hardware_angles_rad(self) -> list[float]:
         """Joint angles in radians for the Pico, including per-joint gravity comp (deg)."""
-        angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+        angles = list(self.arm_state.joint_angles)
         gravity_offsets = self.motor_config_panel.get_gravity_offsets()
         for i, grav_deg in gravity_offsets.items():
             if grav_deg and i < len(angles):
@@ -1802,26 +1955,21 @@ class MainWindow(QMainWindow):
                         for i in sorted(self._pico_pos)
                     ) + "  [hw]"
                 else:
-                    deg = [math.degrees(self.arm_state.base_angle)] + [
-                        math.degrees(a) for a in self.arm_state.planar_angles
-                    ]
+                    deg = [math.degrees(a) for a in self.arm_state.joint_angles]
                     pos_str = "  ".join(f"J{i}={d:+.1f}°" for i, d in enumerate(deg))
                 self.terminal.log(pos_str, "info")
             if getattr(self, "_ee_log_enabled", False):
                 if hw_live and self._pico_pos:
                     # FK from real Pico angles
-                    n = self.arm_config.num_planar_joints
-                    pico_base = math.radians(self._pico_pos.get(0, math.degrees(self.arm_state.base_angle)))
-                    pico_planar = [
-                        math.radians(self._pico_pos.get(i + 1, math.degrees(self.arm_state.planar_angles[i])))
-                        for i in range(n)
+                    n_joints = len(self.arm_state.joint_angles)
+                    pico_angles = [
+                        math.radians(self._pico_pos.get(i, math.degrees(self.arm_state.joint_angles[i])))
+                        for i in range(n_joints)
                     ]
-                    from kinematics import ArmState as _AS
-                    pico_state = _AS(base_angle=pico_base, planar_angles=pico_planar)
-                    positions = forward_kinematics(self.arm_config, pico_state)
+                    positions, _ = forward_kinematics(pico_angles, self.arm_config)
                     ee_tag = "  [hw]"
                 else:
-                    positions = forward_kinematics(self.arm_config, self.arm_state)
+                    positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
                     ee_tag = ""
                 ee = positions[-1]
                 self.terminal.log(
@@ -2147,12 +2295,10 @@ class MainWindow(QMainWindow):
             conn_detail = ""
             if self._hardware and self._hardware.is_connected:
                 conn_detail = " (USB)"
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             ee = positions[-1]
             n = self.arm_config.num_planar_joints
-            deg = [math.degrees(self.arm_state.base_angle)] + [
-                math.degrees(a) for a in self.arm_state.planar_angles
-            ]
+            deg = [math.degrees(a) for a in self.arm_state.joint_angles]
             elbow = "up" if self.config_panel.get_elbow() == ElbowConfig.ELBOW_UP else "down"
             anim_state = f"{self.animator.progress*100:.0f}% complete" if self.animator.is_running else "idle"
             self.terminal.log("", "info")
@@ -2308,58 +2454,27 @@ class MainWindow(QMainWindow):
                     self.terminal.log(f"JOG: invalid joint '{axis}'", "error")
                     return
                 n = self.arm_config.num_planar_joints
-                if idx == 0:
+                if 0 <= idx < len(self.arm_state.joint_angles):
                     target_state = self.arm_state.copy()
                     if joint_abs:
-                        target_state.base_angle = math.radians(delta)
+                        target_state.joint_angles[idx] = math.radians(delta)
                     else:
-                        target_state.base_angle += math.radians(delta)
+                        target_state.joint_angles[idx] += math.radians(delta)
                     self._merge_in_flight_joint_targets(
-                        target_state, base_edited=True, planar_idx_edited=None
+                        target_state,
+                        base_edited=(idx == 0),
+                        planar_idx_edited=(idx - 1) if idx > 0 else None,
                     )
-                    target_deg = math.degrees(target_state.base_angle)
+                    target_deg = math.degrees(target_state.joint_angles[idx])
                     self.animator.start(
                         self.arm_state,
                         target_state,
                         motor_rad_limits=self._anim_motor_limits(),
                     )
                     if joint_abs:
-                        self.terminal.log(
-                            f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
-                            "info",
-                        )
+                        self.terminal.log(f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°", "info")
                     else:
-                        self.terminal.log(
-                            f"Jogged base by {delta:+.2f}° → {target_deg:.2f}°",
-                            "info",
-                        )
-                elif 1 <= idx <= n:
-                    target_state = self.arm_state.copy()
-                    if joint_abs:
-                        target_state.planar_angles[idx - 1] = math.radians(delta)
-                    else:
-                        target_state.planar_angles[idx - 1] += math.radians(delta)
-                    self._merge_in_flight_joint_targets(
-                        target_state,
-                        base_edited=False,
-                        planar_idx_edited=idx - 1,
-                    )
-                    target_deg = math.degrees(target_state.planar_angles[idx - 1])
-                    self.animator.start(
-                        self.arm_state,
-                        target_state,
-                        motor_rad_limits=self._anim_motor_limits(),
-                    )
-                    if joint_abs:
-                        self.terminal.log(
-                            f"J{idx} set to {delta:+.2f}° (abs) — now {target_deg:.2f}°",
-                            "info",
-                        )
-                    else:
-                        self.terminal.log(
-                            f"Jogged J{idx} by {delta:+.2f}° → {target_deg:.2f}°",
-                            "info",
-                        )
+                        self.terminal.log(f"Jogged J{idx} by {delta:+.2f}° → {target_deg:.2f}°", "info")
                 else:
                     self.terminal.log(f"JOG: joint index {idx} out of range (0–{n})", "error")
                     return
@@ -2382,9 +2497,7 @@ class MainWindow(QMainWindow):
         # ── ZERO ──────────────────────────────────────────────────────────
         elif upper == "ZERO":
             n = self.arm_config.num_planar_joints
-            angles_deg = [math.degrees(self.arm_state.base_angle)] + [
-                math.degrees(a) for a in self.arm_state.planar_angles
-            ]
+            angles_deg = [math.degrees(a) for a in self.arm_state.joint_angles]
             for row in self.motor_config_panel._rows:
                 idx = row["index"]
                 if 0 <= idx <= n:
@@ -2405,7 +2518,7 @@ class MainWindow(QMainWindow):
 
         # ── REACH ─────────────────────────────────────────────────────────
         elif upper == "REACH":
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             ee = positions[-1]
             current = float(np.linalg.norm(ee))
             max_reach = sum(self.arm_config.link_lengths)
@@ -2414,7 +2527,7 @@ class MainWindow(QMainWindow):
 
         # ── DIST ──────────────────────────────────────────────────────────
         elif upper == "DIST":
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             ee = positions[-1]
             d = float(np.linalg.norm(ee - self.target))
             self.terminal.log(
@@ -2439,24 +2552,13 @@ class MainWindow(QMainWindow):
                 except ValueError:
                     self.terminal.log(f"SETJOINT: invalid joint '{axis}'", "error")
                     return
-                if idx == 0:
+                if 0 <= idx < len(self.arm_state.joint_angles):
                     target_state = self.arm_state.copy()
-                    target_state.base_angle = math.radians(deg)
-                    self._merge_in_flight_joint_targets(
-                        target_state, base_edited=True, planar_idx_edited=None
-                    )
-                    self.animator.start(
-                        self.arm_state,
-                        target_state,
-                        motor_rad_limits=self._anim_motor_limits(),
-                    )
-                elif 1 <= idx <= n:
-                    target_state = self.arm_state.copy()
-                    target_state.planar_angles[idx - 1] = math.radians(deg)
+                    target_state.joint_angles[idx] = math.radians(deg)
                     self._merge_in_flight_joint_targets(
                         target_state,
-                        base_edited=False,
-                        planar_idx_edited=idx - 1,
+                        base_edited=(idx == 0),
+                        planar_idx_edited=(idx - 1) if idx > 0 else None,
                     )
                     self.animator.start(
                         self.arm_state,
@@ -2472,7 +2574,7 @@ class MainWindow(QMainWindow):
 
         # ── ADDWP ─────────────────────────────────────────────────────────
         elif upper == "ADDWP":
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             ee = positions[-1]
             self.waypoint_panel._waypoints.append({
                 "x": float(ee[0]), "y": float(ee[1]), "z": float(ee[2]),
@@ -2650,10 +2752,9 @@ class MainWindow(QMainWindow):
             self._custom_limits[idx] = (lo_rad, hi_rad)
             limits = list(self.arm_config.joint_limits)
             limits[idx] = (lo_rad, hi_rad)
-            self.arm_config = ArmConfig(
+            self.arm_config = from_legacy_planar(
                 link_lengths=self.arm_config.link_lengths,
                 joint_limits=limits,
-                joint_plane_offsets=self.arm_config.joint_plane_offsets,
                 base_vertical_offset=self.arm_config.base_vertical_offset,
                 joint_lateral_x=self.arm_config.joint_lateral_x,
                 joint_lateral_y=self.arm_config.joint_lateral_y,
@@ -2758,38 +2859,26 @@ class MainWindow(QMainWindow):
 
         # ── FORWARD KINEMATICS DUMP ───────────────────────────────────────
         elif upper == "FK":
-            positions = forward_kinematics(self.arm_config, self.arm_state)
+            positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
             self.terminal.log("FK positions (all joints):", "info")
-            for i in range(0, len(positions), 2):
-                eff = positions[i]
-                nom = positions[i + 1] if i + 1 < len(positions) else None
-                j = i // 2
-                self.terminal.log(
-                    f"  J{j} eff: ({eff[0]:.3f}, {eff[1]:.3f}, {eff[2]:.3f})", "info"
-                )
-                if nom is not None:
-                    self.terminal.log(
-                        f"  J{j} nom: ({nom[0]:.3f}, {nom[1]:.3f}, {nom[2]:.3f})", "info"
-                    )
+            for i, pos in enumerate(positions[:-1]):
+                self.terminal.log(f"  J{i}: ({pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f})", "info")
             ee = positions[-1]
             self.terminal.log(f"  EE:    ({ee[0]:.3f}, {ee[1]:.3f}, {ee[2]:.3f})", "info")
 
         # ── PARK ──────────────────────────────────────────────────────────
         elif upper == "PARK":
-            n = self.arm_config.num_planar_joints
-            self.arm_state.base_angle = 0.0
-            for i in range(n):
-                # Fold joints upward alternately to tuck arm compact
-                self.arm_state.planar_angles[i] = math.radians(90.0 if i % 2 == 0 else -90.0)
+            n = len(self.arm_state.joint_angles)
+            self.arm_state.joint_angles[0] = 0.0
+            for i in range(1, n):
+                self.arm_state.joint_angles[i] = math.radians(90.0 if i % 2 == 1 else -90.0)
             self._render_arm()
             self.terminal.log("Arm parked (folded compact)", "info")
 
         # ── EXTEND ────────────────────────────────────────────────────────
         elif upper == "EXTEND":
-            n = self.arm_config.num_planar_joints
-            self.arm_state.base_angle = 0.0
-            for i in range(n):
-                self.arm_state.planar_angles[i] = 0.0
+            for i in range(len(self.arm_state.joint_angles)):
+                self.arm_state.joint_angles[i] = 0.0
             self._render_arm()
             max_reach = sum(self.arm_config.link_lengths)
             self.terminal.log(f"Arm fully extended — max reach {max_reach:.3f}", "info")
@@ -2828,10 +2917,8 @@ class MainWindow(QMainWindow):
                         except StopIteration:
                             self.terminal.log("Sweep complete", "info")
                             return
-                        if self._sweep_idx == 0:
-                            self.arm_state.base_angle = math.radians(deg)
-                        elif 1 <= self._sweep_idx <= self._sweep_n:
-                            self.arm_state.planar_angles[self._sweep_idx - 1] = math.radians(deg)
+                        if 0 <= self._sweep_idx < len(self.arm_state.joint_angles):
+                            self.arm_state.joint_angles[self._sweep_idx] = math.radians(deg)
                         self._render_arm()
                         QTimer.singleShot(80, _do_sweep_step)
 
@@ -2905,13 +2992,9 @@ class MainWindow(QMainWindow):
 
         # ── JOINTS ────────────────────────────────────────────────────────
         elif upper == "JOINTS":
-            deg_list = [math.degrees(self.arm_state.base_angle)] + [
-                math.degrees(a) for a in self.arm_state.planar_angles
-            ]
-            rad_list = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
             self.terminal.log("Joint angles:", "info")
-            for i, (d, r) in enumerate(zip(deg_list, rad_list)):
-                self.terminal.log(f"  J{i}: {d:+8.2f}°   {r:+.4f} rad", "info")
+            for i, a in enumerate(self.arm_state.joint_angles):
+                self.terminal.log(f"  J{i}: {math.degrees(a):+8.2f}°   {a:+.4f} rad", "info")
 
         # ── CONFIG ────────────────────────────────────────────────────────
         elif upper == "CONFIG":
@@ -3042,7 +3125,7 @@ class MainWindow(QMainWindow):
             name = parts[1].upper()
             if not hasattr(self, "_saved_poses"):
                 self._saved_poses = {}
-            angles = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+            angles = list(self.arm_state.joint_angles)
             self._saved_poses[name] = angles
             self.terminal.log(f"Pose '{name}' saved ({len(angles)} joints)", "info")
 
@@ -3053,10 +3136,9 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"LOADPOSE: no pose named '{name}'", "error")
             else:
                 angles = poses[name]
-                self.arm_state.base_angle = angles[0]
-                for i, a in enumerate(angles[1:]):
-                    if i < len(self.arm_state.planar_angles):
-                        self.arm_state.planar_angles[i] = a
+                for i, a in enumerate(angles):
+                    if i < len(self.arm_state.joint_angles):
+                        self.arm_state.joint_angles[i] = a
                 self._render_arm()
                 self.terminal.log(f"Pose '{name}' loaded", "info")
 
@@ -3085,7 +3167,7 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"DIFFPOSE: no pose named '{name}'", "error")
             else:
                 saved   = poses[name]
-                current = [self.arm_state.base_angle] + list(self.arm_state.planar_angles)
+                current = list(self.arm_state.joint_angles)
                 self.terminal.log(f"Δ angles (current − '{name}'):", "info")
                 for i, (s, c) in enumerate(zip(saved, current)):
                     delta = math.degrees(c - s)

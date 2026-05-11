@@ -26,6 +26,7 @@ import pyqtgraph as pg
 from kinematics import (
     ArmConfig, ArmState, IKResult, ElbowConfig,
     forward_kinematics, solve_ik_analytical, solve_ik_numerical,
+    from_legacy_planar,
 )
 from constraints import (
     ConstraintSet, validate_target, check_singularity, check_self_collision,
@@ -78,6 +79,7 @@ class ArmConfigPanel(QGroupBox):
         self.links_layout = QVBoxLayout()
         layout.addLayout(self.links_layout)
         self.link_spins: list[QDoubleSpinBox] = []
+        self.type_combos: list[QComboBox] = []
 
         # Apply button
         self.apply_btn = QPushButton("Apply Configuration")
@@ -87,9 +89,14 @@ class ArmConfigPanel(QGroupBox):
         self.num_links_spin.valueChanged.connect(self._rebuild_links)
 
     def _rebuild_links(self, n: int) -> None:
-        # Clear old
+        # Preserve current values before clearing
+        old_types = self.get_joint_types()
+
+        # Clear old widgets
         for spin in self.link_spins:
             spin.deleteLater()
+        for combo in self.type_combos:
+            combo.deleteLater()
         while self.links_layout.count():
             item = self.links_layout.takeAt(0)
             if item.widget():
@@ -102,22 +109,40 @@ class ArmConfigPanel(QGroupBox):
 
         defaults = [8.0, 8.0, 3.0, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
         self.link_spins = []
+        self.type_combos = []
+
         for i in range(n):
             row = QHBoxLayout()
             row.addWidget(QLabel(f"L{i + 1}:"))
             spin = QDoubleSpinBox()
-            spin.setRange(0.1, 100.0)
+            spin.setRange(0.0, 100.0)
             spin.setSingleStep(0.1)
             spin.setDecimals(2)
             spin.setValue(defaults[i] if i < len(defaults) else 1.0)
             row.addWidget(spin)
+            combo = QComboBox()
+            combo.addItems(["Pitch", "Roll"])
+            combo.setFixedWidth(62)
+            combo.setToolTip("Pitch: rotates in the arm plane\nRoll: rotates around the link axis")
+            if i < len(old_types):
+                combo.setCurrentIndex(0 if old_types[i] == "pitch" else 1)
+            row.addWidget(combo)
             self.links_layout.addLayout(row)
             self.link_spins.append(spin)
+            self.type_combos.append(combo)
+
+    def get_joint_types(self) -> list[str]:
+        return ["roll" if c.currentIndex() == 1 else "pitch" for c in self.type_combos]
+
+    def set_joint_types(self, types: list[str]) -> None:
+        for combo, t in zip(self.type_combos, types):
+            combo.setCurrentIndex(1 if t == "roll" else 0)
 
     def get_config(self) -> ArmConfig:
         lengths = [s.value() for s in self.link_spins]
         limits = [_DEFAULT_LIMIT] * len(lengths)
-        return ArmConfig(link_lengths=lengths, joint_limits=limits)
+        return from_legacy_planar(link_lengths=lengths, joint_limits=limits,
+                                  joint_types=self.get_joint_types())
 
     def get_elbow(self) -> ElbowConfig:
         return ElbowConfig.ELBOW_DOWN if self.elbow_combo.currentIndex() == 0 else ElbowConfig.ELBOW_UP
@@ -206,13 +231,12 @@ class JointOutputPanel(QGroupBox):
     def update_angles(self, state: ArmState, constraints: ConstraintSet) -> None:
         if not self.labels:
             return
-        self.labels[0].setText(f"{math.degrees(state.base_angle):+.2f} deg")
-        for i, angle in enumerate(state.planar_angles):
-            if i + 1 < len(self.labels):
+        for i, angle in enumerate(state.joint_angles):
+            if i < len(self.labels):
                 text = f"{math.degrees(angle):+.2f} deg"
-                if (i + 1) in constraints.locked_joints:
+                if i in constraints.locked_joints:
                     text += "  [LOCKED]"
-                self.labels[i + 1].setText(text)
+                self.labels[i].setText(text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -569,80 +593,192 @@ class JointPlaneOffsetPanel(QGroupBox):
 
 
 class ConstrainEndEffectorPanel(QGroupBox):
-    """Single toggle to constrain the end-effector's orientation relative to world Z."""
+    """Two independent EE orientation constraints: elevation and azimuth."""
 
     def __init__(self, parent=None):
         super().__init__("End Effector Constraint", parent)
         layout = QVBoxLayout(self)
 
-        # Main toggle
-        self.constrain_cb = QCheckBox("Constrain End Effector")
+        def _spin(lo, hi, step=5.0):
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi)
+            s.setSingleStep(step)
+            s.setDecimals(1)
+            s.setEnabled(False)
+            return s
+
+        # ── Constraint 1: Elevation (angle from XY plane) ──────────────────
+        self.constrain_cb = QCheckBox("Elevation — angle from XY plane")
         self.constrain_cb.setToolTip(
-            "When active, fixes the angle between the last link and world +Z.\n"
-            "The IK solver will maintain this orientation across targets.\n"
-            "Disable Auto to type an explicit angle in degrees."
+            "Fix the up/down pitch of the EE relative to horizontal.\n"
+            "0° = horizontal, -90° = pointing straight down."
         )
         layout.addWidget(self.constrain_cb)
 
-        # Angle row
-        angle_row = QHBoxLayout()
-        angle_row.addWidget(QLabel("Angle (°):"))
-        self.angle_spin = QDoubleSpinBox()
-        self.angle_spin.setRange(-180.0, 180.0)
-        self.angle_spin.setSingleStep(5.0)
-        self.angle_spin.setDecimals(1)
-        self.angle_spin.setEnabled(False)
-        angle_row.addWidget(self.angle_spin)
+        elev_row = QHBoxLayout()
+        elev_row.addWidget(QLabel("  Angle (°):"))
+        self.angle_spin = _spin(-180.0, 180.0)
+        elev_row.addWidget(self.angle_spin)
         self.auto_cb = QCheckBox("Auto")
         self.auto_cb.setChecked(True)
         self.auto_cb.setEnabled(False)
-        self.auto_cb.setToolTip("Capture the current EE angle when constraint is enabled")
-        angle_row.addWidget(self.auto_cb)
-        layout.addLayout(angle_row)
+        self.auto_cb.setToolTip("Capture elevation from current arm pose on enable")
+        elev_row.addWidget(self.auto_cb)
+        layout.addLayout(elev_row)
+
+        # ── Constraint 2: Azimuth (angle from ZX plane) ────────────────────
+        self.azim_cb = QCheckBox("Azimuth — angle from ZX plane")
+        self.azim_cb.setToolTip(
+            "Fix the horizontal pointing direction of the arm.\n"
+            "0° = along X axis, 90° = along Y axis."
+        )
+        layout.addWidget(self.azim_cb)
+
+        azim_row = QHBoxLayout()
+        azim_row.addWidget(QLabel("  Angle (°):"))
+        self.azim_spin = _spin(-180.0, 180.0)
+        azim_row.addWidget(self.azim_spin)
+        self.azim_auto_cb = QCheckBox("Auto")
+        self.azim_auto_cb.setChecked(True)
+        self.azim_auto_cb.setEnabled(False)
+        self.azim_auto_cb.setToolTip("Capture azimuth from current arm pose on enable")
+        azim_row.addWidget(self.azim_auto_cb)
+        layout.addLayout(azim_row)
+
+        # ── Roll lock (unchanged) ───────────────────────────────────────────
+        roll_row = QHBoxLayout()
+        self.lock_roll_cb = QCheckBox("Lock Roll (°):")
+        self.lock_roll_cb.setToolTip(
+            "Lock the EE roll — rotation of the gripper/tool around the arm's pointing axis."
+        )
+        self.lock_roll_cb.setEnabled(False)
+        roll_row.addWidget(self.lock_roll_cb)
+        self.roll_spin = _spin(-180.0, 180.0)
+        roll_row.addWidget(self.roll_spin)
+        layout.addLayout(roll_row)
 
         # Status label
         self.status_lbl = QLabel("")
         self.status_lbl.setFont(QFont("Consolas", 9))
         layout.addWidget(self.status_lbl)
 
-        self.constrain_cb.toggled.connect(self._on_toggled)
-        self.auto_cb.toggled.connect(self._on_auto_toggled)
+        # Internal state
+        self._captured_angle: Optional[float] = None   # elevation (rad)
+        self._captured_azimuth: Optional[float] = None # azimuth (rad)
 
-        self._captured_angle: Optional[float] = None  # radians
+        # Signals
+        self.constrain_cb.toggled.connect(self._on_elev_toggled)
+        self.auto_cb.toggled.connect(lambda a: self.angle_spin.setEnabled(
+            self.constrain_cb.isChecked() and not a))
+        self.azim_cb.toggled.connect(self._on_azim_toggled)
+        self.azim_auto_cb.toggled.connect(lambda a: self.azim_spin.setEnabled(
+            self.azim_cb.isChecked() and not a))
+        self.lock_roll_cb.toggled.connect(self._on_roll_toggled)
 
-    def _on_toggled(self, checked: bool) -> None:
+    def _on_elev_toggled(self, checked: bool) -> None:
         self.auto_cb.setEnabled(checked)
         self.angle_spin.setEnabled(checked and not self.auto_cb.isChecked())
+        self.lock_roll_cb.setEnabled(checked)
+        self.roll_spin.setEnabled(checked and self.lock_roll_cb.isChecked())
         if not checked:
             self._captured_angle = None
-            self.status_lbl.setText("")
+            self.lock_roll_cb.setChecked(False)
+        self._update_status()
 
-    def _on_auto_toggled(self, auto: bool) -> None:
-        self.angle_spin.setEnabled(self.constrain_cb.isChecked() and not auto)
+    def _on_azim_toggled(self, checked: bool) -> None:
+        self.azim_auto_cb.setEnabled(checked)
+        self.azim_spin.setEnabled(checked and not self.azim_auto_cb.isChecked())
+        if not checked:
+            self._captured_azimuth = None
+        self._update_status()
 
-    def capture_angle(self, arm_state: ArmState) -> None:
-        """Capture EE orientation from current arm state (sum of planar angles)."""
-        angle_rad = sum(arm_state.planar_angles)
-        self._captured_angle = angle_rad
-        self.angle_spin.setValue(math.degrees(angle_rad))
-        self.status_lbl.setText(f"Active: {math.degrees(angle_rad):+.1f}° from +Z")
+    def _on_roll_toggled(self, checked: bool) -> None:
+        self.roll_spin.setEnabled(self.constrain_cb.isChecked() and checked)
+
+    def capture_angle(self, arm_state: ArmState, config=None) -> None:
+        """Capture current EE orientation into both constraints (for Auto mode)."""
+        # Elevation = cumulative pitch of arm joints
+        if config is not None:
+            pitch_sum = 0.0
+            roll_angle = 0.0
+            for i, jtype in enumerate(config.joint_types):
+                angle = (arm_state.joint_angles[i + 1]
+                         if i + 1 < len(arm_state.joint_angles) else 0.0)
+                if jtype == "pitch":
+                    pitch_sum += angle
+                elif jtype == "roll":
+                    roll_angle = angle
+            self._captured_angle = pitch_sum
+            self.angle_spin.setValue(math.degrees(pitch_sum))
+            if self.lock_roll_cb.isChecked():
+                self.roll_spin.setValue(math.degrees(roll_angle))
+        else:
+            angle_rad = sum(arm_state.joint_angles[1:])
+            self._captured_angle = angle_rad
+            self.angle_spin.setValue(math.degrees(angle_rad))
+
+        # Azimuth = base joint angle (joint 0)
+        if arm_state.joint_angles:
+            self._captured_azimuth = float(arm_state.joint_angles[0])
+            self.azim_spin.setValue(math.degrees(self._captured_azimuth))
+
+        self._update_status()
+
+    def _update_status(self) -> None:
+        parts = []
+        if self.constrain_cb.isChecked():
+            a = self.get_approach_angle()
+            if a is not None:
+                parts.append(f"elev {math.degrees(a):+.1f}°")
+        if self.azim_cb.isChecked():
+            az = self.get_azimuth_angle()
+            if az is not None:
+                parts.append(f"azim {math.degrees(az):+.1f}°")
+        if self.lock_roll_cb.isChecked():
+            parts.append(f"roll {self.roll_spin.value():+.1f}°")
+        self.status_lbl.setText("  ".join(parts))
 
     def get_approach_angle(self) -> Optional[float]:
-        """Return approach angle in radians, or None if constraint is inactive."""
+        """Elevation constraint in radians, or None if inactive."""
         if not self.constrain_cb.isChecked():
             return None
         if self.auto_cb.isChecked():
-            return self._captured_angle  # may be None before first capture
+            return self._captured_angle
         return math.radians(self.angle_spin.value())
+
+    def get_azimuth_angle(self) -> Optional[float]:
+        """Azimuth constraint in radians (base joint), or None if inactive."""
+        if not self.azim_cb.isChecked():
+            return None
+        if self.azim_auto_cb.isChecked():
+            return self._captured_azimuth
+        return math.radians(self.azim_spin.value())
+
+    def get_locked_joints(self, config) -> dict:
+        """Return {joint_index: angle_rad} for roll and azimuth locks."""
+        locked = {}
+        # Azimuth → lock base joint (index 0)
+        az = self.get_azimuth_angle()
+        if az is not None:
+            locked[0] = az
+        # Roll joints
+        if self.constrain_cb.isChecked() and self.lock_roll_cb.isChecked():
+            roll_rad = math.radians(self.roll_spin.value())
+            for i, jtype in enumerate(config.joint_types):
+                if jtype == "roll":
+                    locked[i + 1] = roll_rad
+        return locked
 
     @property
     def is_active(self) -> bool:
-        return self.constrain_cb.isChecked()
+        return self.constrain_cb.isChecked() or self.azim_cb.isChecked()
 
     def reset(self) -> None:
-        """Reset constraint (call when arm configuration changes)."""
+        """Reset all constraints (call when arm configuration changes)."""
         self.constrain_cb.setChecked(False)
+        self.azim_cb.setChecked(False)
         self._captured_angle = None
+        self._captured_azimuth = None
         self.status_lbl.setText("")
 
 
@@ -2883,3 +3019,368 @@ class PinoutPanel(QGroupBox):
         else:
             self.conflict_lbl.setText("")
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mesh Configuration Panel (file loading + alignment offsets)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class MeshConfigPanel(QGroupBox):
+    """Per-link mesh file selection and local transform (alignment) controls.
+
+    Convention: export your STL with 0,0,0 at the joint pivot (base of the link),
+    arm extending in the local +X direction. Use TX/TY/TZ/RX/RY/RZ/Scale to fine-
+    tune if the CAD origin doesn't align perfectly.
+
+    Signals
+    -------
+    mesh_file_changed(idx, path) — user loaded or cleared a mesh for link idx
+    mesh_transform_changed(idx, tx, ty, tz, rx, ry, rz, scale) — transform edited
+    """
+
+    mesh_file_changed      = pyqtSignal(int, str)
+    mesh_transform_changed = pyqtSignal(int, float, float, float, float, float, float, float)
+
+    _DEFAULT_LT = {'tx': 0.0, 'ty': 0.0, 'tz': 0.0,
+                   'rx': 0.0, 'ry': 0.0, 'rz': 0.0, 'scale': 1.0}
+
+    def __init__(self, parent=None):
+        super().__init__("Mesh / Model Configuration", parent)
+        layout = QVBoxLayout(self)
+
+        # ── Link selector ──────────────────────────────────────────────
+        sel_row = QHBoxLayout()
+        sel_row.addWidget(QLabel("Link:"))
+        self.link_combo = QComboBox()
+        sel_row.addWidget(self.link_combo, 1)
+        layout.addLayout(sel_row)
+
+        # ── File path row ──────────────────────────────────────────────
+        file_box = QGroupBox("3D Model File")
+        file_lay = QVBoxLayout(file_box)
+        self.path_label = QLabel("No file loaded")
+        self.path_label.setWordWrap(True)
+        self.path_label.setStyleSheet("color: #888; font-size: 10px;")
+        file_lay.addWidget(self.path_label)
+        btn_row = QHBoxLayout()
+        self.browse_btn = QPushButton("Browse…")
+        self.browse_btn.clicked.connect(self._on_browse)
+        btn_row.addWidget(self.browse_btn)
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.clicked.connect(self._on_clear)
+        btn_row.addWidget(self.clear_btn)
+        file_lay.addLayout(btn_row)
+        layout.addWidget(file_box)
+
+        # ── Alignment transform ────────────────────────────────────────
+        align_box = QGroupBox("Alignment Offset")
+        align_lay = QVBoxLayout(align_box)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        def _spin(lo=-10000.0, hi=10000.0, dec=3, step=0.1, val=0.0):
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi)
+            s.setDecimals(dec)
+            s.setSingleStep(step)
+            s.setValue(val)
+            return s
+
+        self.tx_spin = _spin(); form.addRow("TX:", self.tx_spin)
+        self.ty_spin = _spin(); form.addRow("TY:", self.ty_spin)
+        self.tz_spin = _spin(); form.addRow("TZ:", self.tz_spin)
+        self.rx_spin = _spin(-360, 360, 1, 1.0); form.addRow("RX°:", self.rx_spin)
+        self.ry_spin = _spin(-360, 360, 1, 1.0); form.addRow("RY°:", self.ry_spin)
+        self.rz_spin = _spin(-360, 360, 1, 1.0); form.addRow("RZ°:", self.rz_spin)
+        self.scale_spin = _spin(1e-4, 100000.0, 4, 0.01, 1.0)
+        form.addRow("Scale:", self.scale_spin)
+        align_lay.addLayout(form)
+        reset_btn = QPushButton("Reset Offset")
+        reset_btn.clicked.connect(self._on_reset)
+        align_lay.addWidget(reset_btn)
+        layout.addWidget(align_box)
+
+        note = QLabel(
+            "Export your STL with 0,0,0 at the joint pivot.\n"
+            "The arm extends along the local +X axis from there.\n"
+            "Use TX/TY/TZ to shift, RX/RY/RZ to rotate the mesh\n"
+            "within the joint frame. Scale converts mesh units\n"
+            "(e.g. 0.1 if modeled in mm, simulator uses cm)."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(note)
+
+        # ── Internal state ─────────────────────────────────────────────
+        self._paths: list[str] = []
+        self._transforms: list[dict] = []
+        self._loading = False
+
+        self.link_combo.currentIndexChanged.connect(self._on_link_changed)
+        for spin in (self.tx_spin, self.ty_spin, self.tz_spin,
+                     self.rx_spin, self.ry_spin, self.rz_spin, self.scale_spin):
+            spin.valueChanged.connect(self._on_transform_changed)
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def rebuild(self, n: int) -> None:
+        """Rebuild link selector for n arm links, preserving existing data."""
+        self._loading = True
+        cur = self.link_combo.currentIndex()
+        self.link_combo.clear()
+        for i in range(n):
+            self.link_combo.addItem(f"Link {i + 1}")
+        while len(self._paths) < n:
+            self._paths.append("")
+        self._paths = self._paths[:n]
+        while len(self._transforms) < n:
+            self._transforms.append(dict(self._DEFAULT_LT))
+        self._transforms = self._transforms[:n]
+        self.link_combo.setCurrentIndex(max(0, min(cur, n - 1)))
+        self._load_current()
+        self._loading = False
+
+    def get_paths(self) -> list[str]:
+        return list(self._paths)
+
+    def get_transforms(self) -> list[dict]:
+        return [dict(lt) for lt in self._transforms]
+
+    def set_paths(self, paths: list[str]) -> None:
+        n = self.link_combo.count()
+        self._paths = (list(paths) + [""] * n)[:n]
+        self._loading = True
+        self._load_current()
+        self._loading = False
+
+    def set_transforms(self, transforms: list[dict]) -> None:
+        n = self.link_combo.count()
+        self._transforms = [dict(lt) for lt in transforms]
+        while len(self._transforms) < n:
+            self._transforms.append(dict(self._DEFAULT_LT))
+        self._transforms = self._transforms[:n]
+        self._loading = True
+        self._load_current()
+        self._loading = False
+
+    # ── Internals ───────────────────────────────────────────────────────────
+
+    def _load_current(self) -> None:
+        idx = self.link_combo.currentIndex()
+        path = self._paths[idx] if idx >= 0 and idx < len(self._paths) else ""
+        if path:
+            import os as _os
+            self.path_label.setText(_os.path.basename(path))
+            self.path_label.setToolTip(path)
+            self.path_label.setStyleSheet("color: #4caf50; font-size: 10px;")
+        else:
+            self.path_label.setText("No file loaded")
+            self.path_label.setToolTip("")
+            self.path_label.setStyleSheet("color: #888; font-size: 10px;")
+
+        lt = self._transforms[idx] if idx >= 0 and idx < len(self._transforms) else self._DEFAULT_LT
+        was = self._loading
+        self._loading = True
+        self.tx_spin.setValue(lt.get('tx', 0.0))
+        self.ty_spin.setValue(lt.get('ty', 0.0))
+        self.tz_spin.setValue(lt.get('tz', 0.0))
+        self.rx_spin.setValue(lt.get('rx', 0.0))
+        self.ry_spin.setValue(lt.get('ry', 0.0))
+        self.rz_spin.setValue(lt.get('rz', 0.0))
+        self.scale_spin.setValue(lt.get('scale', 1.0))
+        self._loading = was
+
+    def _on_link_changed(self, _: int) -> None:
+        self._load_current()
+
+    def _on_browse(self) -> None:
+        idx = self.link_combo.currentIndex()
+        if idx < 0:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Load 3D model for Link {idx + 1}", "",
+            "3D Model Files (*.stl *.obj *.ply *.glb *.gltf *.step *.stp);;All Files (*)",
+        )
+        if not path:
+            return
+        while len(self._paths) <= idx:
+            self._paths.append("")
+        self._paths[idx] = path
+        self._load_current()
+        self.mesh_file_changed.emit(idx, path)
+
+    def _on_clear(self) -> None:
+        idx = self.link_combo.currentIndex()
+        if idx < 0:
+            return
+        while len(self._paths) <= idx:
+            self._paths.append("")
+        self._paths[idx] = ""
+        self._load_current()
+        self.mesh_file_changed.emit(idx, "")
+
+    def _on_transform_changed(self) -> None:
+        if self._loading:
+            return
+        idx = self.link_combo.currentIndex()
+        if idx < 0 or idx >= len(self._transforms):
+            return
+        lt = {
+            'tx': self.tx_spin.value(), 'ty': self.ty_spin.value(),
+            'tz': self.tz_spin.value(), 'rx': self.rx_spin.value(),
+            'ry': self.ry_spin.value(), 'rz': self.rz_spin.value(),
+            'scale': self.scale_spin.value(),
+        }
+        self._transforms[idx] = lt
+        self.mesh_transform_changed.emit(
+            idx, lt['tx'], lt['ty'], lt['tz'],
+            lt['rx'], lt['ry'], lt['rz'], lt['scale'],
+        )
+
+    def _on_reset(self) -> None:
+        idx = self.link_combo.currentIndex()
+        if idx < 0 or idx >= len(self._transforms):
+            return
+        self._transforms[idx] = dict(self._DEFAULT_LT)
+        self._loading = True
+        self._load_current()
+        self._loading = False
+        self.mesh_transform_changed.emit(idx, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Joint Coupling Panel
+# ═══════════════════════════════════════════════════════════════════════════
+
+class JointCouplingPanel(QGroupBox):
+    """Rigidly link a follower joint to a driver: follower = driver + offset.
+
+    The two joints maintain a fixed relative angle.  The driver is controlled
+    normally by jogging and IK; the follower mirrors it with a constant offset.
+
+    Signals
+    -------
+    couplings_changed(list[dict])  — emitted whenever the coupling list changes.
+        Each dict: {'driver': int, 'follower': int, 'ratio': float, 'offset_deg': float}
+        ratio is always 1.0 (rigid link).
+    """
+
+    couplings_changed = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__("Joint Couplings", parent)
+        layout = QVBoxLayout(self)
+
+        # ── Coupling list ──────────────────────────────────────────────────
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(120)
+        layout.addWidget(self.list_widget)
+
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self._on_remove)
+        layout.addWidget(remove_btn)
+
+        # ── Add coupling form ──────────────────────────────────────────────
+        add_box = QGroupBox("Add Coupling")
+        add_lay = QFormLayout(add_box)
+        add_lay.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.driver_combo = QComboBox()
+        self.follower_combo = QComboBox()
+
+        self.offset_spin = QDoubleSpinBox()
+        self.offset_spin.setRange(-360.0, 360.0)
+        self.offset_spin.setSingleStep(1.0)
+        self.offset_spin.setDecimals(1)
+        self.offset_spin.setValue(0.0)
+
+        add_lay.addRow("Driver:", self.driver_combo)
+        add_lay.addRow("Follower:", self.follower_combo)
+        add_lay.addRow("Offset (°):", self.offset_spin)
+
+        add_btn = QPushButton("Add / Update Coupling")
+        add_btn.clicked.connect(self._on_add)
+        add_lay.addRow(add_btn)
+        layout.addWidget(add_box)
+
+        note = QLabel(
+            "Follower is fixed at Offset° (rigid link).\n"
+            "The follower joint stays at that constant angle;\n"
+            "IK and jog only move the driver."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(note)
+
+        self._couplings: list[dict] = []
+        self._n_joints: int = 0
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def rebuild(self, n: int) -> None:
+        """Rebuild joint selectors for n arm links (base joint = J0)."""
+        self._n_joints = n + 1
+        self.driver_combo.clear()
+        self.follower_combo.clear()
+        for i in range(self._n_joints):
+            label = f"J{i} (Base)" if i == 0 else f"J{i}"
+            self.driver_combo.addItem(label)
+            self.follower_combo.addItem(label)
+        self._couplings = [
+            c for c in self._couplings
+            if c['driver'] < self._n_joints and c['follower'] < self._n_joints
+        ]
+        self._refresh_list()
+
+    def get_couplings(self) -> list:
+        return [dict(c) for c in self._couplings]
+
+    def set_couplings(self, couplings: list) -> None:
+        # Accept old saved couplings (with ratio field) and drop ratio
+        self._couplings = []
+        for c in couplings:
+            self._couplings.append({
+                'driver': c['driver'],
+                'follower': c['follower'],
+                'ratio': 1.0,
+                'offset_deg': c.get('offset_deg', 0.0),
+            })
+        self._refresh_list()
+
+    # ── Internals ───────────────────────────────────────────────────────────
+
+    def _refresh_list(self) -> None:
+        self.list_widget.clear()
+        for c in self._couplings:
+            sign = "+" if c['offset_deg'] >= 0 else ""
+            self.list_widget.addItem(
+                f"J{c['driver']} → J{c['follower']}  {sign}{c['offset_deg']:.1f}°"
+            )
+
+    def _on_add(self) -> None:
+        driver = self.driver_combo.currentIndex()
+        follower = self.follower_combo.currentIndex()
+        if driver == follower:
+            return
+        for c in self._couplings:
+            if c['follower'] == follower:
+                c['driver'] = driver
+                c['ratio'] = 1.0
+                c['offset_deg'] = self.offset_spin.value()
+                self._refresh_list()
+                self.couplings_changed.emit(self.get_couplings())
+                return
+        self._couplings.append({
+            'driver': driver,
+            'follower': follower,
+            'ratio': 1.0,
+            'offset_deg': self.offset_spin.value(),
+        })
+        self._refresh_list()
+        self.couplings_changed.emit(self.get_couplings())
+
+    def _on_remove(self) -> None:
+        row = self.list_widget.currentRow()
+        if 0 <= row < len(self._couplings):
+            self._couplings.pop(row)
+            self._refresh_list()
+            self.couplings_changed.emit(self.get_couplings())

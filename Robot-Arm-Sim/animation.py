@@ -131,9 +131,10 @@ def min_duration_motor_limited_bottleneck(
     smoothstep_trapezoid_margin: float = 1.32,
 ) -> tuple[float, int]:
     """(duration, joint_index) for trapezoid-limited time; index 0 = base, 1+ = planar."""
-    deltas: list[float] = [_shortest_angle_delta(from_state.base_angle, to_state.base_angle)]
-    for a, b in zip(from_state.planar_angles, to_state.planar_angles):
-        deltas.append(_shortest_angle_delta(a, b))
+    deltas: list[float] = [
+        _shortest_angle_delta(a, b)
+        for a, b in zip(from_state.joint_angles, to_state.joint_angles)
+    ]
     t_max = 0.0
     j_at_max = 0
     for i, d in enumerate(deltas):
@@ -170,10 +171,9 @@ def min_duration_smoothstep_path_motor_limited_bottleneck(
     Similarly |θ̈| ≤ |δᵢ|·C₂/D² ≤ α_i ⇒ D ≥ sqrt(|δᵢ|C₂/α_i).
     """
     deltas: list[float] = [
-        _shortest_angle_delta(from_state.base_angle, to_state.base_angle)
+        _shortest_angle_delta(a, b)
+        for a, b in zip(from_state.joint_angles, to_state.joint_angles)
     ]
-    for a, b in zip(from_state.planar_angles, to_state.planar_angles):
-        deltas.append(_shortest_angle_delta(a, b))
     c1 = SMOOTHSTEP_D1_MAX
     c2 = SMOOTHSTEP_D2_MAX
     tmin = 0.0
@@ -209,12 +209,11 @@ def interpolate_state(start: ArmState, end: ArmState, t: float) -> ArmState:
     t : raw progress [0, 1] — smoothstep is applied internally
     """
     s = smoothstep(t)
-    base = lerp_angle(start.base_angle, end.base_angle, s)
-    planar = [
+    angles = [
         lerp_angle(a, b, s)
-        for a, b in zip(start.planar_angles, end.planar_angles)
+        for a, b in zip(start.joint_angles, end.joint_angles)
     ]
-    return ArmState(base_angle=base, planar_angles=planar)
+    return ArmState(joint_angles=angles)
 
 
 # ---------------------------------------------------------------------------
@@ -274,17 +273,14 @@ class Animator:
         self._elapsed = 0.0
         self._locked_orientation = locked_orientation
         # Capture starting orientation for smooth interpolation during animation
-        if locked_orientation is not None and len(from_state.planar_angles) >= 2:
-            self._start_orientation = sum(from_state.planar_angles)
+        if locked_orientation is not None and len(from_state.joint_angles) >= 2:
+            self._start_orientation = sum(from_state.joint_angles[1:])
         else:
             self._start_orientation = None
 
         # Heuristic duration from max angular displacement (legacy, no motor model)
-        max_delta = abs(
-            ((to_state.base_angle - from_state.base_angle + math.pi)
-             % (2.0 * math.pi)) - math.pi
-        )
-        for a, b in zip(from_state.planar_angles, to_state.planar_angles):
+        max_delta = 0.0
+        for a, b in zip(from_state.joint_angles, to_state.joint_angles):
             delta = abs(((b - a + math.pi) % (2.0 * math.pi)) - math.pi)
             max_delta = max(max_delta, delta)
 
@@ -292,7 +288,7 @@ class Animator:
             self.MIN_DURATION,
             min(self.MAX_DURATION, max_delta * self.SECONDS_PER_RADIAN),
         )
-        n_joints = 1 + len(to_state.planar_angles)
+        n_joints = len(to_state.joint_angles)
         self._bottleneck_joint = None
         if (
             motor_rad_limits is not None
@@ -330,7 +326,7 @@ class Animator:
         if self._status != AnimationStatus.RUNNING:
             if self._end is not None:
                 return self._end.copy()
-            return ArmState(base_angle=0.0, planar_angles=[0.0])
+            return ArmState(joint_angles=[0.0])
 
         self._elapsed += dt
         t = min(1.0, self._elapsed / self._duration) if self._duration > 0 else 1.0
@@ -339,12 +335,12 @@ class Animator:
 
         # Enforce orientation constraint: smoothly interpolate orientation from start to target.
         # This ensures the EE orientation eases in over the animation duration, not snapping instantly.
-        if self._locked_orientation is not None and self._start_orientation is not None and len(state.planar_angles) >= 2:
+        if self._locked_orientation is not None and self._start_orientation is not None and len(state.joint_angles) >= 2:
             s = smoothstep(t)
             target_ori = lerp_angle(self._start_orientation, self._locked_orientation, s)
-            current_sum = sum(state.planar_angles)
+            current_sum = sum(state.joint_angles[1:])
             error = target_ori - current_sum
-            state.planar_angles[-1] += error
+            state.joint_angles[-1] += error
 
         if t >= 1.0:
             self._status = AnimationStatus.COMPLETE
