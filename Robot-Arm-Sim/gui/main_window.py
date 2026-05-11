@@ -32,7 +32,7 @@ from kinematics import (
     forward_kinematics, forward_kinematics_frames,
     solve_ik_analytical, solve_ik_numerical,
     from_legacy_planar,
-    compute_jacobian_numerical, enforce_approach_angle,
+    compute_jacobian_analytical,
 )
 from constraints import (
     ConstraintSet, validate_target, check_singularity, check_self_collision,
@@ -341,6 +341,7 @@ class MainWindow(QMainWindow):
         self.mesh_config_panel.mesh_file_changed.connect(self._on_mesh_file_changed)
         self.mesh_config_panel.mesh_transform_changed.connect(self._on_mesh_transform_changed)
         self.mesh_config_panel.mesh_visibility_changed.connect(self._on_mesh_visibility_changed)
+        self.mesh_config_panel.hide_all_changed.connect(self._on_mesh_hide_all_changed)
         self.coupling_panel.couplings_changed.connect(self._on_couplings_changed)
 
         self._setup_menubar()
@@ -487,7 +488,17 @@ class MainWindow(QMainWindow):
         elev_auto = panel.constrain_cb.isChecked() and panel.auto_cb.isChecked()
         azim_auto = panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked()
         if checked and (elev_auto or azim_auto):
-            panel.capture_angle(self.arm_state, self.arm_config)
+            # For azimuth, seed from atan2(target) so the capture reflects where
+            # the IK would put the base, not the current arm pose (which may be
+            # home = 0° even when the target is in a different direction).
+            capture_state = self.arm_state
+            if azim_auto and self.target is not None:
+                analytical_base = math.atan2(float(self.target[1]), float(self.target[0]))
+                angles = list(self.arm_state.joint_angles)
+                if angles:
+                    angles[0] = analytical_base
+                    capture_state = ArmState(joint_angles=angles)
+            panel.capture_angle(capture_state, self.arm_config)
         parts = []
         aa = panel.get_approach_angle()
         if aa is not None:
@@ -778,8 +789,13 @@ class MainWindow(QMainWindow):
 
         # Per-waypoint approach_angle overrides global EE constraint
         approach_angle = wp.get("approach_angle")
+        approach_dir = None
         if approach_angle is None:
-            approach_angle = self.ee_constraint_panel.get_approach_angle()
+            approach_dir = self.ee_constraint_panel.get_approach_dir()
+            if approach_dir is not None:
+                approach_angle = None
+            else:
+                approach_angle = self.ee_constraint_panel.get_approach_angle()
 
         # Per-waypoint elbow preference, falling back to global selector
         elbow_str = wp.get("elbow")
@@ -796,7 +812,8 @@ class MainWindow(QMainWindow):
         self.target_panel.z_spin.setValue(float(target[2]))
 
         wp_locked = self.ee_constraint_panel.get_locked_joints(self.arm_config)
-        result = self._solve_ik(target, approach_angle, elbow, wp_locked)
+        result = self._solve_ik(target, approach_angle, elbow, wp_locked,
+                                approach_dir=approach_dir)
 
         if result.success and result.state is not None:
             self.joint_panel.update_angles(result.state, ConstraintSet())
@@ -812,7 +829,11 @@ class MainWindow(QMainWindow):
             self.waypoint_panel.set_progress(min(self._sequence_index, total), total)
             self.animator._on_complete_callback = self._advance_sequence
 
-            elbow_str2 = result.elbow_config.value if result.elbow_config else "n/a"
+            panel = self.ee_constraint_panel
+            if panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked():
+                panel.capture_angle(result.state, self.arm_config)
+
+            elbow_str2 = result.elbow_config if result.elbow_config else "n/a"
             self.status_bar.showMessage(
                 f"Waypoint {self._sequence_index}/{total} | elbow: {elbow_str2} | error: {result.error_distance:.4f}"
             )
@@ -923,6 +944,12 @@ class MainWindow(QMainWindow):
         self.viewport.set_mesh_hidden(idx, hidden)
         if not self._loading:
             self._save_arm_config()
+
+    def _on_mesh_hide_all_changed(self, hide_all: bool) -> None:
+        """Hide or restore all meshes without touching per-link config."""
+        hidden_cfg = self.mesh_config_panel.get_hidden()
+        for i in range(len(hidden_cfg)):
+            self.viewport.set_mesh_hidden(i, hide_all or hidden_cfg[i])
 
     def _apply_couplings(self, angles: list) -> None:
         """Fix all coupled follower joints at their constant offset angle (rigid link)."""
@@ -1289,6 +1316,7 @@ class MainWindow(QMainWindow):
         approach_angle,
         elbow,
         locked_joints: dict,
+        approach_dir=None,
     ) -> "IKResult":
         """
         Solve IK seeded from the current arm state.  If the solution causes
@@ -1302,6 +1330,7 @@ class MainWindow(QMainWindow):
             locked_joints=locked_joints,
             initial_angles=self.arm_state.joint_angles,
             couplings=self._joint_couplings or None,
+            approach_dir=approach_dir,
         )
 
         if result.success and result.state is not None:
@@ -1317,6 +1346,7 @@ class MainWindow(QMainWindow):
                     locked_joints=locked_joints,
                     initial_angles=self.arm_state.joint_angles,
                     couplings=self._joint_couplings or None,
+                    approach_dir=approach_dir,
                 )
                 if alt.success and alt.state is not None and \
                         not check_self_collision(self.arm_config, alt.state, margin):
@@ -1356,10 +1386,18 @@ class MainWindow(QMainWindow):
             # Merge EE orientation locks (roll joints) into locked_joints
             locked_joints.update(self.ee_constraint_panel.get_locked_joints(self.arm_config))
 
-            # Approach angle: EE constraint panel takes priority; fall back to TargetPanel
-            approach_angle = self.ee_constraint_panel.get_approach_angle()
-            if approach_angle is None:
-                approach_angle = self.target_panel.get_approach_angle()
+            # Approach: unified 3D vector when both elevation + azimuth are active;
+            # otherwise fall back to scalar elevation or TargetPanel approach angle.
+            approach_dir = self.ee_constraint_panel.get_approach_dir()
+            if approach_dir is not None:
+                # Strip any base lock that came from get_locked_joints — approach_dir
+                # residual describes the azimuth behaviorally, no joint should be locked.
+                locked_joints.pop(0, None)
+                approach_angle = None
+            else:
+                approach_angle = self.ee_constraint_panel.get_approach_angle()
+                if approach_angle is None:
+                    approach_angle = self.target_panel.get_approach_angle()
 
             elbow = self.config_panel.get_elbow()
 
@@ -1369,7 +1407,8 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(f"Warning: {validation['message']}")
 
             # Solve IK (seeds from current state; auto-flips elbow if self-collision)
-            result = self._solve_ik(self.target, approach_angle, elbow, locked_joints)
+            result = self._solve_ik(self.target, approach_angle, elbow, locked_joints,
+                                    approach_dir=approach_dir)
 
             if result.success and result.state is not None:
                 final_state = result.state
@@ -1382,7 +1421,13 @@ class MainWindow(QMainWindow):
                     locked_orientation=None,
                     motor_rad_limits=self._anim_motor_limits(),
                 )
-                elbow_str = result.elbow_config.value if result.elbow_config else "n/a"
+                # Keep auto-captured azimuth in sync with the solved position so the
+                # constraint always reflects the most recent IK result rather than the
+                # arm pose at checkbox-enable time (which could be the home position).
+                panel = self.ee_constraint_panel
+                if panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked():
+                    panel.capture_angle(final_state, self.arm_config)
+                elbow_str = result.elbow_config if result.elbow_config else "n/a"
                 self.status_bar.showMessage(
                     f"{result.message} | elbow: {elbow_str} | error: {result.error_distance:.4f}"
                 )
@@ -1631,8 +1676,20 @@ class MainWindow(QMainWindow):
         self._jog_vel = min(max_v, self._jog_vel + accel * dt)
 
         if self._jog_type == 'ee':
-            approach_angle = self.ee_constraint_panel.get_approach_angle()
-            locked_joints  = self.ee_constraint_panel.get_locked_joints(self.arm_config)
+            # Orientation constraints are expressed as DLS residual rows, not
+            # joint locks.  Every joint moves freely; the orientation error acts
+            # as a continuous restoring force that maintains the constraint while
+            # the user jogs.
+            _approach_dir = self.ee_constraint_panel.get_approach_dir()
+            approach_angle = (
+                None if _approach_dir is not None
+                else self.ee_constraint_panel.get_approach_angle()
+            )
+            locked_joints = dict(self.ee_constraint_panel.get_locked_joints(self.arm_config))
+            # Strip any base lock when approach_dir is active — orientation
+            # residual describes the azimuth, no joint should be hard-locked.
+            if _approach_dir is not None:
+                locked_joints.pop(0, None)
 
             if self._jog_axis == 3:
                 # Roll jog: directly drive roll joints, update lock spinbox to stay in sync
@@ -1643,7 +1700,6 @@ class MainWindow(QMainWindow):
                         new_a = self.arm_state.joint_angles[idx] + delta_rad
                         j = self.arm_config.joints[idx]
                         self.arm_state.joint_angles[idx] = max(j.joint_min, min(j.joint_max, new_a))
-                # Keep roll spinbox in sync with the first roll joint
                 for i, jtype in enumerate(self.arm_config.joint_types):
                     if jtype == "roll":
                         self.ee_constraint_panel.roll_spin.setValue(
@@ -1651,37 +1707,67 @@ class MainWindow(QMainWindow):
                         )
                         break
             else:
-                # XYZ EE jog — single Jacobian velocity step (smooth, ~0.1 ms per tick)
+                # XYZ EE jog — single DLS step that simultaneously achieves the
+                # requested Cartesian velocity AND corrects any orientation drift.
+                # No joints are pre-locked; the orientation rows in J_task act as
+                # a restoring force proportional to the current orientation error.
                 v = np.zeros(3)
                 v[self._jog_axis] = self._jog_dir * self._jog_vel  # mm/s
 
-                J_full = compute_jacobian_numerical(
+                _, T_end = forward_kinematics(
+                    self.arm_state.joint_angles, self.arm_config
+                )
+                J_v_full, J_w_full = compute_jacobian_analytical(
                     self.arm_state.joint_angles, self.arm_config
                 )
 
                 follower_set = {int(c['follower']) for c in (self._joint_couplings or [])}
-                locked_set = set(locked_joints.keys()) | {0}
+                locked_set   = set(locked_joints.keys())
+                n_joints     = len(self.arm_state.joint_angles)
+
                 free_idx = [
-                    i for i in range(len(self.arm_state.joint_angles))
+                    i for i in range(n_joints)
                     if i not in locked_set and i not in follower_set
                 ]
-                # When approach angle is active, exclude last joint — set analytically below
-                n_joints = len(self.arm_state.joint_angles)
-                if approach_angle is not None and free_idx and free_idx[-1] == n_joints - 1:
-                    free_idx = free_idx[:-1]
 
                 if free_idx:
-                    J = J_full[:, free_idx]
+                    J_v = J_v_full[:, free_idx]
                     lam = 0.01
-                    dtheta = J.T @ np.linalg.solve(J @ J.T + lam * lam * np.eye(3), v * dt)
+
+                    # ori_gain converts orientation error (dimensionless unit-vector
+                    # difference) into mm-equivalent units so the DLS can balance
+                    # position and orientation rows on the same scale.
+                    # At ~200 Hz: a 0.1-rad orientation drift corrects in ~1–2 ticks
+                    # while a 10 mm/s jog steps ~0.05 mm per tick — both are handled
+                    # without one overwhelming the other.
+                    ori_gain = 1.0  # mm per unit orientation error
+
+                    if _approach_dir is not None:
+                        EE_x    = T_end[:3, 0]
+                        J_ori   = np.cross(J_w_full[:, free_idx].T, EE_x).T * ori_gain
+                        ori_err = (_approach_dir - EE_x) * ori_gain
+                        J_task  = np.vstack([J_v, J_ori])
+                        rhs     = np.concatenate([v * dt, ori_err])
+                    elif approach_angle is not None:
+                        # Elevation-only: constrain only z-component of EE x-axis.
+                        EE_x      = T_end[:3, 0]
+                        J_ori_z   = np.cross(J_w_full[:, free_idx].T, EE_x).T[2:3] * ori_gain
+                        ori_err_z = np.array([(math.sin(approach_angle) - EE_x[2]) * ori_gain])
+                        J_task    = np.vstack([J_v, J_ori_z])
+                        rhs       = np.concatenate([v * dt, ori_err_z])
+                    else:
+                        J_task = J_v
+                        rhs    = v * dt
+
+                    dim    = J_task.shape[0]
+                    dtheta = J_task.T @ np.linalg.solve(
+                        J_task @ J_task.T + lam * lam * np.eye(dim), rhs
+                    )
 
                     angles = list(self.arm_state.joint_angles)
                     for k, i in enumerate(free_idx):
                         jc = self.arm_config.joints[i]
                         angles[i] = float(np.clip(angles[i] + dtheta[k], jc.joint_min, jc.joint_max))
-
-                    if approach_angle is not None:
-                        angles = enforce_approach_angle(self.arm_config, angles, approach_angle)
 
                     self.arm_state = ArmState(joint_angles=angles)
         else:

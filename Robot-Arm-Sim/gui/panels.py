@@ -626,11 +626,13 @@ class ConstrainEndEffectorPanel(QGroupBox):
         elev_row.addWidget(self.auto_cb)
         layout.addLayout(elev_row)
 
-        # ── Constraint 2: Azimuth (angle from ZX plane) ────────────────────
-        self.azim_cb = QCheckBox("Azimuth — angle from ZX plane")
+        # ── Constraint 2: Approach direction ───────────────────────────────
+        self.azim_cb = QCheckBox("Approach direction")
         self.azim_cb.setToolTip(
-            "Fix the horizontal pointing direction of the arm.\n"
-            "0° = along X axis, 90° = along Y axis."
+            "Fix the horizontal direction the arm approaches from.\n"
+            "Without this, elevation-only still lets the arm orbit the target freely.\n"
+            "Auto: captures atan2 toward the current target. Locks base during jog.\n"
+            "Uncheck Auto to type a fixed angle."
         )
         layout.addWidget(self.azim_cb)
 
@@ -641,7 +643,11 @@ class ConstrainEndEffectorPanel(QGroupBox):
         self.azim_auto_cb = QCheckBox("Auto")
         self.azim_auto_cb.setChecked(True)
         self.azim_auto_cb.setEnabled(False)
-        self.azim_auto_cb.setToolTip("Capture azimuth from current arm pose on enable")
+        self.azim_auto_cb.setToolTip(
+            "Auto: captures the atan2 angle toward the current target and locks the\n"
+            "base to it during jog. IK is still free to use atan2 on Update.\n"
+            "Uncheck to type a fixed approach angle that is locked everywhere."
+        )
         azim_row.addWidget(self.azim_auto_cb)
         layout.addLayout(azim_row)
 
@@ -668,11 +674,9 @@ class ConstrainEndEffectorPanel(QGroupBox):
 
         # Signals
         self.constrain_cb.toggled.connect(self._on_elev_toggled)
-        self.auto_cb.toggled.connect(lambda a: self.angle_spin.setEnabled(
-            self.constrain_cb.isChecked() and not a))
+        self.auto_cb.toggled.connect(self._on_elev_auto_toggled)
         self.azim_cb.toggled.connect(self._on_azim_toggled)
-        self.azim_auto_cb.toggled.connect(lambda a: self.azim_spin.setEnabled(
-            self.azim_cb.isChecked() and not a))
+        self.azim_auto_cb.toggled.connect(self._on_azim_auto_toggled)
         self.lock_roll_cb.toggled.connect(self._on_roll_toggled)
 
     def _on_elev_toggled(self, checked: bool) -> None:
@@ -687,9 +691,30 @@ class ConstrainEndEffectorPanel(QGroupBox):
 
     def _on_azim_toggled(self, checked: bool) -> None:
         self.azim_auto_cb.setEnabled(checked)
+        if checked:
+            # Always start in auto (display-only) mode so IK can compute the
+            # base angle analytically; prevents stale manual angle (e.g. 0°)
+            # from locking the base on first enable.
+            self.azim_auto_cb.setChecked(True)
         self.azim_spin.setEnabled(checked and not self.azim_auto_cb.isChecked())
         if not checked:
             self._captured_azimuth = None
+        self._update_status()
+
+    def _on_elev_auto_toggled(self, auto: bool) -> None:
+        """Switching elevation Auto off → seed spin with the captured angle so the
+        arm doesn't jump to 0° (the spin default)."""
+        self.angle_spin.setEnabled(self.constrain_cb.isChecked() and not auto)
+        if not auto and self._captured_angle is not None:
+            self.angle_spin.setValue(math.degrees(self._captured_angle))
+        self._update_status()
+
+    def _on_azim_auto_toggled(self, auto: bool) -> None:
+        """Switching azimuth Auto off → seed spin with the captured angle so the
+        base locks to where it currently is, not the default 0°."""
+        self.azim_spin.setEnabled(self.azim_cb.isChecked() and not auto)
+        if not auto and self._captured_azimuth is not None:
+            self.azim_spin.setValue(math.degrees(self._captured_azimuth))
         self._update_status()
 
     def _on_roll_toggled(self, checked: bool) -> None:
@@ -754,13 +779,30 @@ class ConstrainEndEffectorPanel(QGroupBox):
             return self._captured_azimuth
         return math.radians(self.azim_spin.value())
 
+    def get_approach_dir(self) -> Optional[np.ndarray]:
+        """3D unit approach vector when both elevation and azimuth are active.
+
+        Returns [cos(elev)*cos(azim), cos(elev)*sin(azim), sin(elev)], or None
+        if either constraint is inactive (caller falls back to scalar approach_angle).
+        """
+        elev = self.get_approach_angle()
+        azim = self.get_azimuth_angle()
+        if elev is None or azim is None:
+            return None
+        ce, se = math.cos(elev), math.sin(elev)
+        ca, sa = math.cos(azim), math.sin(azim)
+        return np.array([ce * ca, ce * sa, se])
+
     def get_locked_joints(self, config) -> dict:
         """Return {joint_index: angle_rad} for roll and azimuth locks."""
         locked = {}
-        # Azimuth → lock base joint (index 0)
-        az = self.get_azimuth_angle()
-        if az is not None:
-            locked[0] = az
+        # Azimuth → lock base joint (index 0) only in manual mode.
+        # Auto mode is display-only: IK computes the base angle analytically
+        # (atan2 toward target) and the displayed angle tracks the result.
+        # This prevents the constraint from locking to a stale capture value
+        # (e.g. home position) and causing arm contortion.
+        if self.azim_cb.isChecked() and not self.azim_auto_cb.isChecked():
+            locked[0] = math.radians(self.azim_spin.value())
         # Roll joints
         if self.constrain_cb.isChecked() and self.lock_roll_cb.isChecked():
             roll_rad = math.radians(self.roll_spin.value())
@@ -3040,6 +3082,7 @@ class MeshConfigPanel(QGroupBox):
     mesh_file_changed      = pyqtSignal(int, str)
     mesh_transform_changed = pyqtSignal(int, float, float, float, float, float, float, float)
     mesh_visibility_changed = pyqtSignal(int, bool)   # (idx, hidden)
+    hide_all_changed        = pyqtSignal(bool)         # True = hide all, False = restore
 
     _DEFAULT_LT = {'tx': 0.0, 'ty': 0.0, 'tz': 0.0,
                    'rx': 0.0, 'ry': 0.0, 'rz': 0.0, 'scale': 1.0}
@@ -3075,6 +3118,15 @@ class MeshConfigPanel(QGroupBox):
         self.hide_cb.toggled.connect(self._on_hide_toggled)
         file_lay.addWidget(self.hide_cb)
         layout.addWidget(file_box)
+
+        self.hide_all_btn = QPushButton("Hide All Mesh")
+        self.hide_all_btn.setCheckable(True)
+        self.hide_all_btn.setToolTip(
+            "Temporarily hide all meshes in the viewport.\n"
+            "Per-link visibility settings are preserved and restored on uncheck."
+        )
+        self.hide_all_btn.toggled.connect(self._on_hide_all_toggled)
+        layout.addWidget(self.hide_all_btn)
 
         # ── Alignment transform ────────────────────────────────────────
         align_box = QGroupBox("Alignment Offset")
@@ -3244,6 +3296,10 @@ class MeshConfigPanel(QGroupBox):
         self._paths[idx] = ""
         self._load_current()
         self.mesh_file_changed.emit(idx, "")
+
+    def _on_hide_all_toggled(self, checked: bool) -> None:
+        self.hide_all_btn.setText("Show All Mesh" if checked else "Hide All Mesh")
+        self.hide_all_changed.emit(checked)
 
     def _on_hide_toggled(self, hidden: bool) -> None:
         if self._loading:

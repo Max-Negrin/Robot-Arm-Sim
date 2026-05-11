@@ -6,8 +6,8 @@
       8.0,
       3.4,
       4.0,
-      4.0,
-      3.0
+      7.0,
+      2.5
     ],
     "joint_types": [
       "pitch",
@@ -20,8 +20,8 @@
       "C:/Users/maxwe/Downloads/shoulder arm.stl",
       "C:/Users/maxwe/Downloads/elbow pt 1 (Assembly).stl",
       "",
-      "",
-      ""
+      "C:/Users/maxwe/Downloads/elbow pt 2.stl",
+      "C:/Users/maxwe/Downloads/j4 spindle.stl"
     ],
     "mesh_transforms": [
       {
@@ -52,23 +52,30 @@
         "scale": 1.0
       },
       {
-        "tx": 0.0,
+        "tx": -1.06,
         "ty": 0.0,
         "tz": 0.0,
         "rx": 0.0,
-        "ry": 0.0,
+        "ry": 90.0,
         "rz": 0.0,
-        "scale": 1.0
+        "scale": 0.0363
       },
       {
         "tx": 0.0,
         "ty": 0.0,
         "tz": 0.0,
         "rx": 0.0,
-        "ry": 0.0,
-        "rz": 0.0,
-        "scale": 1.0
+        "ry": 1.0,
+        "rz": 180.0,
+        "scale": 0.0363
       }
+    ],
+    "mesh_hidden": [
+      false,
+      false,
+      false,
+      false,
+      false
     ],
     "joint_limits": [
       [
@@ -117,12 +124,12 @@
     "starting_angles": [
       0.0,
       90.0,
-      0.0,
+      -0.0,
       -90.0,
       0.0,
       0.0
     ],
-    "elbow": 1,
+    "elbow": 0,
     "motor_configs": [
       {
         "idx": 0,
@@ -133,7 +140,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -360.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -190,7 +197,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -90.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -209,7 +216,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -8.7,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -267,15 +274,15 @@
       }
     ],
     "ee_constraint": {
-      "enabled": false,
-      "auto": true,
+      "enabled": true,
+      "auto": false,
       "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 11.0,
-      "y": 0.0,
-      "z": 13.5,
-      "approach_auto": true,
+      "x": -10.0,
+      "y": 12.0,
+      "z": 8.0,
+      "approach_auto": false,
       "approach_angle_deg": 0.0
     },
     "homing_config": [
@@ -370,7 +377,14 @@
         "post_home_cmds": ""
       }
     ],
-    "joint_couplings": []
+    "joint_couplings": [
+      {
+        "driver": 2,
+        "follower": 3,
+        "ratio": 1.0,
+        "offset_deg": -90.0
+      }
+    ]
   },
   "hardware": {
     "wifi_host": "",

@@ -565,17 +565,45 @@ def solve_ik(
 # Singularity & Limits
 # ═══════════════════════════════════════════════════════════════════════════
 
+def compute_jacobian_analytical(
+    joint_angles: List[float],
+    config: ArmConfig,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Analytical 6×N Jacobian for a serial revolute chain.
+
+    For revolute joint i : rotation axis = z-axis of frame i in world frame.
+    For roll_arm joint i : rotation axis = x-axis of frame i in world frame.
+
+      J_v[:, i] = axis_i × (p_ee - p_i)   — position Jacobian (3×N)
+      J_w[:, i] = axis_i                   — orientation Jacobian (3×N)
+
+    Returns
+    -------
+    J_v : (3, N)  linear / position Jacobian
+    J_w : (3, N)  angular / orientation Jacobian
+    """
+    state  = ArmState(joint_angles=list(joint_angles))
+    frames = forward_kinematics_frames(config, state)
+    n      = len(joint_angles)
+    p_e    = frames[-1][:3, 3]
+    J_v    = np.zeros((3, n))
+    J_w    = np.zeros((3, n))
+    for i, joint in enumerate(config.joints):
+        p_i  = frames[i][:3, 3]
+        axis = frames[i][:3, 0] if joint.joint_type == "roll_arm" else frames[i][:3, 2]
+        J_v[:, i] = np.cross(axis, p_e - p_i)
+        J_w[:, i] = axis
+    return J_v, J_w
+
+
 def compute_jacobian_numerical(
     joint_angles: List[float],
     config: ArmConfig,
     epsilon: float = 1e-6,
     pos_idx: int = -1,
 ) -> np.ndarray:
-    """
-    Numerical Jacobian (3×N) via forward finite differences.
-    Column i = d(positions[pos_idx])/d(joint_angles[i]).
-    Use pos_idx=-2 for the wrist position (excludes last joint contribution).
-    """
+    """Numerical position Jacobian (3×N) via finite differences. Legacy; prefer compute_jacobian_analytical."""
     angles = list(joint_angles)
     n      = len(angles)
     pos0, _ = forward_kinematics(angles, config)
@@ -635,22 +663,25 @@ def _ik_3d(
     pos_idx: int = -1,
     couplings: Optional[List[Dict]] = None,
     elbow: Optional[str] = None,
+    approach_dir: Optional[np.ndarray] = None,
+    approach_elev: Optional[float] = None,
+    ori_weight: float = 0.15,
 ) -> Tuple[List[float], float]:
     """
     Full 3-D damped-least-squares IK for any N-joint arm configuration.
 
-    Works identically for revolute pitch joints, roll joints, and any
-    combination — the Jacobian is computed numerically via FK perturbation
-    so no joint-type special-casing is needed.
+    Uses the exact analytical Jacobian (cross-product formula) — no FK perturbations.
+    No joints are locked by orientation constraints — all orientation targets are
+    expressed as residual rows in the DLS and solved simultaneously with position.
+
+    approach_dir  : unit 3-vector for desired EE x-axis.  Adds 3 orientation rows:
+                    residual = ori_weight * (approach_dir - EE_x)
+    approach_elev : desired elevation angle (rad).  Adds 1 z-row only, leaving
+                    azimuth free:  residual = ori_weight * (sin(elev) - EE_x[2])
 
     locked_joints : {index: angle_rad} — joints held fixed.
-    pos_idx       : which FK position to minimise against (default -1 = EE).
-    couplings     : rigid joint pairs — follower is fixed at offset_rad (constant angle).
-                    Followers are excluded from free variables; the driver is free to move
-                    while the follower stays at its fixed offset angle throughout the solve.
-    elbow         : 'elbow_up' or 'elbow_down' — biases random restarts for joint index 2
-                    (the elbow joint) to the correct half of its range, so the solver stays
-                    in the desired elbow configuration across restarts.
+    couplings     : rigid joint pairs — follower fixed at offset_rad.
+    elbow         : 'elbow_up' / 'elbow_down' — biases restarts for joint 2.
     Always returns the best angles found (never raises, never returns None).
     """
     n      = len(config.joints)
@@ -712,21 +743,41 @@ def _ik_3d(
             _apply_follow(angles)
 
         for _ in range(max_iter):
-            positions, _ = forward_kinematics(angles.tolist(), config)
-            err_vec = target_xyz - positions[pos_idx]
-            err     = float(np.linalg.norm(err_vec))
+            positions, T_end = forward_kinematics(angles.tolist(), config)
+            pos_err = target_xyz - positions[pos_idx]
+            err     = float(np.linalg.norm(pos_err))
             if err < best_err:
                 best_err = err
                 best     = angles.copy()
             if err < tol:
                 break
 
-            # Numerical Jacobian over free joints only (followers are fixed, not variables).
-            J_full = compute_jacobian_numerical(angles.tolist(), config, pos_idx=pos_idx)
-            J = J_full[:, free_idx].copy()
+            # Analytical Jacobian — exact, no FK perturbation needed.
+            J_v_full, J_w_full = compute_jacobian_analytical(angles.tolist(), config)
+            J_v = J_v_full[:, free_idx]
 
-            JJT   = J @ J.T + lambda_damp ** 2 * np.eye(3)
-            delta = J.T @ np.linalg.solve(JJT, err_vec)
+            if approach_dir is not None:
+                # Full 3D orientation residual: drives all 3 components of EE x-axis.
+                EE_x     = T_end[:3, 0]
+                J_EEx    = np.cross(J_w_full[:, free_idx].T, EE_x).T * ori_weight
+                J_task   = np.vstack([J_v, J_EEx])
+                residual = np.concatenate([pos_err, (approach_dir - EE_x) * ori_weight])
+            elif approach_elev is not None:
+                # Elevation-only: constrain only the z-component of EE x-axis.
+                # Azimuth is left free — the DLS finds whatever horizontal direction
+                # satisfies position and elevation simultaneously.
+                EE_x       = T_end[:3, 0]
+                J_EEx_z    = np.cross(J_w_full[:, free_idx].T, EE_x).T[2:3] * ori_weight
+                J_task     = np.vstack([J_v, J_EEx_z])
+                elev_err   = (math.sin(approach_elev) - EE_x[2]) * ori_weight
+                residual   = np.concatenate([pos_err, [elev_err]])
+            else:
+                J_task   = J_v
+                residual = pos_err
+
+            dim   = J_task.shape[0]
+            JJT   = J_task @ J_task.T + lambda_damp ** 2 * np.eye(dim)
+            delta = J_task.T @ np.linalg.solve(JJT, residual)
 
             for k, i in enumerate(free_idx):
                 angles[i] = float(np.clip(
@@ -751,6 +802,7 @@ def solve_ik_analytical(
     locked_joints: Optional[Dict[int, float]] = None,
     initial_angles: Optional[List[float]] = None,
     couplings: Optional[List[Dict]] = None,
+    approach_dir: Optional[np.ndarray] = None,
 ) -> IKResult:
     """
     Full 3-D IK for an arbitrary revolute arm — any joint types, any N.
@@ -825,60 +877,61 @@ def solve_ik_analytical(
             seed[1] = float(clamp(two_r[0], config.joints[1].joint_min, config.joints[1].joint_max))
             seed[2] = float(clamp(two_r[1], config.joints[2].joint_min, config.joints[2].joint_max))
 
-    # Build effective locked dict (base always locked to analytical azimuth)
+    # approach_dir path leaves the base joint free — the orientation residual in
+    # _ik_3d drives it naturally.  All other paths lock the base to the analytical
+    # atan2 azimuth, which is a geometric property of the arm (not an orientation
+    # constraint): a pure-pitch arm can only reach a target at azimuth atan2(y,x).
     effective_locked: Dict[int, float] = dict(locked_joints) if locked_joints else {}
-    effective_locked[0] = base_angle
 
-    if approach_angle is not None and n_arm >= 2:
-        # ── Approach-angle (EE orientation) constraint ────────────────────────
-        # Strategy (4-phase, orientation is exact by construction):
-        #
-        # Phase 1 — position-only DLS: find J1..Jn with all free joints.
-        # Phase 2 — pin last joint analytically:
-        #      R[2,0]*cos(J) + R[2,1]*sin(J) = sin(approach)
-        #   where R is the wrist-frame rotation matrix from FK.  This is exact
-        #   regardless of roll joints or arm configuration.
-        # Phase 3 — position cleanup with last joint locked: remaining joints
-        #   correct the small drift that Phase 2 introduced.
-        # Phase 4 — re-pin orientation: guarantees exact angle after Phase 3.
-        #
-        # success is always True (orientation guaranteed exact; position is
-        # best-effort).  Position error is reported for diagnostics.
-        # Phase 1: position-only — all free joints find the target
-        joint_angles, _ = _ik_3d(tgt, config, list(seed), effective_locked,
-                                   n_restarts=5, max_iter=300, couplings=couplings,
-                                   elbow=elbow)
+    if approach_dir is not None and n_arm >= 2:
+        # ── Unified 6DOF: position + full 3D approach direction ───────────────
+        # No joint is locked by the orientation constraint.  The DLS residual
+        # includes all 3 components of (approach_dir - EE_x), so every joint
+        # moves freely to satisfy both position and orientation simultaneously.
+        approach_dir_n = np.asarray(approach_dir, dtype=float)
+        # Strip any caller-supplied base lock — approach_dir residual owns azimuth.
+        effective_locked.pop(0, None)
+        # Seed base toward approach azimuth for faster convergence (not a lock).
+        seed[0] = math.atan2(float(approach_dir_n[1]), float(approach_dir_n[0]))
 
-        # Phase 2: pin last joint to exact approach angle
-        joint_angles = enforce_approach_angle(config, joint_angles, approach_angle)
+        joint_angles, err = _ik_3d(
+            tgt, config, list(seed), effective_locked,
+            n_restarts=15, max_iter=600,
+            couplings=couplings, elbow=elbow,
+            approach_dir=approach_dir_n, ori_weight=0.5,
+        )
+        positions, _ = forward_kinematics(joint_angles, config)
+        err = float(np.linalg.norm(positions[-1] - tgt))
 
-        # Phase 3: position cleanup with last joint locked
-        locked_with_last = dict(effective_locked)
-        locked_with_last[n_joints - 1] = joint_angles[-1]
-        joint_angles, _ = _ik_3d(tgt, config, joint_angles, locked_with_last,
-                                   n_restarts=3, max_iter=300, couplings=couplings,
-                                   elbow=elbow)
+    elif approach_angle is not None and n_arm >= 2:
+        # ── Elevation-only constraint ─────────────────────────────────────────
+        # Base locked to atan2 toward target: correct for a pure-pitch arm and
+        # not an orientation constraint.  Elevation is achieved through the DLS
+        # z-row residual — no joint is analytically pinned.
+        effective_locked[0] = base_angle
 
-        # Phase 4: re-pin orientation (last joint is now exact regardless of Phase 3 drift)
-        joint_angles = enforce_approach_angle(config, joint_angles, approach_angle)
-
+        joint_angles, err = _ik_3d(
+            tgt, config, list(seed), effective_locked,
+            n_restarts=10, max_iter=500,
+            couplings=couplings, elbow=elbow,
+            approach_elev=approach_angle, ori_weight=0.5,
+        )
         positions, _ = forward_kinematics(joint_angles, config)
         err = float(np.linalg.norm(positions[-1] - tgt))
 
     else:
         # ── Position-only IK ──────────────────────────────────────────────────
+        effective_locked[0] = base_angle
         joint_angles, err = _ik_3d(tgt, config, seed, effective_locked,
                                    couplings=couplings, elbow=elbow)
 
-    # Re-enforce all locked joints
+    # Re-enforce any user-specified locked joints (roll locks, math expressions, etc.)
     for idx, val in effective_locked.items():
         if 0 <= idx < len(joint_angles):
             joint_angles[idx] = val
 
     state = ArmState(joint_angles=joint_angles)
-    # Approach-angle path always succeeds: orientation is guaranteed exact,
-    # position is best-effort (report error for diagnostics only).
-    orient_constrained = approach_angle is not None and n_arm >= 2
+    orient_constrained = (approach_dir is not None or approach_angle is not None) and n_arm >= 2
     success = orient_constrained or (err < 1.0)
     msg = (
         f"IK solved (err={err:.4f})"
@@ -938,32 +991,62 @@ def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def last_pitch_joint_idx(config: ArmConfig) -> int:
+    """Index of the last non-roll arm joint (index >= 1).
+
+    The approach elevation is controlled by the last pitch (revolute, non-roll_arm)
+    joint, not the last overall joint. Roll joints rotate around the arm axis and do
+    not affect the EE x-axis direction (the approach direction).
+    """
+    for i in range(len(config.joints) - 1, 0, -1):
+        if config.joints[i].joint_type != "roll_arm":
+            return i
+    return len(config.joints) - 1  # degenerate: all joints are roll (shouldn't happen)
+
+
 def enforce_approach_angle(
     config: ArmConfig,
     angles: List[float],
     approach_angle_rad: float,
 ) -> List[float]:
-    """Analytically set the last joint angle to achieve the given approach elevation.
+    """Analytically set the last pitch joint to achieve the given approach elevation.
 
-    Uses the wrist-frame rotation matrix from FK to solve:
-        R[2,0]*cos(J) + R[2,1]*sin(J) = sin(approach_angle)
+    The approach direction for a standard DH arm is the EE x-axis (T_end[:3, 0]).
+    Roll joints rotate around that axis and do NOT affect its direction, so we
+    target the last non-roll arm joint.
+
+    Solves:  R[2,0]*cos(J) + R[2,1]*sin(J) = sin(approach_angle)
+    where R is the rotation matrix of the frame immediately before the target joint.
     Returns a new angles list; all other joints are unchanged.
     """
     sin_a = math.sin(approach_angle_rad)
+    idx   = last_pitch_joint_idx(config)
     frames = forward_kinematics_frames(config, ArmState(joint_angles=angles))
-    R = frames[-2][:3, :3]
+    R = frames[idx][:3, :3]   # frame BEFORE joint idx
     a_r, b_r = float(R[2, 0]), float(R[2, 1])
-    A = math.sqrt(a_r * a_r + b_r * b_r)
+    A   = math.sqrt(a_r * a_r + b_r * b_r)
     phi = math.atan2(b_r, a_r)
     if A > 1e-9 and abs(sin_a) <= A:
         acos_val = math.acos(max(-1.0, min(1.0, sin_a / A)))
-        j1, j2 = phi + acos_val, phi - acos_val
-        j_seed = angles[-1]
-        j_last = j1 if abs(j1 - j_seed) <= abs(j2 - j_seed) else j2
+        j1, j2   = phi + acos_val, phi - acos_val
+        j_lo, j_hi = config.joints[idx].joint_min, config.joints[idx].joint_max
+        # j2 = phi - acos_val gives sum = approach_angle (direct solution) for
+        # |approach_angle| ≤ π/2.  j1 gives the supplementary solution
+        # (sum = π - approach_angle) — the arm points backward.
+        # Always prefer the direct solution; fall back to the other branch only
+        # if the preferred one is entirely outside joint limits.
+        direct   = j2 if abs(approach_angle_rad) <= math.pi / 2 else j1
+        indirect = j1 if abs(approach_angle_rad) <= math.pi / 2 else j2
+        if j_lo <= direct <= j_hi:
+            j_val = direct
+        elif j_lo <= indirect <= j_hi:
+            j_val = indirect
+        else:
+            j_val = clamp(direct, j_lo, j_hi)
     else:
-        j_last = phi
-    out = list(angles)
-    out[-1] = clamp(j_last, config.joints[-1].joint_min, config.joints[-1].joint_max)
+        j_val = phi
+    out      = list(angles)
+    out[idx] = clamp(j_val, config.joints[idx].joint_min, config.joints[idx].joint_max)
     return out
 
 
