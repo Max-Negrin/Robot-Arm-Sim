@@ -3039,6 +3039,7 @@ class MeshConfigPanel(QGroupBox):
 
     mesh_file_changed      = pyqtSignal(int, str)
     mesh_transform_changed = pyqtSignal(int, float, float, float, float, float, float, float)
+    mesh_visibility_changed = pyqtSignal(int, bool)   # (idx, hidden)
 
     _DEFAULT_LT = {'tx': 0.0, 'ty': 0.0, 'tz': 0.0,
                    'rx': 0.0, 'ry': 0.0, 'rz': 0.0, 'scale': 1.0}
@@ -3069,6 +3070,10 @@ class MeshConfigPanel(QGroupBox):
         self.clear_btn.clicked.connect(self._on_clear)
         btn_row.addWidget(self.clear_btn)
         file_lay.addLayout(btn_row)
+        self.hide_cb = QCheckBox("Hide mesh")
+        self.hide_cb.setToolTip("Don't render this link's mesh (saves GPU cost)")
+        self.hide_cb.toggled.connect(self._on_hide_toggled)
+        file_lay.addWidget(self.hide_cb)
         layout.addWidget(file_box)
 
         # ── Alignment transform ────────────────────────────────────────
@@ -3113,6 +3118,7 @@ class MeshConfigPanel(QGroupBox):
         # ── Internal state ─────────────────────────────────────────────
         self._paths: list[str] = []
         self._transforms: list[dict] = []
+        self._hidden: list[bool] = []
         self._loading = False
 
         self.link_combo.currentIndexChanged.connect(self._on_link_changed)
@@ -3135,6 +3141,9 @@ class MeshConfigPanel(QGroupBox):
         while len(self._transforms) < n:
             self._transforms.append(dict(self._DEFAULT_LT))
         self._transforms = self._transforms[:n]
+        while len(self._hidden) < n:
+            self._hidden.append(False)
+        self._hidden = self._hidden[:n]
         self.link_combo.setCurrentIndex(max(0, min(cur, n - 1)))
         self._load_current()
         self._loading = False
@@ -3162,6 +3171,19 @@ class MeshConfigPanel(QGroupBox):
         self._load_current()
         self._loading = False
 
+    def get_hidden(self) -> list[bool]:
+        return list(self._hidden)
+
+    def set_hidden(self, hidden: list[bool]) -> None:
+        n = self.link_combo.count()
+        self._hidden = list(hidden)
+        while len(self._hidden) < n:
+            self._hidden.append(False)
+        self._hidden = self._hidden[:n]
+        self._loading = True
+        self._load_current()
+        self._loading = False
+
     # ── Internals ───────────────────────────────────────────────────────────
 
     def _load_current(self) -> None:
@@ -3176,6 +3198,11 @@ class MeshConfigPanel(QGroupBox):
             self.path_label.setText("No file loaded")
             self.path_label.setToolTip("")
             self.path_label.setStyleSheet("color: #888; font-size: 10px;")
+
+        hidden = self._hidden[idx] if idx >= 0 and idx < len(self._hidden) else False
+        self.hide_cb.blockSignals(True)
+        self.hide_cb.setChecked(hidden)
+        self.hide_cb.blockSignals(False)
 
         lt = self._transforms[idx] if idx >= 0 and idx < len(self._transforms) else self._DEFAULT_LT
         was = self._loading
@@ -3217,6 +3244,17 @@ class MeshConfigPanel(QGroupBox):
         self._paths[idx] = ""
         self._load_current()
         self.mesh_file_changed.emit(idx, "")
+
+    def _on_hide_toggled(self, hidden: bool) -> None:
+        if self._loading:
+            return
+        idx = self.link_combo.currentIndex()
+        if idx < 0:
+            return
+        while len(self._hidden) <= idx:
+            self._hidden.append(False)
+        self._hidden[idx] = hidden
+        self.mesh_visibility_changed.emit(idx, hidden)
 
     def _on_transform_changed(self) -> None:
         if self._loading:

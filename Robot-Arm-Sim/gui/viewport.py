@@ -141,6 +141,8 @@ class ArmViewport(gl.GLViewWidget):
         self._mesh_items: list = []
         # Per-mesh local offset transforms (applied in joint frame before FK)
         self._mesh_local_transforms: list = []
+        # Per-mesh hidden flags (True = don't render)
+        self._mesh_hidden: list = []
 
     # ── Mesh management ────────────────────────────────────────────────────
 
@@ -159,16 +161,20 @@ class ArmViewport(gl.GLViewWidget):
         _default_lt = {'tx': 0.0, 'ty': 0.0, 'tz': 0.0,
                        'rx': 0.0, 'ry': 0.0, 'rz': 0.0, 'scale': 1.0}
         prev_lts = list(self._mesh_local_transforms)
+        prev_hidden = list(self._mesh_hidden)
         self._mesh_local_transforms = []
+        self._mesh_hidden = []
         for i in range(len(paths)):
             self._mesh_local_transforms.append(
                 dict(prev_lts[i]) if i < len(prev_lts) else dict(_default_lt)
             )
+            self._mesh_hidden.append(prev_hidden[i] if i < len(prev_hidden) else False)
 
         if not _MESH_SUPPORT:
             return
 
-        for path in paths:
+        for i, path in enumerate(paths):
+            hidden = self._mesh_hidden[i]
             if path and os.path.exists(path):
                 verts, faces = _load_mesh_file(path)
                 if verts is not None:
@@ -183,15 +189,19 @@ class ArmViewport(gl.GLViewWidget):
                         drawEdges=False,
                     )
                     self.addItem(item)
+                    item.setVisible(not hidden)
                     self._mesh_items.append(item)
                 else:
                     self._mesh_items.append(None)
             else:
                 self._mesh_items.append(None)
 
-        # Dim the skeleton lines when meshes are present so they don't clash
-        any_loaded = any(m is not None for m in self._mesh_items)
-        alpha = 60 if any_loaded else 255
+        # Dim the skeleton lines only when at least one mesh is loaded AND visible
+        any_visible = any(
+            m is not None and not h
+            for m, h in zip(self._mesh_items, self._mesh_hidden)
+        )
+        alpha = 60 if any_visible else 255
         self.link_plot.setData(color=pg.mkColor(40, 130, 255, alpha))
 
     def reload_mesh(self, idx: int, path: str, scale: float = 1.0) -> None:
@@ -203,6 +213,8 @@ class ArmViewport(gl.GLViewWidget):
                        'rx': 0.0, 'ry': 0.0, 'rz': 0.0, 'scale': 1.0}
         while len(self._mesh_local_transforms) <= idx:
             self._mesh_local_transforms.append(dict(_default_lt))
+        while len(self._mesh_hidden) <= idx:
+            self._mesh_hidden.append(False)
 
         # Remove the old item for this slot
         old = self._mesh_items[idx]
@@ -210,6 +222,7 @@ class ArmViewport(gl.GLViewWidget):
             self.removeItem(old)
             self._mesh_items[idx] = None
 
+        hidden = self._mesh_hidden[idx]
         if path and os.path.exists(path) and _MESH_SUPPORT:
             verts, faces = _load_mesh_file(path)
             if verts is not None:
@@ -224,11 +237,15 @@ class ArmViewport(gl.GLViewWidget):
                     drawEdges=False,
                 )
                 self.addItem(item)
+                item.setVisible(not hidden)
                 self._mesh_items[idx] = item
 
         # Update skeleton line alpha
-        any_loaded = any(m is not None for m in self._mesh_items)
-        self.link_plot.setData(color=pg.mkColor(40, 130, 255, 60 if any_loaded else 255))
+        any_visible = any(
+            m is not None and not h
+            for m, h in zip(self._mesh_items, self._mesh_hidden)
+        )
+        self.link_plot.setData(color=pg.mkColor(40, 130, 255, 60 if any_visible else 255))
 
     def set_mesh_local_transform(self, idx: int, tx: float = 0.0, ty: float = 0.0,
                                   tz: float = 0.0, rx_deg: float = 0.0,
@@ -244,6 +261,19 @@ class ArmViewport(gl.GLViewWidget):
             'rx': rx_deg, 'ry': ry_deg, 'rz': rz_deg,
             'scale': scale,
         }
+
+    def set_mesh_hidden(self, idx: int, hidden: bool) -> None:
+        """Show or hide the mesh for link idx without reloading it."""
+        while len(self._mesh_hidden) <= idx:
+            self._mesh_hidden.append(False)
+        self._mesh_hidden[idx] = hidden
+        if idx < len(self._mesh_items) and self._mesh_items[idx] is not None:
+            self._mesh_items[idx].setVisible(not hidden)
+        any_visible = any(
+            m is not None and not h
+            for m, h in zip(self._mesh_items, self._mesh_hidden)
+        )
+        self.link_plot.setData(color=pg.mkColor(40, 130, 255, 60 if any_visible else 255))
 
     # ── Rendering ──────────────────────────────────────────────────────────
 
@@ -285,6 +315,8 @@ class ArmViewport(gl.GLViewWidget):
         # We build a frame with proximal POSITION + distal ORIENTATION so the mesh pivots correctly.
         if frames and self._mesh_items:
             for i, item in enumerate(self._mesh_items):
+                if i < len(self._mesh_hidden) and self._mesh_hidden[i]:
+                    continue  # hidden — skip transform math entirely
                 prox_idx = i + 1   # proximal joint
                 dist_idx = i + 2   # distal joint (carries the rotation for this link)
                 if item is not None and dist_idx < len(frames):

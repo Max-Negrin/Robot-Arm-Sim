@@ -32,6 +32,7 @@ from kinematics import (
     forward_kinematics, forward_kinematics_frames,
     solve_ik_analytical, solve_ik_numerical,
     from_legacy_planar,
+    compute_jacobian_numerical, enforce_approach_angle,
 )
 from constraints import (
     ConstraintSet, validate_target, check_singularity, check_self_collision,
@@ -339,6 +340,7 @@ class MainWindow(QMainWindow):
 
         self.mesh_config_panel.mesh_file_changed.connect(self._on_mesh_file_changed)
         self.mesh_config_panel.mesh_transform_changed.connect(self._on_mesh_transform_changed)
+        self.mesh_config_panel.mesh_visibility_changed.connect(self._on_mesh_visibility_changed)
         self.coupling_panel.couplings_changed.connect(self._on_couplings_changed)
 
         self._setup_menubar()
@@ -801,7 +803,7 @@ class MainWindow(QMainWindow):
             self.animator.start(
                 self.arm_state,
                 result.state,
-                locked_orientation=approach_angle,
+                locked_orientation=None,
                 motor_rad_limits=self._anim_motor_limits(),
             )
 
@@ -881,13 +883,15 @@ class MainWindow(QMainWindow):
         self.animator.cancel()
         self.mesh_config_panel.rebuild(n)
         self.coupling_panel.rebuild(n)
-        # Reload all meshes from the config panel and restore transforms.
+        # Reload all meshes from the config panel and restore transforms + visibility.
         self.viewport.load_meshes(self.mesh_config_panel.get_paths())
         for i, lt in enumerate(self.mesh_config_panel.get_transforms()):
             self.viewport.set_mesh_local_transform(
                 i, lt['tx'], lt['ty'], lt['tz'],
                 lt['rx'], lt['ry'], lt['rz'], lt['scale'],
             )
+        for i, hidden in enumerate(self.mesh_config_panel.get_hidden()):
+            self.viewport.set_mesh_hidden(i, hidden)
         # Reset arm to home position (not all-zeros).
         self.arm_state = self._arm_state_from_resting_degs()
         if self._joint_couplings:
@@ -911,6 +915,12 @@ class MainWindow(QMainWindow):
         """Forward per-mesh local transform changes to the viewport and re-render."""
         self.viewport.set_mesh_local_transform(idx, tx, ty, tz, rx, ry, rz, scale)
         self._render_arm()
+        if not self._loading:
+            self._save_arm_config()
+
+    def _on_mesh_visibility_changed(self, idx: int, hidden: bool) -> None:
+        """Toggle mesh visibility instantly without reloading."""
+        self.viewport.set_mesh_hidden(idx, hidden)
         if not self._loading:
             self._save_arm_config()
 
@@ -1103,6 +1113,7 @@ class MainWindow(QMainWindow):
             "joint_types": self.arm_config.joint_types,
             "mesh_files": self.mesh_config_panel.get_paths(),
             "mesh_transforms": self.mesh_config_panel.get_transforms(),
+            "mesh_hidden": self.mesh_config_panel.get_hidden(),
             "joint_limits": [
                 [round(math.degrees(lo), 4), round(math.degrees(hi), 4)]
                 for lo, hi in arm_limits
@@ -1143,6 +1154,11 @@ class MainWindow(QMainWindow):
         saved_mesh_transforms = d.get("mesh_transforms")
         if saved_mesh_transforms:
             self.mesh_config_panel.set_transforms(saved_mesh_transforms)
+        saved_mesh_hidden = d.get("mesh_hidden")
+        if saved_mesh_hidden:
+            self.mesh_config_panel.set_hidden(saved_mesh_hidden)
+            for i, hidden in enumerate(saved_mesh_hidden):
+                self.viewport.set_mesh_hidden(i, bool(hidden))
 
         # Restore joint limits (overrides panel defaults)
         saved_limits = d.get("joint_limits")
@@ -1363,7 +1379,7 @@ class MainWindow(QMainWindow):
                 self.animator.start(
                     self.arm_state,
                     final_state,
-                    locked_orientation=approach_angle,
+                    locked_orientation=None,
                     motor_rad_limits=self._anim_motor_limits(),
                 )
                 elbow_str = result.elbow_config.value if result.elbow_config else "n/a"
@@ -1617,7 +1633,6 @@ class MainWindow(QMainWindow):
         if self._jog_type == 'ee':
             approach_angle = self.ee_constraint_panel.get_approach_angle()
             locked_joints  = self.ee_constraint_panel.get_locked_joints(self.arm_config)
-            elbow          = self.config_panel.get_elbow()
 
             if self._jog_axis == 3:
                 # Roll jog: directly drive roll joints, update lock spinbox to stay in sync
@@ -1636,14 +1651,39 @@ class MainWindow(QMainWindow):
                         )
                         break
             else:
-                # XYZ EE jog — velocity in mm/s; maintain orientation if constraints active
-                delta_mm = self._jog_dir * self._jog_vel * dt
-                positions, _ = forward_kinematics(self.arm_state.joint_angles, self.arm_config)
-                ee = np.array(positions[-1], dtype=float)
-                ee[self._jog_axis] += delta_mm
-                result = self._solve_ik(ee, approach_angle, elbow, locked_joints)
-                if result.success and result.state is not None:
-                    self.arm_state = result.state
+                # XYZ EE jog — single Jacobian velocity step (smooth, ~0.1 ms per tick)
+                v = np.zeros(3)
+                v[self._jog_axis] = self._jog_dir * self._jog_vel  # mm/s
+
+                J_full = compute_jacobian_numerical(
+                    self.arm_state.joint_angles, self.arm_config
+                )
+
+                follower_set = {int(c['follower']) for c in (self._joint_couplings or [])}
+                locked_set = set(locked_joints.keys()) | {0}
+                free_idx = [
+                    i for i in range(len(self.arm_state.joint_angles))
+                    if i not in locked_set and i not in follower_set
+                ]
+                # When approach angle is active, exclude last joint — set analytically below
+                n_joints = len(self.arm_state.joint_angles)
+                if approach_angle is not None and free_idx and free_idx[-1] == n_joints - 1:
+                    free_idx = free_idx[:-1]
+
+                if free_idx:
+                    J = J_full[:, free_idx]
+                    lam = 0.01
+                    dtheta = J.T @ np.linalg.solve(J @ J.T + lam * lam * np.eye(3), v * dt)
+
+                    angles = list(self.arm_state.joint_angles)
+                    for k, i in enumerate(free_idx):
+                        jc = self.arm_config.joints[i]
+                        angles[i] = float(np.clip(angles[i] + dtheta[k], jc.joint_min, jc.joint_max))
+
+                    if approach_angle is not None:
+                        angles = enforce_approach_angle(self.arm_config, angles, approach_angle)
+
+                    self.arm_state = ArmState(joint_angles=angles)
         else:
             delta_rad = math.radians(self._jog_dir * self._jog_vel * dt)
             idx = self._jog_axis
