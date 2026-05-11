@@ -35105,3 +35105,59 @@ Now for your other request — looking for `convo2txt`:
 ENTRY 990  ROLE: assistant
 ------------------------------------------------------------------------------
 Good, I understand the format. Let me write a Python script to parse and extract the conversation:
+
+------------------------------------------------------------------------------
+ENTRY 991  ROLE: assistant
+------------------------------------------------------------------------------
+990 entries (about 780 KB of text) appended to [convo2.txt](docs/convo2.txt).
+
+To summarize what landed in this session:
+
+**Kinematics architecture** — EE orientation constraints no longer lock any joints. `_ik_3d` now has two residual modes: `approach_dir` (full 3D, 3 rows) and `approach_elev` (elevation-only, 1 z-row). `solve_ik_analytical` uses a single DLS solve for all orientation paths — no analytical pinning, no 4-phase structure.
+
+**Jog** — a single combined DLS pass per tick: position velocity rows + orientation restoring-force rows. `ori_gain = 1.0 mm` makes the units comparable to `v * dt`. No pre-locks, no post-correction, no velocity projection hack.
+
+------------------------------------------------------------------------------
+ENTRY 992  ROLE: user
+------------------------------------------------------------------------------
+it is still locking the joints
+
+------------------------------------------------------------------------------
+ENTRY 993  ROLE: assistant
+------------------------------------------------------------------------------
+The problem is `get_locked_joints` still returns `{0: azim_value}` in manual azimuth mode, which gets merged into `locked_joints` before `_solve_ik` is called, and again in the jog. Let me trace the exact path:
+
+------------------------------------------------------------------------------
+ENTRY 994  ROLE: assistant
+------------------------------------------------------------------------------
+The root is on line 1387: `get_locked_joints` can still return `{0: azim_value}` in manual azimuth mode, which lands in `locked_joints` before `approach_dir` is even computed. Need to strip joint 0 from `locked_joints` whenever `approach_dir` is active at both call sites:
+
+------------------------------------------------------------------------------
+ENTRY 995  ROLE: assistant
+------------------------------------------------------------------------------
+Same fix in the jog path:
+
+------------------------------------------------------------------------------
+ENTRY 996  ROLE: assistant
+------------------------------------------------------------------------------
+Also need the same strip inside `solve_ik_analytical` itself for the approach_dir path, because `_solve_ik` is also called from `_advance_sequence` (waypoints) and anywhere else that might pass a base-locked `locked_joints`:
+
+------------------------------------------------------------------------------
+ENTRY 997  ROLE: assistant
+------------------------------------------------------------------------------
+The lock was entering from three different directions simultaneously — `get_locked_joints` putting it into `locked_joints`, then that propagating through `_solve_ik` → `solve_ik_analytical` → `effective_locked` → `_ik_3d`. Now it's stripped at all three layers:
+
+1. **`_on_update_clicked`** — `locked_joints.pop(0, None)` immediately after `approach_dir` is determined not-None
+2. **`_tick_jog`** — same pop when `_approach_dir` is not-None  
+3. **`solve_ik_analytical`** — `effective_locked.pop(0, None)` at the top of the approach_dir branch as a last-resort guarantee, so any caller (waypoints, future code) that accidentally passes a base-locked `locked_joints` doesn't override the behavioral constraint
+
+------------------------------------------------------------------------------
+ENTRY 998  ROLE: user
+------------------------------------------------------------------------------
+<ide_opened_file>The user opened the file c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\main.py in the IDE. This may or may not be related to the current task.</ide_opened_file>
+update the readme and add this entire conversation ( thats not already there) to the convo2txt
+
+------------------------------------------------------------------------------
+ENTRY 999  ROLE: assistant
+------------------------------------------------------------------------------
+Now I have what I need. Let me do both tasks in parallel — update the README and append the new conversation turns:
