@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "name": "EE Pitch Circle",
+  "metadata": {
+    "description": "Keeps EE tip at (5.0, 6, 5.0) while sweeping the full 3D approach direction through a pitch circle in 22.5 degree elevation steps. Azimuth is locked to 26.6 deg (atan2(6,5.0) -- pointing from base toward the target). Set Loop Sequence to watch it spin continuously."
+  },
+  "waypoints": [
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":    0.0, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":   22.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":   45.0, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":   67.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":   90.1, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  110.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  135.0, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  157.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  180.1, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle": -157.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle": -135.0, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle": -110.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  -90.1, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  -67.5, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  -45.0, "azimuth_angle": 0, "elbow": "elbow_up" },
+    { "x": 5.0, "y": 12.0, "z": 5.0, "approach_angle":  -22.5, "azimuth_angle": 0, "elbow": "elbow_up" }
+  ]
+}

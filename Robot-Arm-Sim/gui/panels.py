@@ -994,8 +994,10 @@ class StatsPanel(QGroupBox):
 class WaypointPanel(QGroupBox):
     """Create, reorder, and run sequences of target waypoints.
 
-    Each waypoint stores: x, y, z (target), approach_angle (degrees or None),
-    elbow (str 'elbow_up'/'elbow_down' or None to use global setting).
+    Each waypoint stores: x, y, z (target), approach_angle (elevation degrees or None),
+    azimuth_angle (degrees or None), elbow (str 'elbow_up'/'elbow_down' or None).
+    When both approach_angle and azimuth_angle are set, get_waypoints() computes a
+    3D approach_dir vector — same as the global ConstrainEndEffectorPanel does.
     """
 
     def __init__(self, parent=None):
@@ -1018,9 +1020,9 @@ class WaypointPanel(QGroupBox):
         add_row1.addWidget(self.add_z)
         layout.addLayout(add_row1)
 
-        # Approach angle row
+        # Elevation row
         add_row2 = QHBoxLayout()
-        add_row2.addWidget(QLabel("Approach (°):"))
+        add_row2.addWidget(QLabel("Elevation (°):"))
         self.add_approach = QDoubleSpinBox()
         self.add_approach.setRange(-180, 180)
         self.add_approach.setSingleStep(5)
@@ -1029,10 +1031,30 @@ class WaypointPanel(QGroupBox):
         add_row2.addWidget(self.add_approach)
         self.add_auto_aa = QCheckBox("Auto")
         self.add_auto_aa.setChecked(True)
-        self.add_auto_aa.setToolTip("Use global EE constraint (or none) when running")
-        self.add_auto_aa.toggled.connect(lambda c: self.add_approach.setEnabled(not c))
+        self.add_auto_aa.setToolTip("Use global EE elevation constraint (or none) when running")
+        self.add_auto_aa.toggled.connect(self._on_elev_auto_toggled)
         add_row2.addWidget(self.add_auto_aa)
         layout.addLayout(add_row2)
+
+        # Azimuth row
+        add_row2b = QHBoxLayout()
+        add_row2b.addWidget(QLabel("Azimuth (°):"))
+        self.add_azimuth = QDoubleSpinBox()
+        self.add_azimuth.setRange(-180, 180)
+        self.add_azimuth.setSingleStep(5)
+        self.add_azimuth.setDecimals(1)
+        self.add_azimuth.setEnabled(False)
+        self.add_azimuth.setToolTip(
+            "Combined with Elevation → full 3D approach direction (approach_dir).\n"
+            "Leave Auto to use global EE azimuth constraint (or none)."
+        )
+        add_row2b.addWidget(self.add_azimuth)
+        self.add_auto_az = QCheckBox("Auto")
+        self.add_auto_az.setChecked(True)
+        self.add_auto_az.setToolTip("Use global EE azimuth constraint (or none) when running")
+        self.add_auto_az.toggled.connect(lambda c: self.add_azimuth.setEnabled(not c))
+        add_row2b.addWidget(self.add_auto_az)
+        layout.addLayout(add_row2b)
 
         # Add buttons row
         add_btn_row = QHBoxLayout()
@@ -1110,7 +1132,7 @@ class WaypointPanel(QGroupBox):
         self.progress_label.setFont(QFont("Consolas", 9))
         layout.addWidget(self.progress_label)
 
-        # Internal storage: list of dicts with keys: x, y, z, approach_angle (deg or None), elbow (str or None)
+        # Internal storage: list of dicts with keys: x, y, z, approach_angle (deg or None), azimuth_angle (deg or None), elbow (str or None)
         self._waypoints: list[dict] = []
         self._copy_callback = None  # set by MainWindow
         self._get_arm_config_callback = None  # returns dict of current arm config for export
@@ -1119,10 +1141,18 @@ class WaypointPanel(QGroupBox):
     # ------------------------------------------------------------------
     # Adding / copying
 
+    def _on_elev_auto_toggled(self, checked: bool) -> None:
+        self.add_approach.setEnabled(not checked)
+        # Azimuth is only meaningful when elevation is also set
+        if checked:
+            self.add_auto_az.setChecked(True)
+            self.add_azimuth.setEnabled(False)
+
     def _on_add(self) -> None:
         x, y, z = self.add_x.value(), self.add_y.value(), self.add_z.value()
         aa = None if self.add_auto_aa.isChecked() else self.add_approach.value()
-        self._waypoints.append({"x": x, "y": y, "z": z, "approach_angle": aa, "elbow": None})
+        az = None if self.add_auto_az.isChecked() else self.add_azimuth.value()
+        self._waypoints.append({"x": x, "y": y, "z": z, "approach_angle": aa, "azimuth_angle": az, "elbow": None})
         self._refresh_list()
 
     def _request_copy_from_target(self) -> None:
@@ -1139,7 +1169,8 @@ class WaypointPanel(QGroupBox):
         self._set_arm_config_callback = set_cb
 
     def sync_from_target(self, x: float, y: float, z: float,
-                         approach_angle_deg: Optional[float]) -> None:
+                         approach_angle_deg: Optional[float],
+                         azimuth_angle_deg: Optional[float] = None) -> None:
         """Fill the add-waypoint form (called by main window's copy callback)."""
         self.add_x.setValue(x)
         self.add_y.setValue(y)
@@ -1149,6 +1180,11 @@ class WaypointPanel(QGroupBox):
             self.add_approach.setValue(approach_angle_deg)
         else:
             self.add_auto_aa.setChecked(True)
+        if azimuth_angle_deg is not None:
+            self.add_auto_az.setChecked(False)
+            self.add_azimuth.setValue(azimuth_angle_deg)
+        else:
+            self.add_auto_az.setChecked(True)
 
     # ------------------------------------------------------------------
     # List management
@@ -1157,8 +1193,14 @@ class WaypointPanel(QGroupBox):
         self.list_widget.clear()
         for i, wp in enumerate(self._waypoints):
             aa = wp.get("approach_angle")
-            aa_str = f" α={aa:+.1f}°" if aa is not None else ""
-            item = QListWidgetItem(f"{i + 1}. ({wp['x']:.2f}, {wp['y']:.2f}, {wp['z']:.2f}){aa_str}")
+            az = wp.get("azimuth_angle")
+            if aa is not None and az is not None:
+                orient_str = f" dir({aa:+.1f}°,{az:+.1f}°)"
+            elif aa is not None:
+                orient_str = f" α={aa:+.1f}°"
+            else:
+                orient_str = ""
+            item = QListWidgetItem(f"{i + 1}. ({wp['x']:.2f}, {wp['y']:.2f}, {wp['z']:.2f}){orient_str}")
             item.setData(Qt.ItemDataRole.UserRole, i)
             self.list_widget.addItem(item)
 
@@ -1200,13 +1242,31 @@ class WaypointPanel(QGroupBox):
     # Data access
 
     def get_waypoints(self) -> list:
-        """Return list of waypoint dicts with 'target' (np.ndarray), 'approach_angle' (rad or None), 'elbow' (str or None)."""
+        """Return list of waypoint dicts.
+
+        Keys: 'target' (np.ndarray), 'approach_angle' (rad or None),
+        'approach_dir' (np.ndarray or None), 'elbow' (str or None).
+        When both elevation and azimuth are set, approach_dir is computed and
+        approach_angle is set to None (approach_dir supersedes it).
+        """
         result = []
         for wp in self._waypoints:
             aa = wp.get("approach_angle")
+            az = wp.get("azimuth_angle")
+            approach_dir = None
+            approach_angle = None
+            if aa is not None and az is not None:
+                elev = math.radians(aa)
+                azim = math.radians(az)
+                ce, se = math.cos(elev), math.sin(elev)
+                ca, sa = math.cos(azim), math.sin(azim)
+                approach_dir = np.array([ce * ca, ce * sa, se])
+            elif aa is not None:
+                approach_angle = math.radians(aa)
             result.append({
                 "target": np.array([wp["x"], wp["y"], wp["z"]]),
-                "approach_angle": math.radians(aa) if aa is not None else None,
+                "approach_angle": approach_angle,
+                "approach_dir": approach_dir,
                 "elbow": wp.get("elbow"),
             })
         return result
@@ -1249,7 +1309,8 @@ class WaypointPanel(QGroupBox):
                     "x": wp["x"],
                     "y": wp["y"],
                     "z": wp["z"],
-                    "approach_angle": wp.get("approach_angle"),  # degrees or null
+                    "approach_angle": wp.get("approach_angle"),  # elevation degrees or null
+                    "azimuth_angle": wp.get("azimuth_angle"),    # azimuth degrees or null
                     "elbow": wp.get("elbow"),  # "elbow_up"/"elbow_down"/null
                 }
                 for wp in self._waypoints
@@ -1298,6 +1359,7 @@ class WaypointPanel(QGroupBox):
                     "y": float(p["y"]),
                     "z": float(p["z"]),
                     "approach_angle": float(p["approach_angle"]) if p.get("approach_angle") is not None else None,
+                    "azimuth_angle": float(p["azimuth_angle"]) if p.get("azimuth_angle") is not None else None,
                     "elbow": str(p["elbow"]) if p.get("elbow") is not None else None,
                 }
                 new_waypoints.append(wp)

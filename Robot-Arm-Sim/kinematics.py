@@ -666,6 +666,7 @@ def _ik_3d(
     approach_dir: Optional[np.ndarray] = None,
     approach_elev: Optional[float] = None,
     ori_weight: float = 0.15,
+    reference_angles: Optional[List[float]] = None,
 ) -> Tuple[List[float], float]:
     """
     Full 3-D damped-least-squares IK for any N-joint arm configuration.
@@ -718,9 +719,35 @@ def _ik_3d(
     seed_arr = np.array(seed, dtype=float)
     _apply_follow(seed_arr)
 
+    def _elbow_ok(a: np.ndarray) -> bool:
+        """True if joint 2 is on the correct side for the requested elbow config."""
+        if elbow is None or 2 >= n:
+            return True
+        v = float(a[2])
+        return v >= 0.0 if elbow == ElbowConfig.ELBOW_UP else v <= 0.0
+
+    # Reference for "least movement": the actual current arm state before any
+    # seed modifications (elbow bias, approach azimuth reseeding, etc.).
+    ref_list = reference_angles if reference_angles is not None else initial_angles
+    ref_arr  = np.array(ref_list[:n] if len(ref_list) >= n else ref_list + [0.0] * (n - len(ref_list)), dtype=float)
+
+    def _joint_dist(a: np.ndarray) -> float:
+        """Total joint displacement from the actual current arm state (shortest-path per joint)."""
+        return float(sum(
+            abs(((b - c + math.pi) % (2 * math.pi)) - math.pi)
+            for b, c in zip(a, ref_arr)
+        ))
+
     best = seed_arr.copy()
     _pos, _ = forward_kinematics(best.tolist(), config)
-    best_err = float(np.linalg.norm(_pos[pos_idx] - target_xyz))
+    best_err  = float(np.linalg.norm(_pos[pos_idx] - target_xyz))
+    best_ok   = _elbow_ok(best)
+    # Nearest-solution tracking: among all tol-meeting solutions, keep the one
+    # with the least total joint movement from the current arm state.
+    near      = None          # best tol-meeting solution so far
+    near_err  = float("inf")  # its position error
+    near_dist = float("inf")  # its joint displacement from seed
+    near_ok   = False
 
     for restart in range(n_restarts + 1):
         if restart == 0:
@@ -746,11 +773,27 @@ def _ik_3d(
             positions, T_end = forward_kinematics(angles.tolist(), config)
             pos_err = target_xyz - positions[pos_idx]
             err     = float(np.linalg.norm(pos_err))
-            if err < best_err:
+
+            # Nearest-solution tracking: converged solutions ranked by joint displacement.
+            # Elbow-ok solutions always beat elbow-violating ones at equal displacement.
+            if err < tol:
+                curr_ok   = _elbow_ok(angles)
+                curr_dist = _joint_dist(angles)
+                if (curr_ok and (not near_ok or curr_dist < near_dist)) or \
+                   (not curr_ok and not near_ok and curr_dist < near_dist):
+                    near      = angles.copy()
+                    near_err  = err
+                    near_dist = curr_dist
+                    near_ok   = curr_ok
+                break  # converged — move on to next restart to try a nearer solution
+
+            # Fallback tracking for when no tol-meeting solution exists.
+            curr_ok = _elbow_ok(angles)
+            if (curr_ok and (not best_ok or err < best_err)) or \
+               (not curr_ok and not best_ok and err < best_err):
                 best_err = err
                 best     = angles.copy()
-            if err < tol:
-                break
+                best_ok  = curr_ok
 
             # Analytical Jacobian — exact, no FK perturbation needed.
             J_v_full, J_w_full = compute_jacobian_analytical(angles.tolist(), config)
@@ -788,9 +831,11 @@ def _ik_3d(
             # Enforce coupling after each DLS step
             _apply_follow(angles)
 
-        if best_err < tol:
-            break
+        if near is not None and near_ok:
+            break  # have a tol-meeting, elbow-ok, nearest solution — no need for more restarts
 
+    if near is not None:
+        return near.tolist(), near_err
     return best.tolist(), best_err
 
 
@@ -885,20 +930,26 @@ def solve_ik_analytical(
 
     if approach_dir is not None and n_arm >= 2:
         # ── Unified 6DOF: position + full 3D approach direction ───────────────
-        # No joint is locked by the orientation constraint.  The DLS residual
-        # includes all 3 components of (approach_dir - EE_x), so every joint
-        # moves freely to satisfy both position and orientation simultaneously.
         approach_dir_n = np.asarray(approach_dir, dtype=float)
-        # Strip any caller-supplied base lock — approach_dir residual owns azimuth.
         effective_locked.pop(0, None)
-        # Seed base toward approach azimuth for faster convergence (not a lock).
-        seed[0] = math.atan2(float(approach_dir_n[1]), float(approach_dir_n[0]))
 
+        xy_mag = math.sqrt(float(approach_dir_n[0])**2 + float(approach_dir_n[1])**2)
+        if xy_mag > 0.1:
+            # Normal case: seed base toward approach azimuth.
+            seed[0] = math.atan2(float(approach_dir_n[1]), float(approach_dir_n[0]))
+        else:
+            # Elevation near ±90°: azimuth is degenerate, lock base to target
+            # direction so the solver doesn't spin it freely.
+            effective_locked[0] = base_angle
+            seed[0] = base_angle
+
+        orig_angles = list(initial_angles) if initial_angles is not None else None
         joint_angles, err = _ik_3d(
             tgt, config, list(seed), effective_locked,
             n_restarts=15, max_iter=600,
             couplings=couplings, elbow=elbow,
             approach_dir=approach_dir_n, ori_weight=0.5,
+            reference_angles=orig_angles,
         )
         positions, _ = forward_kinematics(joint_angles, config)
         err = float(np.linalg.norm(positions[-1] - tgt))

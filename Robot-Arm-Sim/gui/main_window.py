@@ -787,15 +787,16 @@ class MainWindow(QMainWindow):
         wp = self._sequence_queue[self._sequence_index]
         target = wp["target"]
 
-        # Per-waypoint approach_angle overrides global EE constraint
-        approach_angle = wp.get("approach_angle")
-        approach_dir = None
-        if approach_angle is None:
-            approach_dir = self.ee_constraint_panel.get_approach_dir()
-            if approach_dir is not None:
-                approach_angle = None
-            else:
-                approach_angle = self.ee_constraint_panel.get_approach_angle()
+        # Per-waypoint constraints: approach_dir (elev+azim) supersedes approach_angle (elev-only),
+        # both supersede the global EE constraint panel.
+        approach_dir = wp.get("approach_dir")
+        approach_angle = None
+        if approach_dir is None:
+            approach_angle = wp.get("approach_angle")
+            if approach_angle is None:
+                approach_dir = self.ee_constraint_panel.get_approach_dir()
+                if approach_dir is None:
+                    approach_angle = self.ee_constraint_panel.get_approach_angle()
 
         # Per-waypoint elbow preference, falling back to global selector
         elbow_str = wp.get("elbow")
@@ -812,6 +813,8 @@ class MainWindow(QMainWindow):
         self.target_panel.z_spin.setValue(float(target[2]))
 
         wp_locked = self.ee_constraint_panel.get_locked_joints(self.arm_config)
+        if approach_dir is not None:
+            wp_locked.pop(0, None)
         result = self._solve_ik(target, approach_angle, elbow, wp_locked,
                                 approach_dir=approach_dir)
 
@@ -1443,8 +1446,10 @@ class MainWindow(QMainWindow):
         target = self.target_panel.get_target()
         aa = self.ee_constraint_panel.get_approach_angle()
         aa_deg = math.degrees(aa) if aa is not None else None
+        az = self.ee_constraint_panel.get_azimuth_angle()
+        az_deg = math.degrees(az) if az is not None else None
         self.waypoint_panel.sync_from_target(
-            float(target[0]), float(target[1]), float(target[2]), aa_deg
+            float(target[0]), float(target[1]), float(target[2]), aa_deg, az_deg
         )
 
     def _build_math_context(self) -> dict:
@@ -2529,10 +2534,19 @@ class MainWindow(QMainWindow):
                 self.terminal.log(f"{len(wps)} waypoint(s):", "info")
                 for i, wp in enumerate(wps):
                     t = wp["target"]
+                    ad = wp.get("approach_dir")
                     aa = wp.get("approach_angle")
-                    aa_str = f"  approach={math.degrees(aa):.1f}°" if aa is not None else ""
+                    if ad is not None:
+                        import math as _math
+                        elev_d = _math.degrees(_math.asin(float(ad[2])))
+                        azim_d = _math.degrees(_math.atan2(float(ad[1]), float(ad[0])))
+                        orient_str = f"  dir(elev={elev_d:.1f}°,az={azim_d:.1f}°)"
+                    elif aa is not None:
+                        orient_str = f"  elev={math.degrees(aa):.1f}°"
+                    else:
+                        orient_str = ""
                     self.terminal.log(
-                        f"  [{i+1}] X={t[0]:.2f}  Y={t[1]:.2f}  Z={t[2]:.2f}{aa_str}", "info"
+                        f"  [{i+1}] X={t[0]:.2f}  Y={t[1]:.2f}  Z={t[2]:.2f}{orient_str}", "info"
                     )
 
         # ── RUN ───────────────────────────────────────────────────────────
