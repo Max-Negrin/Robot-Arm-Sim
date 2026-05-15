@@ -240,6 +240,88 @@ class JointOutputPanel(QGroupBox):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Joint limits panel
+# ═══════════════════════════════════════════════════════════════════════════
+
+class JointLimitsPanel(QGroupBox):
+    """Per-joint min/max angle limits (degrees).  Limits are enforced by the
+    IK solver and prevent impossible configurations such as the shoulder
+    rotating through the table."""
+
+    limits_changed = pyqtSignal()   # emitted whenever any spinbox changes
+
+    _ABS_MAX = 360.0   # spinbox hard bounds
+
+    def __init__(self, parent=None):
+        super().__init__("Joint Limits (°)", parent)
+        self._layout = QFormLayout(self)
+        self._rows: list[tuple[QDoubleSpinBox, QDoubleSpinBox]] = []   # (min, max) per joint
+
+    # ------------------------------------------------------------------
+    def rebuild(self, n_joints: int, limits_deg: list[tuple[float, float]]) -> None:
+        """Rebuild the panel for n_joints joints.  limits_deg is a list of
+        (min_deg, max_deg) tuples — one per joint including the base."""
+        for mn, mx in self._rows:
+            mn.deleteLater()
+            mx.deleteLater()
+        while self._layout.count():
+            self._layout.removeRow(0)
+        self._rows = []
+
+        labels = ["Base"] + [f"Joint {i+1}" for i in range(n_joints - 1)]
+        for i in range(n_joints):
+            lo, hi = limits_deg[i] if i < len(limits_deg) else (-170.0, 170.0)
+
+            mn = QDoubleSpinBox()
+            mn.setRange(-self._ABS_MAX, 0.0)
+            mn.setDecimals(1)
+            mn.setSuffix(" °")
+            mn.setValue(lo)
+            mn.setFixedWidth(90)
+
+            mx = QDoubleSpinBox()
+            mx.setRange(0.0, self._ABS_MAX)
+            mx.setDecimals(1)
+            mx.setSuffix(" °")
+            mx.setValue(hi)
+            mx.setFixedWidth(90)
+
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.addWidget(mn)
+            row_l.addWidget(QLabel("–"))
+            row_l.addWidget(mx)
+            row_l.addStretch()
+
+            mn.valueChanged.connect(self._on_changed)
+            mx.valueChanged.connect(self._on_changed)
+
+            self._layout.addRow(labels[i] + ":", row_w)
+            self._rows.append((mn, mx))
+
+    def _on_changed(self) -> None:
+        self.limits_changed.emit()
+
+    def get_limits_deg(self) -> list[tuple[float, float]]:
+        """Return current limits as (min_deg, max_deg) per joint."""
+        return [(mn.value(), mx.value()) for mn, mx in self._rows]
+
+    def set_limits_deg(self, limits_deg: list[tuple[float, float]]) -> None:
+        """Set limits without triggering the changed signal."""
+        for i, (lo, hi) in enumerate(limits_deg):
+            if i >= len(self._rows):
+                break
+            mn, mx = self._rows[i]
+            mn.blockSignals(True)
+            mx.blockSignals(True)
+            mn.setValue(lo)
+            mx.setValue(hi)
+            mn.blockSignals(False)
+            mx.blockSignals(False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Zero position / joint calibration panel (per-joint zero offset, mirrors Motor config)
 # ═══════════════════════════════════════════════════════════════════════════
 

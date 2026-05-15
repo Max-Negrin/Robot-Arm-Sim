@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QPlainTextEdit, QSizePolicy, QMessageBox,
     QDialog, QDialogButtonBox,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl, QThread
 from PyQt6.QtGui import QFont, QKeyEvent, QDesktopServices, QAction
 
 import pyqtgraph.opengl as gl
@@ -57,6 +57,7 @@ from .panels import (
     ArmConfigPanel,
     TargetPanel,
     JointOutputPanel,
+    JointLimitsPanel,
     InitialJointPanel,
     JointPlaneOffsetPanel,
     ConstrainEndEffectorPanel,
@@ -195,6 +196,7 @@ class MainWindow(QMainWindow):
         self.target_panel        = TargetPanel()
         self.start_pose_panel    = InitialJointPanel()
         self.joint_panel         = JointOutputPanel()
+        self.limits_panel        = JointLimitsPanel()
         self.offset_panel        = JointPlaneOffsetPanel()
         self.ee_constraint_panel = ConstrainEndEffectorPanel()
         self.math_panel          = CustomMathPanel(self.math_engine)
@@ -232,6 +234,7 @@ class MainWindow(QMainWindow):
         _jsl.setSpacing(4)
         _jsl.addWidget(self.start_pose_panel)
         _jsl.addWidget(self.joint_panel)
+        _jsl.addWidget(self.limits_panel)
 
         # Placeholder widget so signal wiring below does not crash
         self.save_default_btn = QPushButton()
@@ -303,6 +306,7 @@ class MainWindow(QMainWindow):
         self.config_panel.apply_btn.clicked.connect(self._on_config_changed)
         self.target_panel.update_btn.clicked.connect(self._on_update_clicked)
         self.offset_panel.config_changed.connect(self._on_offsets_changed)
+        self.limits_panel.limits_changed.connect(self._on_limits_panel_changed)
 
         self.start_pose_panel.state_changed.connect(self._on_start_pose_changed)
         self.start_pose_panel.reset_to_vertical.connect(self._on_start_pose_zero_vertical_reset)
@@ -363,6 +367,10 @@ class MainWindow(QMainWindow):
 
         # File
         file_menu = mb.addMenu("File")
+        save_now_act = QAction("Save  (Ctrl+S)", self)
+        save_now_act.setShortcut("Ctrl+S")
+        save_now_act.triggered.connect(self._on_save_now)
+        file_menu.addAction(save_now_act)
         save_act = QAction("Save as Default", self)
         save_act.triggered.connect(self._on_save_as_default)
         file_menu.addAction(save_act)
@@ -820,21 +828,21 @@ class MainWindow(QMainWindow):
 
         if result.success and result.state is not None:
             self.joint_panel.update_angles(result.state, ConstraintSet())
-            self.animator.start(
-                self.arm_state,
-                result.state,
-                locked_orientation=None,
-                motor_rad_limits=self._anim_motor_limits(),
-            )
 
             self._sequence_index += 1
             total = len(self._sequence_queue)
             self.waypoint_panel.set_progress(min(self._sequence_index, total), total)
-            self.animator._on_complete_callback = self._advance_sequence
 
             panel = self.ee_constraint_panel
             if panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked():
                 panel.capture_angle(result.state, self.arm_config)
+
+            self.animator.start(
+                self.arm_state,
+                result.state,
+                motor_rad_limits=self._anim_motor_limits(),
+            )
+            self.animator._on_complete_callback = self._advance_sequence
 
             elbow_str2 = result.elbow_config if result.elbow_config else "n/a"
             self.status_bar.showMessage(
@@ -899,6 +907,9 @@ class MainWindow(QMainWindow):
         self.start_pose_panel.set_home_degs(self._resting_pose_degs)
         self._sync_start_panel_from_motors()
         self.joint_panel.rebuild(n)
+        limits_deg = [(math.degrees(lo), math.degrees(hi))
+                      for lo, hi in self.arm_config.joint_limits]
+        self.limits_panel.rebuild(n + 1, limits_deg)   # +1 includes base joint
         self.math_panel.rebuild(n)
         self.motor_config_panel.rebuild(n)
         self.homing_panel.rebuild(n)
@@ -968,6 +979,31 @@ class MainWindow(QMainWindow):
         if not self._loading:
             self._save_arm_config()
 
+    def _on_limits_panel_changed(self) -> None:
+        """Apply per-joint limits from the limits panel to the arm config."""
+        limits_deg = self.limits_panel.get_limits_deg()
+        # Panel index 0 = base (hardcoded in from_legacy_planar); skip it.
+        # _custom_limits[i] maps to arm joint i (0-indexed, matching joint_limits[1:]).
+        arm_limits_deg = limits_deg[1:]
+        self._custom_limits = {
+            i: (math.radians(lo), math.radians(hi))
+            for i, (lo, hi) in enumerate(arm_limits_deg)
+        }
+        arm_limits_rad = [(math.radians(lo), math.radians(hi)) for lo, hi in arm_limits_deg]
+        self.arm_config = from_legacy_planar(
+            link_lengths=self.arm_config.link_lengths[1:],
+            joint_limits=arm_limits_rad,
+            base_vertical_offset=self.offset_panel.get_base_offset(),
+            joint_lateral_x=self.offset_panel.get_lateral_x(),
+            joint_lateral_y=self.offset_panel.get_lateral_y(),
+            joint_plane_offsets=self.offset_panel.get_joint_offsets(),
+            joint_types=self.arm_config.joint_types,
+        )
+        self.constraints.collision_margin = self.offset_panel.get_collision_margin()
+        self._render_arm()
+        if not self._loading:
+            self._save_arm_config()
+
     def _on_offsets_changed(self) -> None:
         """Handle changes to joint plane offsets, base offset, lateral offsets, or collision margin."""
         self.arm_config = from_legacy_planar(
@@ -987,6 +1023,11 @@ class MainWindow(QMainWindow):
 
     def _arm_config_save_path(self) -> str:
         return os.path.join(app_config_dir(), "arm_config.json")
+
+    def _on_save_now(self) -> None:
+        """Save current arm config immediately (Ctrl+S)."""
+        self._save_arm_config()
+        self.status_bar.showMessage("Configuration saved", 3000)
 
     def _on_save_as_default(self) -> None:
         """Explicitly save current configuration as the startup default."""
@@ -1325,7 +1366,17 @@ class MainWindow(QMainWindow):
         Solve IK seeded from the current arm state.  If the solution causes
         self-collision, automatically try the opposite elbow configuration.
         Returns the best IKResult (collision-free if possible).
+
+        Orientation-constrained solves (approach_angle or approach_dir) use the
+        solver's per-path defaults — orientation + position converging simultaneously
+        needs more iterations than position-only. Position-only uses a tighter cap.
         """
+        has_orient = approach_angle is not None or approach_dir is not None
+        # None → solver uses its own per-path defaults (10×500 / 15×600)
+        # Explicit values → used for position-only to keep it snappy
+        nr = None if has_orient else 6
+        mi = None if has_orient else 200
+
         result = solve_ik_analytical(
             self.arm_config, target,
             approach_angle=approach_angle,
@@ -1334,6 +1385,8 @@ class MainWindow(QMainWindow):
             initial_angles=self.arm_state.joint_angles,
             couplings=self._joint_couplings or None,
             approach_dir=approach_dir,
+            n_restarts=nr,
+            max_iter=mi,
         )
 
         if result.success and result.state is not None:
@@ -1350,6 +1403,8 @@ class MainWindow(QMainWindow):
                     initial_angles=self.arm_state.joint_angles,
                     couplings=self._joint_couplings or None,
                     approach_dir=approach_dir,
+                    n_restarts=nr,
+                    max_iter=mi,
                 )
                 if alt.success and alt.state is not None and \
                         not check_self_collision(self.arm_config, alt.state, margin):
@@ -1409,7 +1464,7 @@ class MainWindow(QMainWindow):
             if not validation["reachable"]:
                 self.status_bar.showMessage(f"Warning: {validation['message']}")
 
-            # Solve IK (seeds from current state; auto-flips elbow if self-collision)
+            # Solve IK (seeds from current state; auto-flips elbow on self-collision)
             result = self._solve_ik(self.target, approach_angle, elbow, locked_joints,
                                     approach_dir=approach_dir)
 
@@ -1424,9 +1479,6 @@ class MainWindow(QMainWindow):
                     locked_orientation=None,
                     motor_rad_limits=self._anim_motor_limits(),
                 )
-                # Keep auto-captured azimuth in sync with the solved position so the
-                # constraint always reflects the most recent IK result rather than the
-                # arm pose at checkbox-enable time (which could be the home position).
                 panel = self.ee_constraint_panel
                 if panel.azim_cb.isChecked() and panel.azim_auto_cb.isChecked():
                     panel.capture_angle(final_state, self.arm_config)

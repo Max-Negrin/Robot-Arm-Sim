@@ -9,7 +9,7 @@ frame-count based.
 import math
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Callable, List
 from enum import Enum
 
 from kinematics import ArmState
@@ -254,6 +254,14 @@ class Animator:
         self._start_orientation: Optional[float] = None
         self._on_complete_callback = None
         self._bottleneck_joint: Optional[int] = None
+        # Cartesian mode (per-frame IK — legacy, kept for fallback)
+        self._cartesian_mode: bool = False
+        self._cart_start_xyz: Optional[np.ndarray] = None
+        self._cart_end_xyz: Optional[np.ndarray] = None
+        self._cart_ik_fn: Optional[Callable[[np.ndarray, List[float]], Optional[List[float]]]] = None
+        self._cart_current_angles: Optional[List[float]] = None
+        # Precomputed path mode — zero per-frame IK
+        self._precomputed_states: Optional[List[List[float]]] = None
 
     def start(
         self,
@@ -271,6 +279,8 @@ class Animator:
         self._start = from_state.copy()
         self._end = to_state.copy()
         self._elapsed = 0.0
+        self._cartesian_mode = False
+        self._precomputed_states = None
         self._locked_orientation = locked_orientation
         # Capture starting orientation for smooth interpolation during animation
         if locked_orientation is not None and len(from_state.joint_angles) >= 2:
@@ -316,6 +326,48 @@ class Animator:
         self._duration = base_duration / max(0.1, self.speed_multiplier)
         self._status = AnimationStatus.RUNNING
 
+    def start_precomputed(
+        self,
+        from_state: ArmState,
+        states: List[List[float]],
+        motor_rad_limits: Optional[list] = None,
+        on_complete: Optional[Callable] = None,
+    ) -> None:
+        """Play back a precomputed list of joint-angle snapshots.
+
+        ``states`` is ordered from t=0..1; the last entry is the end state.
+        Duration is computed from from_state → states[-1] the same way as start().
+        Zero per-frame IK — the path was already solved in a background thread.
+        """
+        if not states:
+            return
+        end_state = ArmState(joint_angles=list(states[-1]))
+        self.start(from_state, end_state, motor_rad_limits=motor_rad_limits)
+        self._precomputed_states = states
+        self._on_complete_callback = on_complete
+
+    def start_cartesian(
+        self,
+        from_state: ArmState,
+        to_state: ArmState,
+        start_xyz: np.ndarray,
+        end_xyz: np.ndarray,
+        ik_fn: Callable[[np.ndarray, List[float]], Optional[List[float]]],
+        motor_rad_limits: Optional[list] = None,
+    ) -> None:
+        """Begin a Cartesian-linear animation.
+
+        The EE follows a straight line from start_xyz to end_xyz in world space.
+        ik_fn(xyz, current_angles) must return the new joint angles or None on failure.
+        Timing is calculated the same way as start() — based on joint deltas to to_state.
+        """
+        self.start(from_state, to_state, motor_rad_limits=motor_rad_limits)
+        self._cartesian_mode   = True
+        self._cart_start_xyz   = np.asarray(start_xyz, dtype=float)
+        self._cart_end_xyz     = np.asarray(end_xyz,   dtype=float)
+        self._cart_ik_fn       = ik_fn
+        self._cart_current_angles = list(from_state.joint_angles)
+
     def step(self, dt: float) -> ArmState:
         """
         Advance the animation by dt seconds and return the interpolated state.
@@ -331,7 +383,30 @@ class Animator:
         self._elapsed += dt
         t = min(1.0, self._elapsed / self._duration) if self._duration > 0 else 1.0
 
-        state = interpolate_state(self._start, self._end, t)
+        if self._precomputed_states is not None:
+            # Lerp between adjacent precomputed samples for smooth playback
+            t_s = smoothstep(t)
+            n = len(self._precomputed_states)
+            frac = t_s * (n - 1)
+            lo = max(0, min(int(frac), n - 2))
+            hi = lo + 1
+            alpha = frac - lo
+            a0 = self._precomputed_states[lo]
+            a1 = self._precomputed_states[hi]
+            angles = [lerp_angle(x, y, alpha) for x, y in zip(a0, a1)]
+            state = ArmState(joint_angles=angles)
+        elif self._cartesian_mode and self._cart_ik_fn is not None:
+            t_s = smoothstep(t)
+            xyz = self._cart_start_xyz + t_s * (self._cart_end_xyz - self._cart_start_xyz)
+            new_angles = self._cart_ik_fn(xyz, list(self._cart_current_angles))
+            if new_angles is not None:
+                self._cart_current_angles = new_angles
+                state = ArmState(joint_angles=new_angles)
+            else:
+                # IK failed for this step — hold current angles
+                state = ArmState(joint_angles=list(self._cart_current_angles))
+        else:
+            state = interpolate_state(self._start, self._end, t)
 
         # Enforce orientation constraint: smoothly interpolate orientation from start to target.
         # This ensures the EE orientation eases in over the animation duration, not snapping instantly.
@@ -390,6 +465,7 @@ class Animator:
     def cancel(self) -> None:
         self._status = AnimationStatus.IDLE
         self._bottleneck_joint = None
+        self._cartesian_mode = False
 
     def run_target(self) -> Optional[ArmState]:
         """

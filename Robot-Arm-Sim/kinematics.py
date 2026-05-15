@@ -848,6 +848,8 @@ def solve_ik_analytical(
     initial_angles: Optional[List[float]] = None,
     couplings: Optional[List[Dict]] = None,
     approach_dir: Optional[np.ndarray] = None,
+    n_restarts: Optional[int] = None,
+    max_iter: Optional[int] = None,
 ) -> IKResult:
     """
     Full 3-D IK for an arbitrary revolute arm — any joint types, any N.
@@ -943,10 +945,12 @@ def solve_ik_analytical(
             effective_locked[0] = base_angle
             seed[0] = base_angle
 
+        _nr = n_restarts if n_restarts is not None else 15
+        _mi = max_iter   if max_iter   is not None else 600
         orig_angles = list(initial_angles) if initial_angles is not None else None
         joint_angles, err = _ik_3d(
             tgt, config, list(seed), effective_locked,
-            n_restarts=15, max_iter=600,
+            n_restarts=_nr, max_iter=_mi,
             couplings=couplings, elbow=elbow,
             approach_dir=approach_dir_n, ori_weight=0.5,
             reference_angles=orig_angles,
@@ -955,15 +959,13 @@ def solve_ik_analytical(
         err = float(np.linalg.norm(positions[-1] - tgt))
 
     elif approach_angle is not None and n_arm >= 2:
-        # ── Elevation-only constraint ─────────────────────────────────────────
-        # Base locked to atan2 toward target: correct for a pure-pitch arm and
-        # not an orientation constraint.  Elevation is achieved through the DLS
-        # z-row residual — no joint is analytically pinned.
+        _nr = n_restarts if n_restarts is not None else 10
+        _mi = max_iter   if max_iter   is not None else 500
         effective_locked[0] = base_angle
 
         joint_angles, err = _ik_3d(
             tgt, config, list(seed), effective_locked,
-            n_restarts=10, max_iter=500,
+            n_restarts=_nr, max_iter=_mi,
             couplings=couplings, elbow=elbow,
             approach_elev=approach_angle, ori_weight=0.5,
         )
@@ -971,10 +973,12 @@ def solve_ik_analytical(
         err = float(np.linalg.norm(positions[-1] - tgt))
 
     else:
-        # ── Position-only IK ──────────────────────────────────────────────────
+        _nr = n_restarts if n_restarts is not None else 8
+        _mi = max_iter   if max_iter   is not None else 300
         effective_locked[0] = base_angle
         joint_angles, err = _ik_3d(tgt, config, seed, effective_locked,
-                                   couplings=couplings, elbow=elbow)
+                                   couplings=couplings, elbow=elbow,
+                                   n_restarts=_nr, max_iter=_mi)
 
     # Re-enforce any user-specified locked joints (roll locks, math expressions, etc.)
     for idx, val in effective_locked.items():

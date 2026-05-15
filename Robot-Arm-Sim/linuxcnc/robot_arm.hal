@@ -1,0 +1,130 @@
+# =============================================================================
+# robot_arm.hal  —  Simulation HAL for 5-axis serial robot arm
+#
+# Mode: SOFTWARE SIMULATION
+#   Position feedback is looped directly from command (perfect following).
+#   No hardware, no step generation, no home switches.
+#   Replace the loopback section with Mesa stepgen wiring when hardware is ready.
+#
+# Joints:
+#   J0  base yaw        J1  shoulder pitch    J2  elbow pitch
+#   J3  wrist roll      J4  wrist pitch
+#
+# INI changes required for this HAL to work:
+#   1. Add [HAL] section to robot_arm.ini:
+#        [HAL]
+#        HALFILE = robot_arm.hal
+#
+#   2. Set HOME_SEARCH_VEL = 0 for all joints in robot_arm.ini.
+#      With no physical home switch, a non-zero search velocity causes
+#      LinuxCNC to search indefinitely and never complete homing.
+#      Setting it to 0 tells the motion controller to go straight to the
+#      HOME position without searching for a switch.
+# =============================================================================
+
+
+# ── Real-time motion components ───────────────────────────────────────────────
+loadrt [KINS]KINEMATICS
+loadrt motmod                              \
+    servo_period_nsec=[EMCMOT]SERVO_PERIOD \
+    num_joints=5
+
+addf motion-command-handler   servo-thread
+addf motion-controller         servo-thread
+
+
+# ── Simulation: perfect position following ────────────────────────────────────
+# Each joint's feedback pin is driven directly by its command pin.
+# The motion controller sees zero following error and runs normally.
+# When switching to Mesa, delete these six nets and add the stepgen wiring.
+
+net j0-pos  joint.0.motor-pos-cmd  =>  joint.0.motor-pos-fb
+net j1-pos  joint.1.motor-pos-cmd  =>  joint.1.motor-pos-fb
+net j2-pos  joint.2.motor-pos-cmd  =>  joint.2.motor-pos-fb
+net j3-pos  joint.3.motor-pos-cmd  =>  joint.3.motor-pos-fb
+net j4-pos  joint.4.motor-pos-cmd  =>  joint.4.motor-pos-fb
+
+
+# ── E-stop loopback ───────────────────────────────────────────────────────────
+# No physical e-stop button yet.  This loopback satisfies LinuxCNC's requirement
+# that user-enable-out is acknowledged before the machine can be enabled.
+# Replace with a real normally-closed input (e.g. Mesa GPIO) when wired.
+
+net estop-loop  iocontrol.0.user-enable-out  =>  iocontrol.0.emc-enable-in
+
+
+# ── Tool change passthrough ───────────────────────────────────────────────────
+# Robot arm has no tool changer.  These nets acknowledge tool-change requests
+# immediately so G-code that includes M6 doesn't stall.
+
+net tool-prep-loop    iocontrol.0.tool-prepare  =>  iocontrol.0.tool-prepared
+net tool-change-loop  iocontrol.0.tool-change   =>  iocontrol.0.tool-changed
+
+
+# ── Optional: 3D Vismach display ─────────────────────────────────────────────
+# Uncomment to load the arm visualiser alongside LinuxCNC.
+# arm_vismach.py must be in the same directory as this HAL file.
+# joint.N.pos-fb reflects the current joint position after the motion controller
+# processes it — identical to motor-pos-cmd in simulation.
+
+loadusr -Wn arm-vismach python3 arm_vismach.py
+net j0-vis  joint.0.pos-fb  =>  arm-vismach.joint0
+net j1-vis  joint.1.pos-fb  =>  arm-vismach.joint1
+net j2-vis  joint.2.pos-fb  =>  arm-vismach.joint2
+net j3-vis  joint.3.pos-fb  =>  arm-vismach.joint3
+net j4-vis  joint.4.pos-fb  =>  arm-vismach.joint4
+
+
+# =============================================================================
+# MESA 7i76E WIRING — for when hardware is ready
+# Delete the simulation loopback above and uncomment this section.
+# Fill in the correct board IP and GPIO pin numbers for your switches.
+# =============================================================================
+
+# loadrt hostmot2
+# loadrt hm2_eth board_ip="192.168.1.121" config="num_stepgens=5 num_encoders=0"
+#
+# addf hm2_7i76e.0.read   servo-thread
+# addf hm2_7i76e.0.write  servo-thread
+#
+# # Steps/degree = steps_per_rev * gear_ratio / 360
+# # Values from motor_config.json:
+# setp hm2_7i76e.0.stepgen.00.position-scale   13.333   # J0: 800 * 6.0  / 360
+# setp hm2_7i76e.0.stepgen.01.position-scale   88.889   # J1: 1600 * 20.0 / 360
+# setp hm2_7i76e.0.stepgen.02.position-scale  311.111   # J2: 1600 * 70.0 / 360
+# setp hm2_7i76e.0.stepgen.03.position-scale   44.444   # J3: 1600 * 10.0 / 360
+# setp hm2_7i76e.0.stepgen.04.position-scale   35.556   # J4: 1600 * 8.0  / 360
+#
+# # Direction polarity (invert_dir from motor_config.json)
+# setp hm2_7i76e.0.stepgen.00.dirpolarity  1   # J0: invert_dir = true
+# setp hm2_7i76e.0.stepgen.02.dirpolarity  1   # J2: invert_dir = true
+#
+# # Step/dir timing (dir_setup_us from motor_config.json, converted to ns)
+# setp hm2_7i76e.0.stepgen.00.dirsetup   5000   # J0: 5 us
+# setp hm2_7i76e.0.stepgen.01.dirsetup  20000   # J1: 20 us
+# setp hm2_7i76e.0.stepgen.02.dirsetup  20000   # J2: 20 us
+# setp hm2_7i76e.0.stepgen.03.dirsetup   5000   # J3: 5 us
+# setp hm2_7i76e.0.stepgen.04.dirsetup   5000   # J4: 5 us
+#
+# # Position command / feedback
+# net j0-cmd  joint.0.motor-pos-cmd  =>  hm2_7i76e.0.stepgen.00.position-cmd
+# net j0-fb   hm2_7i76e.0.stepgen.00.position-fb  =>  joint.0.motor-pos-fb
+# net j1-cmd  joint.1.motor-pos-cmd  =>  hm2_7i76e.0.stepgen.01.position-cmd
+# net j1-fb   hm2_7i76e.0.stepgen.01.position-fb  =>  joint.1.motor-pos-fb
+# net j2-cmd  joint.2.motor-pos-cmd  =>  hm2_7i76e.0.stepgen.02.position-cmd
+# net j2-fb   hm2_7i76e.0.stepgen.02.position-fb  =>  joint.2.motor-pos-fb
+# net j3-cmd  joint.3.motor-pos-cmd  =>  hm2_7i76e.0.stepgen.03.position-cmd
+# net j3-fb   hm2_7i76e.0.stepgen.03.position-fb  =>  joint.3.motor-pos-fb
+# net j4-cmd  joint.4.motor-pos-cmd  =>  hm2_7i76e.0.stepgen.04.position-cmd
+# net j4-fb   hm2_7i76e.0.stepgen.04.position-fb  =>  joint.4.motor-pos-fb
+#
+# # Home switches — fill in GPIO pin numbers once wired to Mesa
+# # Polarity: in_not = normally-open switch (open = not homed, closed = homed)
+# # net j0-home  hm2_7i76e.0.gpio.0??.in_not  =>  joint.0.home-sw-in
+# # net j1-home  hm2_7i76e.0.gpio.0??.in_not  =>  joint.1.home-sw-in
+# # net j2-home  hm2_7i76e.0.gpio.0??.in_not  =>  joint.2.home-sw-in
+# # net j3-home  hm2_7i76e.0.gpio.0??.in_not  =>  joint.3.home-sw-in
+# # net j4-home  hm2_7i76e.0.gpio.0??.in_not  =>  joint.4.home-sw-in
+#
+# # E-stop — replace loopback above with a real NC button on a Mesa GPIO
+# # net estop-ext  hm2_7i76e.0.gpio.0??.in  =>  iocontrol.0.emc-enable-in
