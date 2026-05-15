@@ -1,0 +1,15 @@
+PyOpenGL>=3.1.0
+PyOpenGL_accelerate>=3.1.0
+# PyQt6 is already installed via the main simulator (pip install PyQt6)
+#
+# Also copy vismach.py into this folder from the LinuxCNC source tree:
+#   https://github.com/LinuxCNC/linuxcnc/blob/master/lib/python/vismach.py
+#
+# Then copy your ASCII STL files into stls/:
+#   stls/shoulder_arm.stl
+#   stls/elbow_arm.stl
+#   stls/wrist_roll.stl
+#   stls/wrist_pitch.stl
+#
+# Install deps:
+#   pip install -r requirements.txt
