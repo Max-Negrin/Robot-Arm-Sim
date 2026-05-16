@@ -1671,6 +1671,17 @@ def main():
     # On Pico 2W, Pin("LED") routes through the CYW43 chip — if you
     # disable WiFi first the LED pin object creation will fail.
     led = Pin("LED", Pin.OUT)
+    # When WiFi is disabled, explicitly deactivate the CYW43 radio so it enters
+    # a clean idle state. This eliminates [CYW43] STALL timeouts on led.toggle()
+    # and prevents background RF emissions.
+    if not ENABLE_WIFI:
+        try:
+            import network as _net_off
+            _net_off.WLAN(_net_off.STA_IF).active(False)
+            _net_off.WLAN(_net_off.AP_IF).active(False)
+            del _net_off
+        except Exception:
+            pass
 
     # WiFi queues / STA handle — association runs **after** USB boot banners (can take tens of seconds).
     _wifi_rx = []
@@ -1912,6 +1923,21 @@ def main():
                         reply_fn("OK\n")
             except Exception as e:
                 reply_fn("ERR:SYNC:%s\n" % e)
+        elif line.startswith("D:"):
+            # Step-delta command: D:n0,n1,n2,n3,n4
+            # Adds integer step deltas directly to each axis target_pos.
+            # Fire-and-forget at 360 Hz — no reply to avoid doubling bandwidth.
+            try:
+                parts = line[2:].split(",")
+                for ax in axes:
+                    i = ax.idx
+                    if i < len(parts):
+                        d = int(parts[i])
+                        if d:
+                            ax.target_pos += d
+                idle_ticks = 0
+            except Exception as e:
+                reply_fn("ERR:D:%s\n" % e)
         elif _words and _words[0].upper() == "MOTORINFO":
             # What driver + GPIOs this build uses (verify against wiring; compare to Deploy / motor_config)
             for ax in axes:

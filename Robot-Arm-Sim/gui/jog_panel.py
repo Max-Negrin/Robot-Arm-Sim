@@ -366,8 +366,15 @@ class JogPanel(QWidget):
     def set_joint_count(self, n: int):
         while self._joint_jog_l.count():
             item = self._joint_jog_l.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w:
+                for btn in w.findChildren(QPushButton):
+                    try:
+                        btn.pressed.disconnect()
+                        btn.released.disconnect()
+                    except Exception:
+                        pass
+                w.deleteLater()
         self._joint_rows.clear()
 
         for j in range(n):

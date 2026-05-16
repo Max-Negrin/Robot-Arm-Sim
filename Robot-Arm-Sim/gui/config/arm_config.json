@@ -1,14 +1,87 @@
 {
   "_comment": "Auto-saved arm configuration. Loaded on next startup.",
   "arm_config": {
-    "num_links": 4,
+    "num_links": 5,
     "link_lengths": [
-      3.0,
-      2.5,
-      2.0,
-      1.5
+      8.0,
+      3.4,
+      4.0,
+      7.0,
+      2.5
+    ],
+    "joint_types": [
+      "pitch",
+      "pitch",
+      "pitch",
+      "roll",
+      "pitch"
+    ],
+    "mesh_files": [
+      "C:/Users/maxwe/Downloads/shoulder arm.stl",
+      "C:/Users/maxwe/Downloads/elbow pt 1 (Assembly).stl",
+      "",
+      "C:/Users/maxwe/Downloads/elbow pt 2.stl",
+      "C:/Users/maxwe/Downloads/j4 spindle.stl"
+    ],
+    "mesh_transforms": [
+      {
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "scale": 1.0
+      },
+      {
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.05,
+        "rx": 1.0,
+        "ry": 180.0,
+        "rz": 267.0,
+        "scale": 0.0363
+      },
+      {
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "scale": 1.0
+      },
+      {
+        "tx": -1.06,
+        "ty": 0.0,
+        "tz": 0.0,
+        "rx": 0.0,
+        "ry": 90.0,
+        "rz": 0.0,
+        "scale": 0.0363
+      },
+      {
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "rx": 0.0,
+        "ry": 1.0,
+        "rz": 180.0,
+        "scale": 0.0363
+      }
+    ],
+    "mesh_hidden": [
+      false,
+      false,
+      false,
+      false,
+      false
     ],
     "joint_limits": [
+      [
+        -170.0023,
+        170.0023
+      ],
       [
         -170.0023,
         170.0023
@@ -29,10 +102,12 @@
     "joint_plane_offsets": [
       0.0,
       0.0,
+      -1.0,
       0.0,
       0.0
     ],
     "joint_lateral_x": [
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -42,13 +117,15 @@
       0.0,
       0.0,
       0.0,
+      0.0,
       0.0
     ],
-    "base_vertical_offset": 0.0,
+    "base_vertical_offset": 3.0,
     "starting_angles": [
       0.0,
-      0.0,
-      0.0,
+      90.0,
+      -0.0,
+      -90.0,
       0.0,
       0.0
     ],
@@ -63,7 +140,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -360.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -82,7 +159,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": 90.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -120,7 +197,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -90.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -139,7 +216,7 @@
         "max_sps": 500,
         "accel": 1000,
         "jerk": 0,
-        "zero_offset_deg": 0.0,
+        "zero_offset_deg": -8.7,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "pins": [
@@ -147,6 +224,25 @@
           19,
           20,
           21
+        ]
+      },
+      {
+        "idx": 5,
+        "name": "Joint 5",
+        "driver": "28byj",
+        "steps_per_rev": 4096,
+        "gear_ratio": 1.0,
+        "max_sps": 500,
+        "accel": 1000,
+        "jerk": 0,
+        "zero_offset_deg": 0.0,
+        "backlash_steps": 0,
+        "gravity_offset_deg": 0.0,
+        "pins": [
+          22,
+          23,
+          24,
+          25
         ]
       }
     ],
@@ -170,18 +266,23 @@
         "index": 4,
         "enabled": false,
         "expression": ""
+      },
+      {
+        "index": 5,
+        "enabled": false,
+        "expression": ""
       }
     ],
     "ee_constraint": {
-      "enabled": false,
-      "auto": true,
+      "enabled": true,
+      "auto": false,
       "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 4.0,
-      "y": 3.0,
-      "z": 2.5,
-      "approach_auto": true,
+      "x": -10.0,
+      "y": 12.0,
+      "z": 8.0,
+      "approach_auto": false,
       "approach_angle_deg": 0.0
     },
     "homing_config": [
@@ -259,6 +360,29 @@
         "limit_min_deg": -180.0,
         "limit_max_deg": 180.0,
         "post_home_cmds": ""
+      },
+      {
+        "idx": 5,
+        "name": "Joint 5",
+        "home_pin": 25,
+        "home_pin_polarity": "NO",
+        "home_direction": 1,
+        "home_search_speed_sps": 5,
+        "home_speed_sps": 5,
+        "home_backup_steps": 5,
+        "home_offset_deg": 0.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
+        "post_home_cmds": ""
+      }
+    ],
+    "joint_couplings": [
+      {
+        "driver": 2,
+        "follower": 3,
+        "ratio": 1.0,
+        "offset_deg": -90.0
       }
     ]
   },
@@ -268,14 +392,14 @@
     "wifi_ssid": "",
     "wifi_password": "",
     "wifi_country": "US",
-    "usb_port": "COM5",
+    "usb_port": "",
     "baud": 115200,
-    "hardware_sync": false,
+    "hardware_sync": true,
     "firmware_include_wifi": true,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0,
-    "wifi_ap_mode": true,
+    "wifi_ap_mode": false,
     "wifi_ap_ssid": "PicoArm",
-    "wifi_ap_password": "12345678"
+    "wifi_ap_password": ""
   }
 }

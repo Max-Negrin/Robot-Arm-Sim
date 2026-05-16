@@ -20,6 +20,7 @@ Usage
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import threading
 import time
@@ -28,10 +29,13 @@ from typing import Iterator, Optional
 
 from .protocol import (
     BAUD_RATE,
+    DELTA_UPDATE_HZ,
     PICO_VID,
     UPDATE_THRESHOLD_RAD,
     angles_changed,
+    angles_to_steps,
     encode_angles,
+    encode_step_deltas,
     encode_sync_line,
     encode_trajectory_sample,
 )
@@ -154,6 +158,15 @@ class PicoInterface:
         self._last_angles: list[float] = []
         self.last_error: str = ""
         self.rx_callback = None   # callable(str) — called with each line received from Pico
+
+        # Delta-step stream state
+        self._delta_thread: Optional[threading.Thread] = None
+        self._delta_source = None          # callable() → list[float] | None
+        self._steps_per_degree: list[float] = []
+        self._last_step_pos: Optional[list[int]] = None
+        # Optional callback fired (from the delta thread) whenever a non-zero
+        # step delta is queued: on_delta_sent(angles_rad, new_steps) → None.
+        self.on_delta_sent = None
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -392,10 +405,109 @@ class PicoInterface:
 
         return True, f"Connected on {target_port} — Pico firmware ready ✓"
 
+    def start_delta_stream(
+        self,
+        angle_source_fn,
+        steps_per_degree: list[float],
+    ) -> None:
+        """Start a 360 Hz background thread that pulls angles and sends step deltas.
+
+        Parameters
+        ----------
+        angle_source_fn:
+            Callable with no arguments that returns the current joint angles as
+            ``list[float]`` in radians, or ``None`` to suppress sending (e.g.
+            during homing or SIM mode).  Called from the delta thread — must be
+            thread-safe (reading Python floats is GIL-safe in CPython).
+        steps_per_degree:
+            Steps per degree of output rotation for each joint, in joint order.
+            Use ``protocol.steps_per_degree_from_config(motor_joints)`` to build
+            this from the motor config panel data.
+        """
+        self._delta_source = angle_source_fn
+        self._steps_per_degree = list(steps_per_degree)
+        self._last_step_pos = None  # reset on each connect so first tick initialises
+
+        if self._delta_thread and self._delta_thread.is_alive():
+            return  # already running
+
+        self._delta_thread = threading.Thread(
+            target=self._delta_loop, name="pico-delta", daemon=True
+        )
+        self._delta_thread.start()
+        logger.info("Delta stream started at %.0f Hz", DELTA_UPDATE_HZ)
+
+    def stop_delta_stream(self) -> None:
+        """Stop the delta stream thread (also called by disconnect)."""
+        self._delta_source = None
+        self._last_step_pos = None
+        if self._delta_thread and self._delta_thread.is_alive():
+            self._delta_thread.join(timeout=1.0)
+        self._delta_thread = None
+
+    def _delta_loop(self) -> None:
+        """Background thread: pulls angles at DELTA_UPDATE_HZ and sends step deltas."""
+        period = 1.0 / DELTA_UPDATE_HZ
+        while self._running and self._connected:
+            t0 = time.monotonic()
+            try:
+                src = self._delta_source
+                if src is not None:
+                    angles = src()
+                    if angles is not None:
+                        self._do_send_step_deltas(angles)
+            except Exception as exc:
+                logger.debug("Delta loop error: %s", exc)
+            elapsed = time.monotonic() - t0
+            sleep = period - elapsed
+            if sleep > 0:
+                time.sleep(sleep)
+        logger.debug("Delta loop exited")
+
+    def _do_send_step_deltas(self, angles_rad: list[float]) -> None:
+        """Compute step deltas from previous position and enqueue if non-zero."""
+        spd = self._steps_per_degree
+        if not spd:
+            return
+        new_steps = angles_to_steps(angles_rad, spd)
+
+        if self._last_step_pos is None:
+            # First tick: initialise tracker, nothing to send yet.
+            self._last_step_pos = new_steps
+            return
+
+        deltas = [n - l for n, l in zip(new_steps, self._last_step_pos)]
+        if all(d == 0 for d in deltas):
+            return  # no motion — skip entirely (no serial traffic)
+        logger.debug(
+            "DELTA angles_deg=%s steps=%s last=%s deltas=%s",
+            [f"{math.degrees(a):.3f}" for a in angles_rad],
+            new_steps, self._last_step_pos, deltas,
+        )
+
+        msg = encode_step_deltas(deltas)
+        try:
+            if self._tx_queue.full():
+                try:
+                    self._tx_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self._tx_queue.put_nowait(msg)
+            self._last_step_pos = new_steps
+            cb = self.on_delta_sent
+            if cb is not None:
+                try:
+                    cb(angles_rad, new_steps)
+                except Exception:
+                    pass
+        except queue.Full:
+            pass
+
     def disconnect(self) -> None:
         """Close the serial connection gracefully."""
         self._running = False
         self._connected = False
+        self.stop_delta_stream()
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=2.0)
         if self._rx_worker and self._rx_worker.is_alive():

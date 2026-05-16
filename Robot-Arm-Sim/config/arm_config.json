@@ -163,12 +163,12 @@
         "zero_offset_deg": 0.0,
         "backlash_steps": 30,
         "gravity_offset_deg": 0.0,
-        "invert_dir": false,
+        "invert_dir": true,
         "pio_stepdir": true,
         "dir_setup_us": 20,
         "pins": [
-          4,
-          3
+          6,
+          5
         ]
       },
       {
@@ -183,12 +183,12 @@
         "zero_offset_deg": 90.0,
         "backlash_steps": 104,
         "gravity_offset_deg": 0.0,
-        "invert_dir": true,
+        "invert_dir": false,
         "pio_stepdir": true,
         "dir_setup_us": 20,
         "pins": [
-          6,
-          5
+          4,
+          3
         ]
       },
       {
@@ -207,7 +207,7 @@
         "pio_stepdir": true,
         "dir_setup_us": 5,
         "pins": [
-          8,
+          10,
           9
         ]
       },
@@ -220,15 +220,15 @@
         "max_sps": 8000,
         "accel": 4000,
         "jerk": 0,
-        "zero_offset_deg": -8.7,
+        "zero_offset_deg": 0.0,
         "backlash_steps": 0,
         "gravity_offset_deg": 0.0,
         "invert_dir": false,
         "pio_stepdir": true,
         "dir_setup_us": 5,
         "pins": [
-          10,
-          11
+          26,
+          23
         ]
       },
       {
@@ -237,7 +237,7 @@
         "driver": "stepdir",
         "steps_per_rev": 1600,
         "gear_ratio": 3.0,
-        "max_sps": 8000,
+        "max_sps": 2000,
         "accel": 4000,
         "jerk": 0,
         "zero_offset_deg": 0.0,
@@ -247,8 +247,8 @@
         "pio_stepdir": true,
         "dir_setup_us": 5,
         "pins": [
-          12,
-          13
+          28,
+          27
         ]
       }
     ],
@@ -282,11 +282,11 @@
     "ee_constraint": {
       "enabled": true,
       "auto": false,
-      "angle_deg": 88.3
+      "angle_deg": 0.0
     },
     "target_panel": {
-      "x": 10.0,
-      "y": 3.0,
+      "x": -10.0,
+      "y": 12.0,
       "z": 8.0,
       "approach_auto": false,
       "approach_angle_deg": 0.0
@@ -302,7 +302,7 @@
         "home_speed_sps": 5,
         "home_backup_steps": 5,
         "home_offset_deg": 0.0,
-        "limits_enabled": true,
+        "limits_enabled": false,
         "limit_min_deg": -180.0,
         "limit_max_deg": 180.0,
         "post_home_cmds": ""
@@ -317,9 +317,9 @@
         "home_speed_sps": 5,
         "home_backup_steps": 5,
         "home_offset_deg": 0.0,
-        "limits_enabled": true,
-        "limit_min_deg": -90.0,
-        "limit_max_deg": 90.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
         "post_home_cmds": ""
       },
       {
@@ -332,9 +332,9 @@
         "home_speed_sps": 5,
         "home_backup_steps": 5,
         "home_offset_deg": 0.0,
-        "limits_enabled": true,
-        "limit_min_deg": -90.0,
-        "limit_max_deg": 120.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
         "post_home_cmds": ""
       },
       {
@@ -377,9 +377,9 @@
         "home_speed_sps": 5,
         "home_backup_steps": 5,
         "home_offset_deg": 0.0,
-        "limits_enabled": true,
-        "limit_min_deg": -160.0,
-        "limit_max_deg": 160.0,
+        "limits_enabled": false,
+        "limit_min_deg": -180.0,
+        "limit_max_deg": 180.0,
         "post_home_cmds": ""
       }
     ],
@@ -398,10 +398,10 @@
     "wifi_ssid": "",
     "wifi_password": "",
     "wifi_country": "US",
-    "usb_port": "",
-    "baud": 115200,
+    "usb_port": "COM5",
+    "baud": 230400,
     "hardware_sync": true,
-    "firmware_include_wifi": true,
+    "firmware_include_wifi": false,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0,
     "wifi_ap_mode": false,

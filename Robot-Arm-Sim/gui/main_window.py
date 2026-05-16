@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import logging
+import threading
 import numpy as np
 from typing import Optional
 
@@ -49,6 +50,7 @@ from hardware.protocol import (
     TRAJECTORY_STREAM_HZ,
     angles_changed,
     clamp_trajectory_stream_hz,
+    steps_per_degree_from_config,
 )
 
 from .constants import _DEFAULT_LIMIT, logger, app_config_dir
@@ -149,6 +151,15 @@ class MainWindow(QMainWindow):
         self._last_hw_streamed_adj: Optional[list[float]] = None
         self._hw_stream_origin_mono: float = time.monotonic()
         self._bottleneck_status_shown: bool = False
+        self._hw_bl_prev: Optional[list[float]] = None
+        self._hw_bl_pdelta: Optional[list[float]] = None
+
+        # Thread-safe cache: values read by the 360 Hz delta background thread.
+        # Only the main thread writes; background thread reads under _delta_lock.
+        self._delta_lock = threading.Lock()
+        self._delta_cache_sim: bool = False
+        self._delta_cache_gravity: dict[int, float] = {}
+        self._delta_cache_backlash_rad: list[float] = []
 
         # Continuous jog state (driven by _on_timer_tick when active)
         self._jog_active:  bool  = False
@@ -276,6 +287,8 @@ class MainWindow(QMainWindow):
         self._connecting_iface = None
         self._hw_sync_nudge_shown: bool = False
         self._pico_rx_queue: _queue_mod.Queue = _queue_mod.Queue()
+        self._sendpos_log_enabled: bool = False
+        self._sendpos_queue: _queue_mod.Queue = _queue_mod.Queue(maxsize=16)
         self._sequence_queue: list = []
         self._sequence_index: int = 0
 
@@ -327,6 +340,7 @@ class MainWindow(QMainWindow):
 
         self.motor_config_panel.config_changed.connect(self._schedule_motor_config_persist)
         self.motor_config_panel.config_changed.connect(self._on_motor_config_sync_zero_panel)
+        self.motor_config_panel.config_changed.connect(self._refresh_delta_cache)
         self.motor_config_panel.pins_loaded.connect(self._restore_motor_config_pins)
         self.pinout_panel.pins_changed.connect(self._schedule_motor_config_persist)
 
@@ -1109,6 +1123,18 @@ class MainWindow(QMainWindow):
             finally:
                 self._loading = False
 
+        # motor_config.json is authoritative for motor settings; load it now that
+        # rebuild() has created the rows (arm_cfg triggers _on_config_changed → rebuild).
+        # Keep this separate so a motor-load failure never prevents hardware config restore.
+        try:
+            self._loading = True
+            self.motor_config_panel._load_config()
+        except Exception as e:
+            logger.warning("Could not load motor config on startup: %s", e)
+        finally:
+            self._loading = False
+        self._refresh_delta_cache()  # populate cache after motor config is loaded
+
         hw_cfg = data.get("hardware")
         if hw_cfg:
             try:
@@ -1713,6 +1739,7 @@ class MainWindow(QMainWindow):
     # ── Jog Control Panel ─────────────────────────────────────────────
 
     def _on_jog_started(self, jog_type: str, axis: int, direction: float) -> None:
+        logger.debug("JOG_START type=%s axis=%d dir=%+.0f", jog_type, axis, direction)
         self._jog_type = jog_type
         self._jog_axis = axis
         self._jog_dir  = direction
@@ -1832,6 +1859,11 @@ class MainWindow(QMainWindow):
             idx = self._jog_axis
             if 0 <= idx < len(self.arm_state.joint_angles):
                 self.arm_state.joint_angles[idx] += delta_rad
+                if self._main_loop_tick % 200 == 0:  # log ~5 Hz to avoid spam
+                    logger.debug(
+                        "JOG_TICK axis=%d vel=%.2f angle[%d]=%.5f rad",
+                        idx, self._jog_vel, idx, self.arm_state.joint_angles[idx],
+                    )
 
         if self._joint_couplings:
             self._apply_couplings(self.arm_state.joint_angles)
@@ -2059,9 +2091,28 @@ class MainWindow(QMainWindow):
                 angles[i] += math.radians(grav_deg)
         return angles
 
+    def _refresh_delta_cache(self) -> None:
+        """Pre-compute values the delta background thread needs. Call from main thread only."""
+        try:
+            cfgs = self.motor_config_panel.get_joint_configs()
+        except Exception:
+            cfgs = []
+        gravity: dict[int, float] = {}
+        bl_rad: list[float] = []
+        for cfg in cfgs:
+            idx = cfg.get("idx", len(gravity))
+            gravity[idx] = cfg.get("gravity_offset_deg", 0.0)
+            bl_rad.append(_backlash_angle_rad_from_motor_cfg(cfg))
+        sim = self.jog_panel.sim_mode
+        with self._delta_lock:
+            self._delta_cache_sim = sim
+            self._delta_cache_gravity = gravity
+            self._delta_cache_backlash_rad = bl_rad
+
     def _reset_hardware_backlash_state(self) -> None:
-        self._hw_bl_prev = None
-        self._hw_bl_pdelta = None
+        with self._delta_lock:
+            self._hw_bl_prev = None
+            self._hw_bl_pdelta = None
 
     def _apply_direction_backlash_to_angles(self, raw: list[float]) -> list[float]:
         """On direction reversal, add output backlash (rad) to the new commanded motion once."""
@@ -2070,20 +2121,85 @@ class MainWindow(QMainWindow):
         except Exception:
             return list(raw)
         n = min(len(raw), len(cfgs))
+        bl_rad = [_backlash_angle_rad_from_motor_cfg(cfgs[i]) for i in range(n)]
+        return self._apply_backlash_with_values(raw, bl_rad)
+
+    def _apply_backlash_with_values(self, raw: list[float], bl_rad: list[float]) -> list[float]:
+        """Thread-safe backlash correction using a pre-built list of backlash values (radians)."""
+        n = min(len(raw), len(bl_rad))
         out = list(raw)
-        if self._hw_bl_prev is None or len(self._hw_bl_prev) != n:
-            self._hw_bl_prev = [float("nan")] * n
-            self._hw_bl_pdelta = [0.0] * n
+        with self._delta_lock:
+            if self._hw_bl_prev is None or len(self._hw_bl_prev) != n:
+                self._hw_bl_prev = [float("nan")] * n
+                self._hw_bl_pdelta = [0.0] * n
+            prev_snap = list(self._hw_bl_prev)
+            pdelta_snap = list(self._hw_bl_pdelta)
+        new_prev = list(prev_snap)
+        new_pdelta = list(pdelta_snap)
         for i in range(n):
-            bl = _backlash_angle_rad_from_motor_cfg(cfgs[i])
-            prev = self._hw_bl_prev[i]
+            bl = bl_rad[i]
+            prev = prev_snap[i]
             d = raw[i] - prev if prev == prev else 0.0
-            p = self._hw_bl_pdelta[i]
+            p = pdelta_snap[i]
             if bl > 0.0 and prev == prev and p * d < 0.0 and p != 0.0 and d != 0.0:
                 out[i] = raw[i] + math.copysign(bl, d)
-            self._hw_bl_prev[i] = raw[i]
-            self._hw_bl_pdelta[i] = d if prev == prev else 0.0
+            new_prev[i] = raw[i]
+            new_pdelta[i] = d if prev == prev else 0.0
+        with self._delta_lock:
+            self._hw_bl_prev = new_prev
+            self._hw_bl_pdelta = new_pdelta
         return out
+
+    def _start_delta_stream(self, iface) -> None:
+        """Start the 360 Hz step-delta stream on a freshly connected interface.
+
+        The angle source captures the same gravity-adjusted + backlash-corrected
+        angles that the old GUI-timer path used, but runs independently at
+        DELTA_UPDATE_HZ so the GUI render cycle and hardware comms are decoupled.
+        Returns None when homing or SIM mode suppresses hardware output.
+        """
+        try:
+            joint_cfgs = self.motor_config_panel.get_joint_configs()
+        except Exception:
+            logger.warning("Could not read motor config for delta stream — hardware stream disabled")
+            return
+        if not joint_cfgs:
+            return
+
+        spd = steps_per_degree_from_config(joint_cfgs)
+
+        self._refresh_delta_cache()  # populate cache before thread starts
+
+        win = self  # captured reference for the closure below
+
+        def _angle_source():
+            # Read only plain Python primitives — no Qt widget access from this thread.
+            with win._delta_lock:
+                sim = win._delta_cache_sim
+                gravity = win._delta_cache_gravity
+                bl_rad = win._delta_cache_backlash_rad
+            if sim or getattr(win, "_homing_active", False):
+                return None
+            angles = list(win.arm_state.joint_angles)
+            for i, grav_deg in gravity.items():
+                if grav_deg and i < len(angles):
+                    angles[i] += math.radians(grav_deg)
+            return win._apply_backlash_with_values(angles, bl_rad)
+
+        iface.start_delta_stream(_angle_source, spd)
+
+        sendpos_queue = self._sendpos_queue
+
+        def _on_delta_sent(angles_rad, new_steps):
+            if self._sendpos_log_enabled:
+                try:
+                    if sendpos_queue.full():
+                        sendpos_queue.get_nowait()
+                    sendpos_queue.put_nowait((angles_rad, new_steps))
+                except Exception:
+                    pass
+
+        iface.on_delta_sent = _on_delta_sent
 
     def _seed_hardware_pose_from_sim(self) -> None:
         """On connect: align the Pico's logical position with the simulator (no burst from 0)."""
@@ -2101,8 +2217,9 @@ class MainWindow(QMainWindow):
         if hasattr(h, "seed_pose_to_match_host"):
             h.seed_pose_to_match_host(raw)
         n = len(raw)
-        self._hw_bl_prev = [raw[i] for i in range(n)]
-        self._hw_bl_pdelta = [0.0] * n
+        with self._delta_lock:
+            self._hw_bl_prev = [raw[i] for i in range(n)]
+            self._hw_bl_pdelta = [0.0] * n
         self._hw_stream_origin_mono = time.monotonic()
         self._last_hw_angle_send_mono = 0.0
         self._last_hw_streamed_adj = None
@@ -2122,6 +2239,21 @@ class MainWindow(QMainWindow):
                 self._on_pico_rx(self._pico_rx_queue.get_nowait())
         except _q.Empty:
             pass
+
+        # SENDPOS: show latest outgoing joint angles when they change (only newest per tick)
+        if self._sendpos_log_enabled:
+            latest = None
+            try:
+                while True:
+                    latest = self._sendpos_queue.get_nowait()
+            except _q.Empty:
+                pass
+            if latest is not None:
+                angles_rad, _steps = latest
+                parts = "  ".join(
+                    f"J{i}={math.degrees(a):+.2f}°" for i, a in enumerate(angles_rad)
+                )
+                self.terminal.log(f"TX  {parts}", "tx")
 
         # 1 Hz POS / EE streams — run regardless of hardware connection state
         now = time.monotonic()
@@ -2190,29 +2322,8 @@ class MainWindow(QMainWindow):
                 )
             return
 
-        raw = self._gravity_adjusted_hardware_angles_rad()
-        t_mono = time.monotonic()
-        # During homing, do not stream J0:… (host angle follow) — keeps USB quiet while HOME runs.
-        if not getattr(self, "_homing_active", False):
-            if t_mono - self._last_hw_angle_send_mono >= self._hardware_angle_stream_min_interval_s():
-                adj = self._apply_direction_backlash_to_angles(raw)
-                prev_adj = self._last_hw_streamed_adj
-                if (
-                    prev_adj is not None
-                    and len(prev_adj) == len(adj)
-                    and not angles_changed(prev_adj, adj)
-                ):
-                    # Idle hold: do not re-send the same pose — avoids useless OK traffic and serial clutter.
-                    pass
-                else:
-                    self._last_hw_angle_send_mono = t_mono
-                    self._last_hw_streamed_adj = list(adj)
-                    stream_t = max(0.0, t_mono - self._hw_stream_origin_mono)
-                    send_traj = getattr(self._hardware, "send_joint_trajectory_sample", None)
-                    if callable(send_traj):
-                        send_traj(adj, stream_t)
-                    else:
-                        self._hardware.send_joint_angles(adj)
+        # Angle streaming is handled by the delta stream thread (start_delta_stream).
+        # The GUI timer only manages auxiliary streams and UI state.
 
         # Keep POS_STREAM on the Pico in sync with what streams are enabled
         streams_wanted = (
@@ -2325,6 +2436,7 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(msg.split("\n")[0])
                 logger.info("Hardware connected: %s", msg)
                 QTimer.singleShot(0, self._seed_hardware_pose_from_sim)
+                self._start_delta_stream(iface_done)
             else:
                 try:
                     iface_done.disconnect()
@@ -2340,6 +2452,7 @@ class MainWindow(QMainWindow):
     def _on_sim_mode_toggled(self, checked: bool) -> None:
         if not checked:
             self._hw_sync_nudge_shown = False
+        self._refresh_delta_cache()
 
     def _on_hardware_disconnect(self) -> None:
         """Handle Disconnect button."""
@@ -2426,6 +2539,20 @@ class MainWindow(QMainWindow):
                 self._pos_log_enabled = True
                 self.terminal.log("Joint position readout: ON", "info")
 
+        # ── SENDPOS ───────────────────────────────────────────────────────
+        elif upper in ("SENDPOS", "SENDPOS ON", "SENDPOS OFF"):
+            if upper == "SENDPOS OFF" or (upper == "SENDPOS" and self._sendpos_log_enabled):
+                self._sendpos_log_enabled = False
+                self.terminal.log("Outgoing joint position stream: OFF", "info")
+            else:
+                if self._hardware is None or not self._hardware.is_connected:
+                    self.terminal.log(
+                        "SENDPOS requires an active hardware connection — connect first", "error"
+                    )
+                else:
+                    self._sendpos_log_enabled = True
+                    self.terminal.log("Outgoing joint position stream: ON (updates on change only)", "info")
+
         # ── EE ────────────────────────────────────────────────────────────
         elif upper in ("EE", "EE ON", "EE OFF"):
             if upper == "EE OFF" or (upper == "EE" and getattr(self, "_ee_log_enabled", False)):
@@ -2511,6 +2638,7 @@ class MainWindow(QMainWindow):
             self._limit_stream_enabled = False
             self._pos_log_enabled = False
             self._ee_log_enabled = False
+            self._sendpos_log_enabled = False
             if self._pin_stream_active and self._hardware is not None and self._hardware.is_connected:
                 self._pin_stream_active = False
             self.terminal.log("Stopped — all sequences and streams cancelled", "info")
