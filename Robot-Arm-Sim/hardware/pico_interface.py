@@ -242,22 +242,27 @@ class PicoInterface:
         # Try to open the port — retries with backoff (Windows often needs time to release COM).
         ser = None
         last_exc = None
-        # Few quick retries — long backoff made “Connect” feel hung when Windows stalls COM.
-        max_attempts = 4
+        # Retries handle Windows USB re-enumeration after firmware reboot (OSError 22) and
+        # transient access-denied races between Connect/Deploy timers.
+        max_attempts = 6
         for attempt in range(max_attempts):
             try:
-                ser = _serial_mod.Serial(target_port, baud, timeout=1.0)
+                ser = _serial_mod.Serial(target_port, baud, timeout=1.0, write_timeout=5.0)
                 break
             except _serial_mod.SerialException as exc:
                 last_exc = exc
                 exc_str = str(exc).lower()
                 access_like = (
                     "access" in exc_str or "denied" in exc_str or "permission" in exc_str
+                    # Windows OSError(22): "A device which does not exist was specified" — fires
+                    # during USB re-enumeration right after a firmware reboot/deploy soft-reset.
+                    or "does not exist" in exc_str or "cannot configure" in exc_str
                 )
                 if access_like and attempt + 1 < max_attempts:
-                    delay = min(0.55, 0.12 + 0.18 * attempt)
+                    delay = min(1.5, 0.5 + 0.5 * attempt)
                     logger.info(
-                        "Access denied on %s — retrying in %.2f s", target_port, delay
+                        "Port not ready on %s — retrying in %.2f s (attempt %d/%d)",
+                        target_port, delay, attempt + 1, max_attempts,
                     )
                     time.sleep(delay)
                 else:
@@ -346,7 +351,7 @@ class PicoInterface:
                 else:
                     time.sleep(0.05)
             if not ready and not angle_probe_rejected:
-                logger.info("No ready banner after reset on %s, buf=%r", target_port, buf[:80])
+                logger.error("No ready banner after reset on %s, buf=%r", target_port, buf[:200])
         except Exception as exc:
             logger.debug("Boot wait error: %s", exc)
 

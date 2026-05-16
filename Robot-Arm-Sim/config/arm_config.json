@@ -399,7 +399,7 @@
     "wifi_password": "",
     "wifi_country": "US",
     "usb_port": "COM5",
-    "baud": 230400,
+    "baud": 115200,
     "hardware_sync": true,
     "firmware_include_wifi": false,
     "firmware_step_us": 250,

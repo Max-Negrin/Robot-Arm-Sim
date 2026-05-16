@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls \"c:/Users/maxwe/OneDrive/Documents/GitHub/Robot Arm Sim/Robot-Arm-Sim/\"*.py)"
+      "Bash(ls \"c:/Users/maxwe/OneDrive/Documents/GitHub/Robot Arm Sim/Robot-Arm-Sim/\"*.py)",
+      "PowerShell($lines = Get-Content \"C:\\\\Users\\\\maxwe\\\\OneDrive\\\\Documents\\\\GitHub\\\\Robot Arm Sim\\\\Robot-Arm-Sim\\\\logs\\\\hardware_log.txt\"; $total = $lines.Count; Write-Output \"Total lines: $total\"; $lines[\\($total-200\\)..\\($total-1\\)] | Where-Object { $_ -match \"connect|Connect|ERROR|WARN|banner|ready|pico|COM|serial|Serial|timeout|Timeout|17:3[6-9]\" })"
     ]
   }
 }
