@@ -229,22 +229,27 @@ class PicoInterface:
         # Try to open the port — retries with backoff (Windows often needs time to release COM).
         ser = None
         last_exc = None
-        # Few quick retries — long backoff made “Connect” feel hung when Windows stalls COM.
-        max_attempts = 4
+        max_attempts = 6
         for attempt in range(max_attempts):
             try:
-                ser = _serial_mod.Serial(target_port, baud, timeout=1.0)
+                # write_timeout prevents ser.write() hanging forever when USB CDC
+                # device is not consuming bytes (e.g. busy booting after firmware deploy).
+                ser = _serial_mod.Serial(target_port, baud, timeout=1.0, write_timeout=5.0)
                 break
             except _serial_mod.SerialException as exc:
                 last_exc = exc
                 exc_str = str(exc).lower()
                 access_like = (
-                    "access" in exc_str or "denied" in exc_str or "permission" in exc_str
+                    “access” in exc_str or “denied” in exc_str or “permission” in exc_str
+                    # Windows OSError(22): fires during USB re-enumeration after firmware reboot.
+                    or “does not exist” in exc_str or “cannot configure” in exc_str
+                    or “semaphore timeout” in exc_str
                 )
                 if access_like and attempt + 1 < max_attempts:
-                    delay = min(0.55, 0.12 + 0.18 * attempt)
+                    delay = min(1.5, 0.5 + 0.5 * attempt)
                     logger.info(
-                        "Access denied on %s — retrying in %.2f s", target_port, delay
+                        “Port not ready on %s — retrying in %.2f s (attempt %d/%d)”,
+                        target_port, delay, attempt + 1, max_attempts,
                     )
                     time.sleep(delay)
                 else:
@@ -287,6 +292,8 @@ class PicoInterface:
 
         # Escape raw REPL and get to a known state.
         # A previous failed deploy can leave the Pico stuck in raw REPL mode.
+        # Never call ser.flush() here — on Windows USB CDC, flush() can block
+        # indefinitely if the device is busy booting and not consuming bytes.
         try:
             ser.reset_input_buffer()
             ser.write(b"\x02")           # Ctrl+B: exit raw REPL → normal REPL
@@ -294,7 +301,6 @@ class PicoInterface:
             ser.write(b"\x03\x03\x03")  # Ctrl+C x3: interrupt any running user code
             time.sleep(0.4)
             ser.write(b"\x04")           # Ctrl+D: soft reset → reruns main.py
-            ser.flush()
         except Exception as exc:
             logger.debug("Pre-connect reset error: %s", exc)
 
@@ -307,8 +313,10 @@ class PicoInterface:
             deadline = time.monotonic() + 7.0
             buf = b""
             while time.monotonic() < deadline:
-                waiting = ser.in_waiting
-                chunk = ser.read(waiting if waiting > 0 else 1)
+                # Use read(1) directly — never ser.in_waiting here.
+                # On Windows, in_waiting can hang if USB CDC is in an error state;
+                # read() with timeout=1.0 is guaranteed to return within the serial timeout.
+                chunk = ser.read(1)
                 if chunk:
                     buf += chunk
                     if b"Robot Arm Pico Controller ready" in buf or b"firmware ready" in buf:
@@ -326,14 +334,12 @@ class PicoInterface:
                         ser.write(b"PING\n")
                         ser.flush()
                         time.sleep(0.3)
-                        buf += ser.read(ser.in_waiting)
+                        ser.reset_input_buffer()
                         logger.info("Pico firmware ready on %s", target_port)
                         ready = True
                         break
-                else:
-                    time.sleep(0.05)
             if not ready and not angle_probe_rejected:
-                logger.info("No ready banner after reset on %s, buf=%r", target_port, buf[:80])
+                logger.error("No ready banner after reset on %s, buf=%r", target_port, buf[:200])
         except Exception as exc:
             logger.debug("Boot wait error: %s", exc)
 

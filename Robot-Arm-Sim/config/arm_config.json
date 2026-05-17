@@ -395,7 +395,7 @@
     "usb_port": "",
     "baud": 115200,
     "hardware_sync": true,
-    "firmware_include_wifi": true,
+    "firmware_include_wifi": false,
     "firmware_step_us": 250,
     "firmware_host_follow_max_sps": 0,
     "wifi_ap_mode": false,

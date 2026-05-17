@@ -149,7 +149,7 @@ def _deploy_via_serial_repl_text(
             if progress_cb:
                 progress_cb(f"Opening serial port {port}...")
             try:
-                ser = _serial_mod.Serial(port, 115200, timeout=3)
+                ser = _serial_mod.Serial(port, 115200, timeout=0.5, write_timeout=10.0)
             except _serial_mod.SerialException as exc:
                 return False, (
                     f"ERROR: Cannot open {port}\n"
@@ -162,7 +162,9 @@ def _deploy_via_serial_repl_text(
                 buf = b""
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
-                    chunk = ser.read(ser.in_waiting or 1)
+                    # Never call ser.in_waiting — on Windows it can stall for seconds
+                    # when the USB CDC device is busy writing flash.
+                    chunk = ser.read(256)
                     if chunk:
                         buf += chunk
                         if marker in buf:
@@ -218,7 +220,7 @@ def _deploy_via_serial_repl_text(
                 def _write_remote_py(remote_name: str, text: str, desc: str) -> Optional[str]:
                     """Write one file; return error message or None on success."""
                     script_bytes = text.encode("utf-8")
-                    CHUNK = 512
+                    CHUNK = 2048
                     total = len(script_bytes)
                     n_chunks = (total + CHUNK - 1) // CHUNK
                     _prog(f"[3/4] {desc}: {total} bytes in {n_chunks} chunks...")
