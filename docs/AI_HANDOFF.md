@@ -1,6 +1,6 @@
 # Robot-Arm-Sim — Comprehensive AI Handoff
 <!-- IMPORTANT: Update this file every time you iterate on the simulator. -->
-<!-- Last updated: 2026-04-12 -->
+<!-- Last updated: 2026-05-18 -->
 
 ## 🎯 Project Overview
 
@@ -28,7 +28,9 @@
 11. [Known Issues & Limitations](#known-issues--limitations)
 12. [How to Extend](#how-to-extend)
 13. [Development Workflow](#development-workflow)
-14. [Iteration Log](#iteration-log)
+14. [LinuxCNC Hardware Integration](#linuxcnc-hardware-integration-2026-05-18)
+15. [Lessons Learned / Gotchas](#lessons-learned--gotchas)
+16. [Iteration Log](#iteration-log)
 
 ---
 
@@ -1390,6 +1392,233 @@ pyserial>=3.5    # pip install pyserial   (for hardware mode)
 
 ---
 
+## LinuxCNC Hardware Integration (2026-05-18)
+
+This section documents the **current** control stack used to drive the physical 5-axis arm from LinuxCNC running on a Raspberry Pi 4. It supersedes the earlier "Hardware Integration (2026-03-07)" section above for any joint motion path that goes through LinuxCNC — the older `firmware/pico_control_script.py` + `PicoInterface` GUI path is still valid for standalone simulator-driven motion.
+
+### High-Level Topology
+
+```
+  ┌─────────────────────────┐    USB CDC     ┌────────────────────────────┐
+  │   Raspberry Pi 4        │    /dev/ttyACM0 │   Raspberry Pi Pico 2W     │
+  │   LinuxCNC 2.9 (Axis)   │ <───────────>   │   MicroPython firmware     │
+  │   ├─ motmod (servo 10ms)│   23B cmd / 22B │   ├─ Python main loop      │
+  │   ├─ genserkins         │   feedback,     │   ├─ 5 × PIO state machines│
+  │   ├─ halui              │   ~100 Hz       │   │   (one per axis,       │
+  │   └─ pico_hal.py (userspace)              │   │   autonomous STEP gen) │
+  │      "pico-arm" component│                │   └─ DIR pins (CPU writes) │
+  └─────────────────────────┘                  └────────────────────────────┘
+            │                                              │
+            ▼ joint cmd/fb pins                            ▼ STEP / DIR / GND
+       motion.* / joint.N.*                          5× stepper drivers
+```
+
+All four files live in `Robot-Arm-Sim/linuxcnc/config/` in this repo and are deployed to `~/linuxcnc/configs/max-arm-config/` on the RPi4.
+
+### Pico 2W Firmware — `linuxcnc_main.py`
+
+**Role:** Receive 23-byte command packets from LinuxCNC (~100 Hz), generate exactly the right number of STEP pulses on each axis to reach the new target, send a 22-byte feedback packet with the current physical position.
+
+**Why PIO instead of CPU timers?**
+A previous timer-ISR design at 20 kHz starved the MicroPython main loop and produced noticeable step jitter. Each axis now owns one PIO state machine that emits STEP pulses autonomously while the CPU sleeps blocking on the next serial packet. The CPU never bit-bangs step pins.
+
+**The PIO program** (in `_step_pio`, decorated with `@rp2.asm_pio`):
+```
+wrap_target()
+pull(block)                # OSR ← TX FIFO (waits for count N-1 from CPU)
+mov(x, osr)                # X = N-1
+label("step_loop")
+set(pins, 1) [4]           # STEP high, hold 5 cycles
+set(pins, 0) [4]           # STEP low,  hold 5 cycles
+jmp(x_dec, "step_loop")    # body runs once more → N pulses total
+in_(null, 32)              # ISR = 0
+push(noblock)              # ack burst-done into RX FIFO
+wrap()
+```
+
+Each pulse is 10 SM cycles (5 high + 5 low). The state machine clock is set to `max_sps × 11` Hz (10 cycles per loop + 1 cycle for the `jmp`), so the resulting STEP rate is exactly `max_sps`. To emit `N` pulses, the CPU pushes `N-1` because the loop body runs once before each `jmp x_dec`. The PIO then pushes `0` into the RX FIFO as a "burst done" ack.
+
+**`Axis` class:** wraps one PIO state machine + one DIR pin and tracks:
+- `current_steps`, `target_steps` — integer step counts (signed)
+- `_last_dir`, `_pending` — last direction written; number of bursts pushed but not yet ack-completed
+- `max_steps_per_packet = int(max_sps * 0.01 * 1.5)` — safety clamp (see below)
+
+`set_target_deg(deg)` converts the float command into integer step count via `steps_per_rev * gear_ratio / 360`.
+
+`snap()` sets `current_steps = target_steps` with no pulses generated. Used during startup and after E-stop release.
+
+`update()` is the core step generator:
+1. Drain any RX FIFO acks → decrement `_pending`
+2. If a burst is still running (`_pending > 0`), return — DIR must stay stable mid-burst
+3. Compute `delta = target_steps - current_steps`; bail if zero
+4. Clamp `|delta|` to `max_steps_per_packet` (the safety backstop)
+5. If physical direction changed, write the DIR pin and sleep `dir_setup_us`
+6. Push `N-1` into the SM's TX FIFO → PIO emits exactly `N` pulses
+7. Update `current_steps` by **the amount actually commanded** (so a clamped packet naturally catches up on the next packet)
+
+### Safety Chain (in order)
+
+The firmware will only generate STEP pulses when **all three** of these conditions are met:
+
+1. **Startup snap window** — for the first `SNAP_PACKETS = 100` packets (~1 second at 100 Hz), every packet is treated as a snap (`current_steps = target_steps`, no pulses). This lets the LinuxCNC trajectory planner settle before the arm starts following — without it, the very first packet would carry whatever stale "commanded position" LinuxCNC has and the motors would slam to it.
+
+2. **E-stop interlock via enable byte** — the 23rd byte of every command packet is a 0/1 flag driven by `motion.motion-enabled` in the HAL (TRUE only when machine is on, E-stop released, no fault). When this byte is 0, the firmware forces a snap on every packet — no motion. When the bit transitions 0 → 1 (E-stop release, fault clear, machine on), the firmware does **one additional snap** so it re-aligns to LinuxCNC's current commanded position before resuming motion. This protects against the joint suddenly chasing a stale target after an E-stop event.
+
+3. **Per-packet max-steps clamp** — every `Axis` has `max_steps_per_packet = max_sps × servo_period × 1.5` (so `max_sps × 0.01 s × 1.5 = 1.5%` headroom above the physical max per 10 ms servo period). Anything larger is silently truncated. Under normal operation LinuxCNC respects `MAX_VELOCITY` from the INI and never commands more than the physical max, so this is a pure backstop against config errors or trajectory bugs.
+
+The main loop logic for these three is:
+```python
+should_snap = (enable == 0 or transition or _packets_seen <= SNAP_PACKETS)
+if should_snap:
+    for ax in axes: ax.snap()
+else:
+    for ax in axes: ax.update()
+```
+
+### Serial Protocol
+
+Wire format is binary, little-endian, single byte frame markers.
+
+**PC → Pico (command, 23 bytes):**
+```
+b'C' + struct.pack('<5fB', j0, j1, j2, j3, j4, enable) + b'\n'
+   1 byte   5 × float32 = 20 bytes              1 byte    1 byte
+```
+- `j0..j4` are joint angles in **degrees**
+- `enable` is 0/1 (driven by `motion.motion-enabled`)
+
+**Pico → PC (feedback, 22 bytes):**
+```
+b'F' + struct.pack('<5f', j0, j1, j2, j3, j4) + b'\n'
+   1 byte   5 × float32 = 20 bytes               1 byte
+```
+- All values are the Pico's **physical** joint angles in degrees (derived from `current_steps / steps_per_deg`)
+- No enable echo — the host already knows what it commanded
+
+The Pico's `_try_parse()` scans for a `b'C'` start byte and verifies the trailing `b'\n'`. Bad framing causes a 1-byte advance and retry on the next call — recovery is automatic.
+
+### Userspace HAL Component — `pico_hal.py`
+
+**Lives at:** `~/linuxcnc/configs/max-arm-config/pico_hal.py` on the RPi4.
+**Loaded by:** `loadusr -Wn pico-arm ./pico-arm.py` in `max-arm.hal`.
+
+Notable details:
+- **Component name is `pico-arm`** (with hyphen) — registered via `hal.component("pico-arm")`. The `-Wn pico-arm` arg to `loadusr` must match exactly, and every HAL pin reference uses `pico-arm.<pin>`.
+- **No pyserial dependency** — port is opened with `os.open` + raw `termios` for 8N1, B115200, VMIN=0/VTIME=0. After open, `O_NONBLOCK` is cleared (blocking writes are safe; non-blocking only matters for `open()` itself to avoid carrier-detect hang).
+- **Read loop:** `_read_exact(fd, 22, timeout=0.008)` uses `select.select()` to wait for up to 8 ms per packet, which naturally rate-limits the loop to ≈100 Hz without needing a deliberate sleep.
+- **Auto-reconnect:** on any exception, closes the fd, sets `connected=False`, and the outer `while True` loop reopens the port. A 1-second `select.select([], [], [], 1.0)` is used as an interruptible sleep between retries.
+- **Bad-response logging:** if a feedback packet doesn't match `b'F' ... b'\n'`, every 100th bad packet is logged to `/tmp/pico_hal.log` with the byte count and head/tail bytes — useful for diagnosing wire issues without flooding the log.
+
+**HAL pins exported:**
+
+| Pin name                  | Type  | Dir | Purpose                                              |
+|---------------------------|-------|-----|------------------------------------------------------|
+| `pico-arm.pos-cmd-0..4`   | FLOAT | IN  | Joint commands (degrees) from LinuxCNC               |
+| `pico-arm.pos-fb-0..4`    | FLOAT | OUT | Joint feedback (degrees) to LinuxCNC                 |
+| `pico-arm.connected`      | BIT   | OUT | TRUE while serial link is alive                      |
+| `pico-arm.motion-enable`  | BIT   | IN  | E-stop interlock — wire to `motion.motion-enabled`   |
+
+### HAL File — `max-arm.hal`
+
+Key sections (full file at `Robot-Arm-Sim/linuxcnc/config/max-arm.hal`):
+
+```
+loadrt genserkins
+loadrt motmod servo_period_nsec=10000000 num_joints=5
+addf motion-command-handler   servo-thread
+addf motion-controller        servo-thread
+
+loadusr -Wn pico-arm ./pico-arm.py
+
+net j0-cmd  joint.0.motor-pos-cmd  =>  pico-arm.pos-cmd-0
+net j0-fb   pico-arm.pos-fb-0      =>  joint.0.motor-pos-fb
+...  (same pattern for joints 1..4)
+
+# E-stop interlock — drives the Pico's enable byte
+net motion-en  motion.motion-enabled  =>  pico-arm.motion-enable
+
+# No physical e-stop yet — loopback satisfies LinuxCNC's interlock requirement
+net estop-loop  iocontrol.0.user-enable-out  =>  iocontrol.0.emc-enable-in
+
+# Tool change acknowledged immediately (no tool changer on the arm)
+net tool-prep-loop    iocontrol.0.tool-prepare  =>  iocontrol.0.tool-prepared
+net tool-change-loop  iocontrol.0.tool-change   =>  iocontrol.0.tool-changed
+```
+
+**Crucial detail:** The file has a Mesa 7i76E wiring template commented out at the bottom — when the FPGA stepgen card replaces the Pico USB path, comment out the `pico-arm` block and uncomment the Mesa block.
+
+### INI File — `max-arm.ini`
+
+The `[HAL]` section loads both the HAL file and `halui` (so the GUI's halui pins are exposed):
+
+```
+[HAL]
+HALFILE = max-arm.hal
+HALUI   = halui
+```
+
+Other notable sections:
+- `[EMCMOT] SERVO_PERIOD = 1000000` (1 ms) and `BASE_PERIOD = 100000` (100 µs) — but the actual `motmod` servo period is the `servo_period_nsec=10000000` (10 ms) passed in the HAL `loadrt motmod` line, which is what the safety clamp math assumes.
+- `[KINS] KINEMATICS = genserkins coordinates=XYZAB` with `JOINTS = 5`.
+- `[GENSERKINS]` DH parameters mirror `arm_config.json`'s link geometry (lengths in the same unit as `[TRAJ] LINEAR_UNITS = mm`, here `× 27.5` from sim units).
+- `[TRAJ] NO_FORCE_HOMING = 1` — joints may move before all are homed (we have no home switches yet).
+- All `HOME_SEARCH_VEL = 0` and `HOME_LATCH_VEL = 0` per joint — tells the motion controller to go directly to `HOME` without searching for a switch.
+
+### Joint Configuration Table
+
+The firmware's `JOINTS` list and the INI's per-joint sections must agree. Values as of 2026-05-18:
+
+| J | Name         | Step pin | Dir pin | steps_per_rev | gear | max_sps | invert | INI SCALE (steps/deg) | INI MAX_VELOCITY (deg/s) |
+|---|--------------|----------|---------|---------------|------|---------|--------|-----------------------|--------------------------|
+| 0 | Base         | GP8      | GP7     | 4 240         | 1.0  |  2 000  | False  | 11.7778               | 450.0                    |
+| 1 | Shoulder     | GP4      | GP3     | 32 000        | 1.0  |  8 000  | True   | 88.8889               | 157.5                    |
+| 2 | Elbow        | GP6      | GP5     | 57 600        | 1.0  | 15 000  | False  | 160.0000              | 120.0                    |
+| 3 | Wrist Roll   | GP26     | GP22    |  7 600        | 1.0  |  4 000  | False  | 21.1111               | 180.0                    |
+| 4 | Wrist Pitch  | GP28     | GP27    |  6 000        | 1.0  |  4 000  | False  | 16.6667               | 230.0                    |
+
+Notes:
+- `INI SCALE = steps_per_rev / 360` (gear_ratio = 1.0 for all joints).
+- `INI MAX_VELOCITY` must be ≤ `max_sps / SCALE` (the firmware's physical limit). LinuxCNC will refuse to plan motion above this.
+- The Pico 2W has **3 PIO blocks × 4 state machines = 12 SMs total**, plenty for 5 axes (the RP2040 only has 8).
+
+### Operational Notes
+
+- **Boot escape window:** the firmware sleeps 3 s on startup with `kbd_intr` still enabled, then disables it via `micropython.kbd_intr(-1)`. During the window, `Ctrl-C` from Thonny/mpremote drops to REPL for edits. After the window closes, the firmware locks the USB CDC port and binary protocol begins.
+- **LED states:** `_LED_IDLE` (slow flash) → `_LED_RECEIVING` (fast flash) after first packet → `_LED_CONNECTED` (solid on) after 10 packets. Quick visual confirmation that LinuxCNC ↔ Pico is alive.
+- **stderr is silent:** USB CDC `stderr` shares the same endpoint as `stdout`, so any printed exception would corrupt the binary protocol. The main loop catches `Exception` and silently swallows it. Debug by reverting to ASCII protocol during bring-up.
+
+---
+
+## Lessons Learned / Gotchas
+
+Hard-won learnings from the LinuxCNC integration sprint. Future agents working on the firmware or HAL: read this first.
+
+- **MicroPython USB CDC `sys.stdin.buffer.read(n)` is BLOCKING.** This is fine — it's what enables the Remora-style "block on comms, do motion in parallel hardware (PIO)" architecture. The CPU sleeps in the read until LinuxCNC sends the next 23-byte packet; meanwhile the PIO SMs keep clocking out STEP pulses on their own.
+
+- **`select.poll()` on stdin is unreliable on RP2350 MicroPython.** Don't use it for binary serial. The previous `pico_control_script.py` used `select.poll()` on stdin and it sort-of worked over ASCII, but binary frames with `\n` bytes inside floats caused intermittent missed reads. Switch to blocking `sys.stdin.buffer.read(N)` for known-size packets.
+
+- **`micropython.kbd_intr(-1)` MUST be called before binary serial begins.** Otherwise the very first float payload that happens to contain `0x03` (Ctrl-C) or `0x04` (Ctrl-D) byte will kill the script with `KeyboardInterrupt`. Call it once, immediately after the boot escape window.
+
+- **Timer ISRs at 20 kHz starve the MicroPython main loop.** The previous design used a `machine.Timer` callback at 20 kHz to bit-bang step pulses. This worked on RP2040 with C-callable callbacks but on Pico 2W's MicroPython build the GIL prevented the main loop from running long enough to read serial. **Use PIO state machines instead** — they're true autonomous hardware peripherals.
+
+- **LinuxCNC 2.9+ split `tpmod` and `homemod` out of `motmod`.** Some 2.9+ builds include them as defaults and load them automatically when `loadrt motmod` runs. Others require explicit `loadrt tpmod` / `loadrt homemod`. Symptom of the wrong choice: `HAL: ERROR: function 'tpmod-...' not found` or `module already loaded`. On the deployment RPi4 (current setup), `motmod` loads both submodules itself — **do NOT `loadrt tpmod` or `loadrt homemod` separately**, that double-load fails. If you switch to a different distribution check `dmesg`/`lscpu` and the LinuxCNC build docs.
+
+- **HAL line continuation with `\` is fragile** — and especially nasty when CRLF line endings sneak in (Windows editing). Symptom: `hal: parse error` on a line that visually looks fine. Workaround: collapse multi-line statements to single lines, and run `dos2unix` on any HAL file that's been touched by a Windows editor.
+
+- **HAL component name must match `loadusr -Wn` arg.** The string passed to `hal.component("X")` in the Python source MUST equal the `-Wn X` arg in the HAL file. Mismatch → `loadusr` times out waiting for a component that will never appear.
+
+- **HAL pin names are `<component-name>.<pin-name>`** — so hyphen vs underscore in the component name propagates everywhere. We renamed `pico_hal` → `pico-arm` for the component name (closer to the actual hardware role), so every `net` line had to be updated from `pico_hal.pos-cmd-0` to `pico-arm.pos-cmd-0`. This is also why the file is named `pico_hal.py` (Python identifier rules) but the component inside is `pico-arm` (HAL pin convention).
+
+- **Pico 2W has 12 PIO state machines** (3 PIO blocks × 4 SMs), vs. the RP2040's 8. With 5 axes consuming 5 SMs, there are 7 free for future use (encoders, end-stops, second STEP per axis, etc.).
+
+- **First-packet snap is essential for open-loop motion control.** Without it, motors slam to whatever stale commanded position LinuxCNC happens to be sending during the trajectory planner's settle window after `machine on`. The 100-packet snap window (~1 s) lets the planner converge, then the arm starts following commands. The same logic applies to the E-stop release transition — always re-snap before resuming motion.
+
+- **The enable byte must be a backstop, not the only safety.** LinuxCNC's `motion.motion-enabled` already gates motion at the planner level — when it goes false, `joint.N.motor-pos-cmd` stops changing. The Pico's enable byte exists for the *worst* case: HAL got into a bad state, the planner is sending garbage, or the USB cable is intermittently disconnected. Always wire it.
+
+- **Don't trust `print()` to stderr from MicroPython firmware** — USB CDC stderr shares the stdout endpoint, so an error message will land in the middle of a binary feedback packet and the host parser will throw away that frame (and possibly the next). Either silence all printing during binary protocol, or do bring-up over ASCII first.
+
+---
+
 ## Iteration Log
 
 - **2026-03-04 (initial)**: Tuned `max_rotation_speed` 4.0→1.5, `fps` 30→50 for smoother motion. Handoff file created.
@@ -1405,6 +1634,7 @@ Six issues diagnosed and fixed in one session. **(1) mpremote reset silently fai
 - **2026-03-05 (offsets, table collision, JSON v2.0)**: Implemented `joint_plane_offsets` and `base_vertical_offset` in `forward_kinematics()` and `solve_ik_analytical()`. IK adjusts effective target Z by subtracting all offsets before solving; FK reapplies them. Added `check_table_collision()` to constraints.py (checks any joint z < 0). Added `collision_margin` field to `ConstraintSet`. New `JointPlaneOffsetPanel` in sidebar with base offset spinbox, per-joint offset spinboxes, and collision margin spinbox. `StatsPanel` now shows separate Self Collision and Table Collision rows. `WaypointPanel` JSON export upgraded to v2.0 with `arm_config` section; import is backwards compatible with v1.0. Note: distributed tail angles (Feature 6 as described) cannot preserve IK accuracy with the wrist-subtraction algorithm — collinear tail links are retained. All 10 acceptance tests pass.
 - **2026-04-11 (lateral offsets, FK semantics, WiFi support, GUI cleanup)**: Eight changes in one session. **(1) Per-joint lateral offsets** — added `joint_lateral_x[]` and `joint_lateral_y[]` to `ArmConfig` (saved in arm_config.json); new spinboxes in `JointPlaneOffsetPanel`; FK applies them as radial/lateral displacements in 3D before each link. **(2) FK semantics fix** — `offset[i]` now applied at START of link `i` (using parent cumulative angle), not after `nom[i]`. Return format changed from 2N+1 to 2N interleaved `[eff[0], nom[0], eff[1], nom[1], …]`; `positions[-1]` is the EE. `ArmViewport.update_arm()` index fix: `pos_arr[::2]` for joint scatter (was `pos_arr[:-1:2]`). **(3) Jacobian base column fix** — after FK semantics change, `positions[0]` includes offset[0] so it can no longer be used as the base pivot. Replaced with explicit `base_pos = [0, 0, base_vertical_offset]`; planar joint columns still use `positions[2*i]` for eff[i]. **(4) Config save/load bug fix** — `_on_config_changed()` was calling `offset_panel.rebuild(n)` which discarded user-entered offset values. Fix: save and restore all offset panel values (joint offsets, lateral x/y, base offset, collision margin) around the rebuild call. **(5) Link length max raised to 100** — `ArmConfigPanel._rebuild_links()` spinbox range was `(0.1, 20.0)`, raised to `(0.1, 100.0)`. **(6) Save as Default button** — new "Save as Default" `QPushButton` above the toolbox; clicking calls `_on_save_as_default()` which calls `_save_arm_config()` and shows a status bar message. **(7) Toolbox reorganization** — sidebar toolbox restructured into 10 logical groups: "Arm Setup" (ArmConfigPanel + JointPlaneOffsetPanel), "Target & Constraints" (TargetPanel + ConstrainEndEffectorPanel), "Joint State" (InitialJointPanel + JointOutputPanel), plus Animation, Waypoint Path, Custom Math, Motor Configuration, Pico Pinout, Hardware, Status. **(8) Auto-open features removed** — `_show_help_on_start` startup timer and `_load_auto_waypoints` timer removed; methods and `import glob` removed. **(9) WiFi support** — `PicoWifiInterface` (`hardware/pico_wifi_interface.py`) added as drop-in replacement for `PicoInterface`; identical public API using TCP socket instead of serial. Firmware (`firmware/pico_control_script.py`) gains `<<BEGIN_WIFI_CONFIG>>` sentinel block and a `_thread` TCP server that activates when `WIFI_SSID` is non-empty; USB serial still works simultaneously. Deployer (`hardware/micropython_deployer.py`) extended with `_inject_wifi_config()` and new `wifi_ssid`/`wifi_password`/`wifi_port` parameters. `HardwarePanel` rewritten with USB/WiFi radio toggle: USB mode shows existing port/baud; WiFi mode shows IP address, TCP port, SSID, password fields. New `wifi_connect_requested(host, port)` signal; `MainWindow._on_hardware_wifi_connect()` handles it with same background-thread polling pattern as USB. **(10) QRadioButton import fix** — `QRadioButton` was missing from the `PyQt6.QtWidgets` import list, causing `NameError` on startup; added between `QCheckBox` and `QSplitter`.
 
+- **2026-05-18 (LinuxCNC integration — PIO step gen, E-stop interlock chain, protocol v2, component rename)**: Bring-up of the LinuxCNC ↔ Pico 2W control stack on the deployment Raspberry Pi 4. **(1) Pico firmware rewritten as `linuxcnc/config/linuxcnc_main.py`** — switched from CPU bit-banging + `machine.Timer` ISRs to **per-axis PIO state machines** for step generation. Each axis owns one SM running a 10-cycle-per-pulse program (`set [4]` high, `set [4]` low, `jmp x_dec`). CPU pushes `N-1` to TX FIFO to emit exactly N pulses; SM acks via `push noblock` to RX FIFO so the CPU knows when the burst is done (DIR must stay stable mid-burst). SM clock = `max_sps × 11` Hz → pulse rate = `max_sps` exactly. **(2) Three-layer safety chain**: (a) startup snap window — first 100 packets (~1 s) treated as snap (`current = target`, no pulses) to let LinuxCNC's trajectory planner settle; (b) E-stop interlock via 23rd byte of every command packet — driven by `motion.motion-enabled` in the HAL, the firmware refuses to step when 0 and re-snaps on every 0→1 transition so it can't chase a stale target after E-stop release; (c) per-packet max-steps clamp at `max_sps × servo_period × 1.5` — silent backstop against bad commanded deltas. **(3) Binary protocol v2** — extended command to 23 bytes (`b'C'` + 5×float32 + 1 enable byte + `b'\n'`); feedback still 22 bytes (`b'F'` + 5×float32 + `b'\n'`). Replaced `select.poll()` on stdin with blocking `sys.stdin.buffer.read(PACKET_SIZE)` because `select.poll()` is unreliable on RP2350 MicroPython. **(4) Userspace HAL component `pico_hal.py`** (lives in `~/linuxcnc/configs/max-arm-config/`) — pure stdlib (`os`/`termios`/`select`, no pyserial); auto-reconnect on disconnect; logs bad responses every 100th packet to `/tmp/pico_hal.log`. **(5) Component rename** `pico_hal` → `pico-arm` — closer to the hardware role and clearer in HAL `net` statements. Every `net` line in `max-arm.hal` updated; `loadusr -Wn pico-arm ./pico-arm.py` arg matches `hal.component("pico-arm")` in the Python. **(6) HAL E-stop wiring** — `net motion-en motion.motion-enabled => pico-arm.motion-enable` is the new hardware-level interlock. **(7) INI gets `[HAL] HALUI = halui`** so the halui pins (program-start, abort, etc.) are exposed for future button wiring. **(8) LinuxCNC 2.9 motmod compatibility** — discovered the deployment build loads `tpmod`/`homemod` automatically as part of `loadrt motmod`; previous attempts to `loadrt tpmod` separately caused double-load failures. **(9) Misc fixes** — `kbd_intr(-1)` called before binary serial begins (so 0x03/0x04 bytes in float payloads don't kill the script); HAL line-continuation `\` collapsed to single lines after CRLF parse errors; first-packet slamming root-caused to missing startup snap; joint SCALE values aligned with firmware `steps_per_rev`. Full per-joint config table now lives in the LinuxCNC Hardware Integration section above. See also new "Lessons Learned / Gotchas" section.
 - **2026-04-12 (terminal panel, WiFi deploy, LED toggle, hardware persistence, 95+ terminal commands)**: Major GUI and firmware session. **(1) PicoTerminal panel** — new `PicoTerminal` QWidget sits below the 3D viewport in a vertical `QSplitter` (8px drag handle, default 200px, open on launch). Dark VS Code-style header, `QPlainTextEdit` readonly output with HTML timestamp + colored prefix symbols per line kind (tx=blue, rx=teal, info=grey, error=red, deploy=orange), `QLineEdit` input row. Disabled when not connected. Max 2000 blocks (auto-trim). **(2) Terminal command dispatcher** — `_on_terminal_command` in `MainWindow` dispatches 95+ commands case-insensitively. Command history capped at 200. Unknown commands checked against `_aliases` dict then forwarded verbatim to hardware. 1 Hz stream loop logs TX commands, joint positions (`_pos_log_enabled`), and EE coords (`_ee_log_enabled`). **(3) WiFi deploy** — `MicroPythonDeployer.deploy_wifi()` uploads firmware over the existing TCP connection using an `UPLOAD_BEGIN / UPLOAD_CHUNK / UPLOAD_END` protocol; Pico renames `main_upload.py` → `main.py` and calls `machine.reset()`. Deploy in WiFi mode reads IP from the panel directly — active connection NOT required. Note: first deploy must be USB to bootstrap the upload protocol. **(4) LED toggle button** — `HardwarePanel.led_btn` enabled on connect; sends `LED_TOGGLE\n` via `send_raw()`. **(5) Pico IP display** — `ip_lbl` in `HardwarePanel` appears (green) when `_on_pico_rx` receives `WiFi connected: <ip>`. **(6) Hardware panel state persistence** — `save_state() / restore()` serialize all hardware panel fields (wifi_mode, host, port, ssid, password, usb_port, baud) into `arm_config.json["hardware"]`; saved on every config save and `closeEvent()`, restored on startup. **(7) LED blink removed** from firmware — random blink loop deleted; LED only togglable via button/command. WiFi IP print routed through `_wifi_log` list (main-thread drain) because `print()` from MicroPython background threads is unreliable. **(8) REBOOT added to firmware** `_handle_line` — works over USB and WiFi. **(9) Bug fixes** — `SETBASE` was referencing `base_spin` (wrong panel); corrected to `base_offset_spin`. `SETOFFSET` was using non-existent `_joint_rows` dict; corrected to `offset_panel.joint_spins[idx].setValue()`. **(10) Full terminal command set** (grouped): Info (HELP, STATUS, HISTORY, JOINTS, LINKS, MOTORS, REACH, DIST, BBOX, NEAREST, STATS, LIMITS, TARGET, FK, LATENCY), Streams (POS, EE/EE ON/OFF), Motion (HOME, PARK, EXTEND, FLIP, ELBOW UP/DOWN, PAUSE, STOP, SPEED, JOG, NUDGE, SETJOINT, GOTO, SWEEP, SOLVE), Waypoints (WAYPOINTS, WP n, ADDWP, CLEARWP, CLEARPATH, LOOP, RUN, PLOTPATH), Poses (SAVEPOSE, LOADPOSE, POSES, DELETEPOSE, DIFFPOSE, COMPARE, STARTPOSE), Config (CONFIG, ZERO, SAVE, RESET, SETLINK, SETBASE, SETOFFSET, MARGIN, ACCEL, CONSTRAINT), Hardware (CONNECT, DISCONNECT, RECONNECT, WIFI, SETPORT, BROADCAST, DEPLOY, REBOOT, PING, LATENCY, LED_TOGGLE, MEM, TEMP, LOG, LOG LEVEL), Scripting (ALIAS, ALIASES, MACRO, MACROS, EXEC, REPEAT, LOAD, WATCH, WATCH STOP), Viewport (ZOOM, CAMERA, SCREENSHOT), Terminal (CLEAR, ECHO, MARK, UPTIME, VERSION, EXPORT, HISTORY). Stub commands (TRAIL, GHOST, GRAVITY, VELOCITY, RESUME) return informative "not implemented" messages.
 
 ---

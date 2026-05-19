@@ -1866,3 +1866,154 @@ FIX:   Connect the Pico via USB and ensure MicroPython firmware is installed
 2026-05-17 00:12:12 DEBUG    trimesh.util: `trimesh.load(force='mesh')` is a compatibility wrapper for `trimesh.load_mesh`
 2026-05-17 00:12:12 INFO     gui: Arm config restored from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
 2026-05-17 00:24:11 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-05-17 00:57:52 DEBUG    OpenGL.acceleratesupport: OpenGL_accelerate module loaded
+2026-05-17 00:57:53 DEBUG    OpenGL.arrays.arraydatatype: Using accelerated ArrayDatatype
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_ATTACHED_OBJECTS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_DELETE_STATUS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_INFO_LOG_LENGTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_SHADER_SOURCE_LENGTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_SUBTYPE_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_OBJECT_VALIDATE_STATUS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_PROGRAM_OBJECT_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GL_SHADER_OBJECT_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.GLhalfARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glAttachObjectARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glDeleteObjectARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glDetachObjectARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetAttachedObjectsARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetHandleARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetInfoLogARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetObjectParameterfvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glGetObjectParameterivARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.shader_objects.glInitShaderObjectsARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.fragment_shader.GLhalfARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.fragment_shader.glInitFragmentShaderARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GL_OBJECT_ACTIVE_ATTRIBUTES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GL_OBJECT_ACTIVE_ATTRIBUTE_MAX_LENGTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.GLhalfARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.glGetObjectParameterivARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_shader.glInitVertexShaderARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_CURRENT_MATRIX_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_CURRENT_MATRIX_STACK_DEPTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX0_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX10_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX11_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX12_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX13_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX14_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX15_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX16_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX17_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX18_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX19_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX1_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX20_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX21_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX22_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX23_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX24_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX25_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX26_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX27_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX28_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX29_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX2_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX30_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX31_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX3_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX4_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX5_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX6_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX7_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX8_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MATRIX9_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ADDRESS_REGISTERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ATTRIBS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_ENV_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_INSTRUCTIONS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_LOCAL_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_MATRICES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_MATRIX_STACK_DEPTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_ADDRESS_REGISTERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_ATTRIBS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_INSTRUCTIONS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_NATIVE_TEMPORARIES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_MAX_PROGRAM_TEMPORARIES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ADDRESS_REGISTERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ATTRIBS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_BINDING_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ERROR_POSITION_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_ERROR_STRING_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_FORMAT_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_FORMAT_ASCII_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_INSTRUCTIONS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_LENGTH_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_ADDRESS_REGISTERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_ATTRIBS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_INSTRUCTIONS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_NATIVE_TEMPORARIES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_PARAMETERS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_STRING_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_TEMPORARIES_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_PROGRAM_UNDER_NATIVE_LIMITS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_TRANSPOSE_CURRENT_MATRIX_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GL_VERTEX_PROGRAM_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.GLhalfARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glBindProgramARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glDeleteProgramsARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGenProgramsARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramEnvParameterdvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramEnvParameterfvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramLocalParameterdvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramLocalParameterfvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramStringARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glGetProgramivARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glInitVertexProgramARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4dARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4dvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4fARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramEnvParameter4fvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4dARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4dvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4fARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramLocalParameter4fvARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.vertex_program.glProgramStringARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_MAX_GEOMETRY_VARYING_COMPONENTS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GL_MAX_VERTEX_VARYING_COMPONENTS_ARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.GLhalfARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.glFramebufferTextureFaceARB
+2026-05-17 00:57:53 DEBUG    OpenGL.GL.shaders: Found no alternate for: OpenGL.GL.ARB.geometry_shader4.glInitGeometryShader4ARB
+2026-05-17 00:57:55 DEBUG    trimesh.util: searching for blender in: C:\Python314\Scripts\;C:\windows\System32\OpenSSH\;C:\Users\maxwe\AppData\Roaming\Python\Python314\site-packages;C:\Users\maxwe\AppData\Roaming\npm;C:\Program Files (x86)\Windows Kits\8.1\Windows Performance Toolkit\;C:\ProgramData\chocolatey\bin;C:\Users\maxwe\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin;C:\Users\maxwe\AppData\Roaming\Python\Python314\site-packages\PyQt6\Qt6\bin;C:\Program Files\nodejs;C:\Users\maxwe\AppData\Local\Programs\cursor\resources\app\bin;C:\windows;C:\Users\maxwe\AppData\Local\GitHubDesktop\bin;C:\windows\System32\Wbem;C:\Users\maxwe\AppData\Local\Programs\Python\Python312\Scripts;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Python314\;c:\Users\maxwe\.vscode\extensions\ms-python.debugpy-2026.6.0\bundled\scripts\noConfigScripts;C:\Users\maxwe\AppData\Local\Python\bin;C:\Program Files\nodejs\;C:\windows\System32\WindowsPowerShell\v1.0\;C:\Users\maxwe\AppData\Roaming\Python\Python314\Scripts;C:\Program Files\GitHub CLI\;C:\Users\maxwe\AppData\Local\Programs\Microsoft VS Code\bin;C:\Program Files\Git\cmd;C:\Users\maxwe\AppData\Local\Programs\Microsoft VS Code;C:\windows\system32;C:\Users\maxwe\AppData\Local\Microsoft\WindowsApps
+2026-05-17 00:57:55 DEBUG    trimesh.util: falling back to hashlib hashing: `pip install xxhash`for 50x faster cache checks
+2026-05-17 00:57:56 INFO     __main__: Creating QApplication...
+2026-05-17 00:57:56 INFO     __main__: QApplication created successfully
+2026-05-17 00:57:56 INFO     __main__: Creating MainWindow...
+2026-05-17 00:57:58 INFO     __main__: MainWindow created successfully
+2026-05-17 00:57:59 INFO     __main__: Robot Arm Simulator started
+2026-05-17 00:57:59 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-05-17 00:58:00 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-05-17 00:58:00 DEBUG    charset_normalizer: Encoding detection: Found cp1006 as plausible (best-candidate) for content. With 15 alternatives.
+2026-05-17 00:58:00 DEBUG    trimesh.util: Data not utf-8! Trying cp1006 (confidence 1.0)
+2026-05-17 00:58:01 DEBUG    trimesh.util: `trimesh.load(force='mesh')` is a compatibility wrapper for `trimesh.load_mesh`
+2026-05-17 00:58:01 DEBUG    charset_normalizer: Encoding detection: Found cp1006 as plausible (best-candidate) for content. With 15 alternatives.
+2026-05-17 00:58:01 DEBUG    trimesh.util: Data not utf-8! Trying cp1006 (confidence 1.0)
+2026-05-17 00:58:01 DEBUG    trimesh.util: `trimesh.load(force='mesh')` is a compatibility wrapper for `trimesh.load_mesh`
+2026-05-17 00:58:01 DEBUG    charset_normalizer: Encoding detection: Found cp1006 as plausible (best-candidate) for content. With 15 alternatives.
+2026-05-17 00:58:01 DEBUG    trimesh.util: Data not utf-8! Trying cp1006 (confidence 1.0)
+2026-05-17 00:58:01 DEBUG    trimesh.util: `trimesh.load(force='mesh')` is a compatibility wrapper for `trimesh.load_mesh`
+2026-05-17 00:58:01 INFO     gui: Arm config restored from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json
+2026-05-17 00:59:50 INFO     gui: Motor config loaded from c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:01:28 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:01:38 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:02:02 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:02:03 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:02:03 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:02:20 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:03:19 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:03:24 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 01:04:23 INFO     gui: Motor config saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\motor_config.json
+2026-05-17 15:30:29 INFO     gui: Arm config auto-saved to c:\Users\maxwe\OneDrive\Documents\GitHub\Robot Arm Sim\Robot-Arm-Sim\config\arm_config.json

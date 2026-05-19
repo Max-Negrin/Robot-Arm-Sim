@@ -33,7 +33,12 @@ for i in range(5):
     c.newpin(f"joint{i}", hal.HAL_FLOAT, hal.HAL_IN)
 c.ready()
 
-D2R = math.pi / 180
+# vismach's HalRotate scales the pin value, then passes the result to
+# glRotatef which interprets it as DEGREES. Joint pins are already in degrees
+# (INI: ANGULAR_UNITS = degree), so scale must be 1.0 — not π/180. Using
+# π/180 here was a bug that made every joint rotate 1/57.3 of its actual
+# angle (jogging to 300° looked like ~5° of visible rotation).
+DEG_SCALE = 1.0
 
 # ── Real arm dimensions (mm) — robot_arm.ini DH values × 27.5 ─────────────────
 BASE_H   =  82.5   # D0 = 3.0 × 27.5   base column height
@@ -56,7 +61,7 @@ j4_geom = Collection([
         ], 90, 1, 0, 0),      # ry
     ], 180.0, 0, 0, 1),        # rz
 ])
-j4 = HalRotate([j4_geom], c, "joint4", D2R, 0, 1, 0)
+j4 = HalRotate([j4_geom], c, "joint4", DEG_SCALE, 0, 1, 0)
 
 
 # ── J3 — Wrist roll (X-axis, ALPHA = π/2) — mesh_transforms[3]: tx=-29.15mm, ry=90° ──
@@ -68,7 +73,7 @@ j3_geom = Collection([
     ], 0, 0, 0),          # tx = -1.06 × 27.5
     Translate([j4], 221, 0, 0),
 ])
-j3 = HalRotate([j3_geom], c, "joint3", D2R, 1, 0, 0)
+j3 = HalRotate([j3_geom], c, "joint3", DEG_SCALE, 1, 0, 0)
 
 
 # ── J2 — Elbow pitch (Y-axis) — mesh_transforms[1]: tz=1.375mm, rx=1°, ry=180°, rz=267° ──
@@ -84,7 +89,7 @@ j2_geom = Collection([
     ], 0, 0, 0),                # tz = 0.05 × 27.5
     Translate([j3], 60, -20, L2),
 ])
-j2 = HalRotate([j2_geom], c, "joint2", D2R, 0, 1, 0)
+j2 = HalRotate([j2_geom], c, "joint2", DEG_SCALE, 0, 1, 0)
 
 
 # ── J1 — Shoulder pitch (Y-axis) — mesh_transforms[0]: no offset ──────────────
@@ -92,7 +97,7 @@ j1_geom = Collection([
     AsciiSTL(filename="stls/shoulder-arm.stl"),
     Translate([j2], 0, 40, L1),
 ])
-j1 = HalRotate([j1_geom], c, "joint1", D2R, 0, 1, 0)
+j1 = HalRotate([j1_geom], c, "joint1", DEG_SCALE, 0, 1, 0)
 
 
 # ── J0 — Base yaw (Z-axis) ────────────────────────────────────────────────────
@@ -101,7 +106,7 @@ j0_geom = Collection([
     Box(-28, -28, 18,  28,  28, BASE_H), # column
     Translate([j1], 0, -50, BASE_H),
 ])
-j0 = HalRotate([j0_geom], c, "joint0", D2R, 0, 0, 1)
+j0 = HalRotate([j0_geom], c, "joint0", DEG_SCALE, 0, 0, 1)
 
 
 # ── Static base plate ──────────────────────────────────────────────────────────

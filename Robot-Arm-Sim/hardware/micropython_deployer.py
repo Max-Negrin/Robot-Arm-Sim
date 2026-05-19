@@ -148,12 +148,41 @@ def _deploy_via_serial_repl_text(
         with exclusive_serial_access(port):
             if progress_cb:
                 progress_cb(f"Opening serial port {port}...")
-            try:
-                ser = _serial_mod.Serial(port, 115200, timeout=0.5, write_timeout=10.0)
-            except _serial_mod.SerialException as exc:
+            ser = None
+            last_exc = None
+            for attempt in range(6):
+                try:
+                    ser = _serial_mod.Serial(port, 115200, timeout=0.5, write_timeout=10.0)
+                    break
+                except _serial_mod.SerialException as exc:
+                    last_exc = exc
+                    exc_str = str(exc).lower()
+                    retryable = (
+                        "cannot configure" in exc_str
+                        or "semaphore timeout" in exc_str
+                        or "does not exist" in exc_str
+                        or "access" in exc_str
+                        or "denied" in exc_str
+                    )
+                    if retryable and attempt < 5:
+                        delay = min(1.5, 0.5 + 0.5 * attempt)
+                        if progress_cb:
+                            progress_cb(
+                                f"Port not ready, retrying in {delay:.1f}s "
+                                f"({attempt + 1}/6)..."
+                            )
+                        logger.info(
+                            "Deploy port not ready on %s — retrying in %.2f s "
+                            "(attempt %d/6)",
+                            port, delay, attempt + 1,
+                        )
+                        time.sleep(delay)
+                    else:
+                        break
+            if ser is None:
                 return False, (
                     f"ERROR: Cannot open {port}\n"
-                    f"CAUSE: {exc}\n"
+                    f"CAUSE: {last_exc}\n"
                     "FIX:   Unplug/replug the Pico USB, close Thonny or other serial tools, "
                     "then try Deploy again"
                 )
