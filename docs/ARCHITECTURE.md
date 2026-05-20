@@ -472,7 +472,7 @@ TCP_PORT = 8888
 6. `_handle_line(line, reply_fn)` for any complete command
 7. `time.sleep_us(remaining)` toward `STEP_US` period
 
-**Motion:** timestamped lines feed `TrajectoryRing`; plain `J0:deg,…` sets immediate targets. `STOP` flushes the ring and freezes commanded pose; `SYNC:` flushes the ring, snaps logical pose, re-seeds interpolation state. Step/dir axes use **PIO** for STEP timing when `pio_stepdir` is true (default); 28BYJ remains coil stepping on the main loop.
+**Motion:** timestamped lines feed `TrajectoryRing`; plain `J0:deg,…` sets immediate targets. `STOP` flushes the ring and freezes commanded pose; `SYNC:` flushes the ring, snaps logical pose, re-seeds interpolation state. Step/dir axes use **PIO** for STEP timing when `pio_stepdir` is true (default).
 
 **`_handle_line` commands:** `PING`, `LED_TOGGLE`, `REBOOT`, `T:…` trajectory samples, `J0:deg,J1:deg,…`, `SYNC:…`, etc.
 

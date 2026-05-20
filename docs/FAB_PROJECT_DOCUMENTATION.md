@@ -171,7 +171,6 @@ Upload uses **raw USB REPL** (no strict dependency on `mpremote`) or **WiFi UPLO
 
 ### 8.4 Supported motor personalities (firmware)
 
-- **28BYJ-48** + ULN2003 (4-wire half-step sequence)  
 - **Step/direction** (e.g. NEMA + A4988/DRV8825/TMC)  
 - **RC servo** (PWM) — position-only, no stepped follower dynamics  
 

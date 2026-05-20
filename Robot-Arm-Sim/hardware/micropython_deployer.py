@@ -326,7 +326,7 @@ def _generate_joints_block(joints_config: list[dict]) -> str:
     """Render the JOINTS list as a MicroPython literal string."""
     lines = ["# <<BEGIN_JOINTS_CONFIG>>", "JOINTS = ["]
     for j in joints_config:
-        driver = j.get("driver", "28byj")
+        driver = j.get("driver", "stepdir")
         pins   = j.get("pins", [])
         default_name = f"Joint {j['idx']}"
         parts = [

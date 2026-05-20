@@ -136,7 +136,7 @@ Lines beginning with **`T:`** are parsed as timestamped trajectory samples: the 
 
 `STOP` clears the trajectory ring and playback anchor; **`SYNC:`** clears the ring, applies the bundled pose without a catch-up sprint, and re-seeds the interpolation tail from measured angles.
 
-Stepper follow-up uses accel- and optional **jerk**-limited velocity toward step targets. **`stepdir`** motors default to **PIO-generated STEP** pulses (`pio_stepdir` in `JOINTS`, default true), with DIR setup from the CPU; **`28byj`** remains bit-banged on the main loop.
+Stepper follow-up uses accel- and optional **jerk**-limited velocity toward step targets. **`stepdir`** motors default to **PIO-generated STEP** pulses (`pio_stepdir` in `JOINTS`, default true), with DIR setup from the CPU.
 
 ---
 

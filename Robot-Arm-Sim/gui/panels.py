@@ -1366,14 +1366,11 @@ def apply_motor_joint_dict_to_row(row: dict, jcfg: dict) -> None:
         dr = jcfg["driver"]
         if dr == "servo":
             row["driver_combo"].setCurrentText("Servo (PWM)")
-        elif dr == "28byj":
-            row["driver_combo"].setCurrentText("28BYJ-48 (ULN2003)")
         else:
             row["driver_combo"].setCurrentText("NEMA 17 (Step/Dir)")
 
     text = row["driver_combo"].currentText()
     is_servo = "Servo" in text
-    is_28byj = "28BYJ" in text
 
     if is_servo:
         if "min_pulse_us" in jcfg:
@@ -1400,13 +1397,12 @@ def apply_motor_joint_dict_to_row(row: dict, jcfg: dict) -> None:
             row["backlash_arcmin"].setValue(
                 _backlash_steps_to_arcmin(_bs, row["spr"].value(), row["gear"].value())
             )
-        if not is_28byj:
-            if "invert_dir" in jcfg:
-                row["invert_dir_check"].setChecked(bool(jcfg["invert_dir"]))
-            if "pio_stepdir" in jcfg:
-                row["pio_stepdir_check"].setChecked(bool(jcfg["pio_stepdir"]))
-            if "dir_setup_us" in jcfg:
-                row["dir_setup_spin"].setValue(int(jcfg["dir_setup_us"]))
+        if "invert_dir" in jcfg:
+            row["invert_dir_check"].setChecked(bool(jcfg["invert_dir"]))
+        if "pio_stepdir" in jcfg:
+            row["pio_stepdir_check"].setChecked(bool(jcfg["pio_stepdir"]))
+        if "dir_setup_us" in jcfg:
+            row["dir_setup_spin"].setValue(int(jcfg["dir_setup_us"]))
 
     if "zero_offset_deg" in jcfg:
         row["zero"].setValue(float(jcfg["zero_offset_deg"]))
@@ -1416,8 +1412,8 @@ class MotorConfigPanel(QGroupBox):
     """Full per-joint motor configuration editor.
 
     Covers every field that goes into the Pico firmware's JOINTS list:
-      • Driver type  — 28BYJ-48 (ULN2003) or NEMA 17 (Step/Dir)
-      • Pin numbers  — 4 pins (IN1-IN4) for 28BYJ, 2 pins (STEP/DIR) for NEMA 17
+      • Driver type  — NEMA 17 (Step/Dir) stepper or RC servo
+      • Pin numbers  — 2 pins (STEP/DIR) for steppers, 1 pin (SIG) for servos
       • Steps / rev  — steps per revolution as set by the driver dip switches
       • Gear ratio   — external reduction beyond the motor's internal gearing
       • Invert dir   — flip the DIR pin logic (Step/Dir only)
@@ -1435,14 +1431,6 @@ class MotorConfigPanel(QGroupBox):
     config_changed = pyqtSignal()
     pins_loaded    = pyqtSignal(list)   # emitted after _load_config with full joint-config list
 
-    # Default pin blocks per joint index (28byj: 4 consecutive pins from GP2)
-    _DEFAULT_28BYJ_PINS = [
-        [2, 3, 4, 5],
-        [6, 7, 8, 9],
-        [10, 11, 12, 13],
-        [14, 15, 16, 17],
-        [18, 19, 20, 21],
-    ]
     # Default stepdir pins per joint index
     _DEFAULT_STEPDIR_PINS = [
         [2, 3],
@@ -1513,7 +1501,6 @@ class MotorConfigPanel(QGroupBox):
             # ── Driver type ──
             driver_combo = QComboBox()
             driver_combo.addItems([
-                "28BYJ-48 (ULN2003)",
                 "NEMA 17 (Step/Dir)",
                 "Servo (PWM)",
             ])
@@ -1531,7 +1518,7 @@ class MotorConfigPanel(QGroupBox):
             spr.setValue(4096)
             spr.setToolTip(
                 "Steps per motor revolution as configured on the driver.\n"
-                "28BYJ-48 half-step = 4096  |  Step/Dir dip-switch: read from driver (e.g. 800)"
+                "Step/Dir dip-switch: read from driver (e.g. 800, 1600, 3200)."
             )
             stepper_form.addRow("Steps/rev:", spr)
 
@@ -1754,25 +1741,11 @@ class MotorConfigPanel(QGroupBox):
 
             def _on_driver_changed(text, r=row):
                 is_servo = "Servo" in text
-                is_28byj = "28BYJ" in text
                 r["stepper_grp"].setVisible(not is_servo)
                 r["servo_grp"].setVisible(is_servo)
-                r["invert_dir_widget"].setVisible(not is_servo and not is_28byj)
-                r["pio_stepdir_widget"].setVisible(not is_servo and not is_28byj)
-                r["dir_setup_widget"].setVisible(not is_servo and not is_28byj)
-                # Set sensible defaults when switching driver
-                if is_servo:
-                    pass   # servo fields have their own defaults
-                elif is_28byj:
-                    if r["spr"].value() == 200:
-                        r["spr"].setValue(4096)
-                    if r["max_sps"].value() > 600:
-                        r["max_sps"].setValue(500)
-                else:
-                    if r["spr"].value() == 4096:
-                        r["spr"].setValue(200)
-                    if r["max_sps"].value() <= 600:
-                        r["max_sps"].setValue(2000)
+                r["invert_dir_widget"].setVisible(not is_servo)
+                r["pio_stepdir_widget"].setVisible(not is_servo)
+                r["dir_setup_widget"].setVisible(not is_servo)
                 _update_derived(None, r)
                 self.config_changed.emit()   # notify PinoutPanel to rebuild
 
@@ -1836,13 +1809,11 @@ class MotorConfigPanel(QGroupBox):
     # ── Data access ────────────────────────────────────────────────────────
 
     def get_driver_types(self) -> list[str]:
-        """Return driver type strings in joint order, e.g. ['28byj', 'stepdir', 'servo', ...]."""
+        """Return driver type strings in joint order, e.g. ['stepdir', 'servo', ...]."""
         result = []
         for r in self._rows:
             text = r["driver_combo"].currentText()
-            if "28BYJ" in text:
-                result.append("28byj")
-            elif "Servo" in text:
+            if "Servo" in text:
                 result.append("servo")
             else:
                 result.append("stepdir")
@@ -1863,7 +1834,6 @@ class MotorConfigPanel(QGroupBox):
         for row in self._rows:
             text = row["driver_combo"].currentText()
             is_servo = "Servo" in text
-            is_28byj = "28BYJ" in text
             if is_servo:
                 cfg: dict = {
                     "idx": row["index"],
@@ -1878,7 +1848,7 @@ class MotorConfigPanel(QGroupBox):
                 cfg = {
                     "idx": row["index"],
                     "name": row["name"],
-                    "driver": "28byj" if is_28byj else "stepdir",
+                    "driver": "stepdir",
                     "steps_per_rev": row["spr"].value(),
                     "gear_ratio": row["gear"].value(),
                     "max_sps": row["max_sps"].value(),
@@ -1891,11 +1861,10 @@ class MotorConfigPanel(QGroupBox):
                         row["gear"].value(),
                     ),
                     "gravity_offset_deg": row["gravity_offset"].value(),
+                    "invert_dir": row["invert_dir_check"].isChecked(),
+                    "pio_stepdir": row["pio_stepdir_check"].isChecked(),
+                    "dir_setup_us": row["dir_setup_spin"].value(),
                 }
-                if not is_28byj:
-                    cfg["invert_dir"] = row["invert_dir_check"].isChecked()
-                    cfg["pio_stepdir"] = row["pio_stepdir_check"].isChecked()
-                    cfg["dir_setup_us"] = row["dir_setup_spin"].value()
             if pins_callback is not None:
                 cfg["pins"] = pins_callback(row["index"])
             result.append(cfg)
@@ -2861,7 +2830,7 @@ class PinoutPanel(QGroupBox):
     """Flat pin-assignment table for all joints.
 
     Shows one compact row per joint with labelled GPIO spinboxes for every
-    signal (IN1-IN4 for 28BYJ-48, STEP/DIR for NEMA 17).  Duplicate-pin
+    signal (STEP/DIR for step/dir steppers, SIG for servos).  Duplicate-pin
     conflicts are flagged in red.  An auto-assign button fills consecutive
     GPIO numbers starting from a chosen base pin.
 
@@ -2933,9 +2902,7 @@ class PinoutPanel(QGroupBox):
 
         for grid_row, (name, driver) in enumerate(zip(joint_names, driver_types), start=1):
             j_idx = grid_row - 1
-            if driver == "28byj":
-                signals = ["IN1", "IN2", "IN3", "IN4"]
-            elif driver == "servo":
+            if driver == "servo":
                 signals = ["SIG"]
             else:
                 signals = ["STEP", "DIR"]
@@ -2946,9 +2913,7 @@ class PinoutPanel(QGroupBox):
             self.table_layout.addWidget(name_lbl, grid_row, 0)
 
             # Driver badge
-            if driver == "28byj":
-                badge_text, badge_color = "28BYJ", "#5bf"
-            elif driver == "servo":
+            if driver == "servo":
                 badge_text, badge_color = "SERVO", "#5f5"
             else:
                 badge_text, badge_color = "NEMA17", "#fa5"
@@ -3034,9 +2999,7 @@ class PinoutPanel(QGroupBox):
     def _check_conflicts(self) -> None:
         pin_users: dict[int, list[str]] = {}
         for row in self._rows:
-            if row["driver"] == "28byj":
-                sigs = ["IN1", "IN2", "IN3", "IN4"]
-            elif row["driver"] == "servo":
+            if row["driver"] == "servo":
                 sigs = ["SIG"]
             else:
                 sigs = ["STEP", "DIR"]

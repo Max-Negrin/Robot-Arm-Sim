@@ -14,10 +14,10 @@ This document maps each requirement of the assignment to concrete artifacts in t
 | Requirement | How this project satisfies it |
 |---------------|-------------------------------|
 | **Design** | System architecture: PC runs IK, trajectory generation, and visualization; Pico executes motor stepping, optional homing, and networking. Geometry and motor parameters are configured in the GUI and injected into firmware at deploy time (`hardware/micropython_deployer.py`). |
-| **Build** | Fabricated stack: (1) desktop application on a host PC, (2) RP2040-based **Pico 2W** running **MicroPython**, (3) motor drivers (e.g. ULN2003 + 28BYJ-48, or STEP/DIR), (4) optional **limit / home switches** on GPIO inputs. |
+| **Build** | Fabricated stack: (1) desktop application on a host PC, (2) RP2040-based **Pico 2W** running **MicroPython**, (3) STEP/DIR stepper drivers (e.g. A4988 / DRV8825 / TMC2209), (4) optional **limit / home switches** on GPIO inputs. |
 | **Connect wired or wireless** | **Wired:** USB serial (CDC) between PC and Pico — used for flashing, raw REPL deploy, and runtime control. **Wireless:** Pico joins a Wi‑Fi infrastructure (STA), exposes a **TCP** server for the same logical protocol as USB. |
 | **Network or bus addresses** | **USB:** serial port identifier (e.g. `COM7` on Windows, `/dev/ttyACM0` on Linux) selects the device. **Wi‑Fi:** **IPv4 address + TCP port** (default control channel **8888**; optional onboard **HTTP dashboard** on **8080**) uniquely identifies the node on the LAN. Messages are line-oriented text (`J0:…,J1:…`) — a simple application-layer protocol on top of the transport. |
-| **Local input and/or output** | **Outputs:** GPIO to motor drivers (step/direction or 28BYJ coil patterns), optional RC servo PWM, onboard **LED** toggle for link checks. **Inputs:** optional **home/limit** pins per joint (`home_pin` in motor configuration), read in the main loop for homing sequences and status. |
+| **Local input and/or output** | **Outputs:** GPIO to step/direction motor drivers, optional RC servo PWM, onboard **LED** toggle for link checks. **Inputs:** optional **home/limit** pins per joint (`home_pin` in motor configuration), read in the main loop for homing sequences and status. |
 
 Together, these satisfy the spirit of Week 11: a **networked embedded node** with explicit **addressing**, **local actuation**, and **local sensing**, integrated with a host application.
 
@@ -71,7 +71,7 @@ The Pico is therefore unambiguously reachable as **`IP:8888`** on the LAN for th
 
 ## 4. Local outputs
 
-- **Motors:** Stepper channels (28BYJ half-step or STEP/DIR drivers) pull joints toward streamed angle targets with accel-limited stepping (`Robot-Arm-Sim/firmware/pico_control_script.py`).
+- **Motors:** Stepper channels (STEP/DIR drivers) pull joints toward streamed angle targets with accel-limited stepping (`Robot-Arm-Sim/firmware/pico_control_script.py`).
 - **Servo (optional):** PWM output on a configured GPIO for RC servos.
 - **Indicator:** Board **LED** toggled via serial/Wi‑Fi command for connectivity checks.
 
