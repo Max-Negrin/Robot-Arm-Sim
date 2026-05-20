@@ -1,19 +1,17 @@
 {
   "_comment": "Auto-saved arm configuration. Loaded on next startup.",
   "arm_config": {
-    "num_links": 5,
+    "num_links": 4,
     "link_lengths": [
-      8.0,
-      3.4,
-      4.0,
-      7.0,
-      2.5
+      3.0,
+      2.5,
+      2.0,
+      1.5
     ],
     "joint_types": [
       "pitch",
       "pitch",
       "pitch",
-      "roll",
       "pitch"
     ],
     "mesh_files": [
@@ -93,21 +91,15 @@
       [
         -170.0023,
         170.0023
-      ],
-      [
-        -170.0023,
-        170.0023
       ]
     ],
     "joint_plane_offsets": [
       0.0,
       0.0,
       -1.0,
-      0.0,
       0.0
     ],
     "joint_lateral_x": [
-      0.0,
       0.0,
       0.0,
       0.0,
@@ -117,15 +109,13 @@
       0.0,
       0.0,
       0.0,
-      0.0,
       0.0
     ],
     "base_vertical_offset": 3.0,
     "starting_angles": [
       0.0,
-      90.0,
       0.0,
-      -90.0,
+      0.0,
       0.0,
       0.0
     ],
@@ -280,15 +270,15 @@
       }
     ],
     "ee_constraint": {
-      "enabled": true,
-      "auto": false,
+      "enabled": false,
+      "auto": true,
       "angle_deg": 0.0
     },
     "target_panel": {
-      "x": -10.0,
-      "y": 12.0,
-      "z": 8.0,
-      "approach_auto": false,
+      "x": 4.0,
+      "y": 3.0,
+      "z": 2.5,
+      "approach_auto": true,
       "approach_angle_deg": 0.0
     },
     "homing_config": [
@@ -383,14 +373,7 @@
         "post_home_cmds": ""
       }
     ],
-    "joint_couplings": [
-      {
-        "driver": 2,
-        "follower": 3,
-        "ratio": 1.0,
-        "offset_deg": -90.0
-      }
-    ]
+    "joint_couplings": []
   },
   "hardware": {
     "wifi_host": "",
